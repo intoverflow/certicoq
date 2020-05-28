@@ -16,20 +16,21 @@ From Coq Require Import ZArith.ZArith Lists.List.
 Import ListNotations.
 
 Require Import CertiCoq.L6.Prototype.
-Require Export CertiCoq.L6.cps_proto_metacoq.
 
+Require Export CertiCoq.L6.cps_proto_metacoq.
 Print exp_univ.
 Print exp_univD.
 Print exp_frame_t.
 Print exp_frameD.
 Print exp_Frame_ops.
 
+Require CertiCoq.L6.cps.
+Require Import CertiCoq.L6.ctx.
+
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
 
 (* -------------------- exp is isomorphic to cps.exp -------------------- *)
-
-Require CertiCoq.L6.cps.
 
 Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).
 
@@ -51,6 +52,7 @@ with fundefs_of_proto (fds : fundefs) : cps.fundefs :=
     cps.Fcons f ft (strip_vars xs) (exp_of_proto e) (fundefs_of_proto fds)
   | Fnil => cps.Fnil
   end.
+Definition ces_of_proto := map (fun '(mk_ctor_tag c, e) => (c, exp_of_proto e)).
 
 Fixpoint proto_of_exp (e : cps.exp) : exp :=
   match e with
@@ -70,6 +72,7 @@ with proto_of_fundefs (fds : cps.fundefs) : fundefs :=
     Fcons (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_exp e) (proto_of_fundefs fds)
   | cps.Fnil => Fnil
   end.
+Definition proto_of_ces := map (fun '(c, e) => (mk_ctor_tag c, proto_of_exp e)).
 
 Lemma strip_vars_map xs : strip_vars (map mk_var xs) = xs.
 Proof. induction xs as [|x xs IHxs]; simpl; congruence. Qed.
@@ -78,7 +81,7 @@ Fixpoint exp_proto_exp e : exp_of_proto (proto_of_exp e) = e
 with fundefs_proto_fundefs fds : fundefs_of_proto (proto_of_fundefs fds) = fds.
 Proof.
   - destruct e; simpl; try rewrite strip_vars_map; try congruence.
-    induction l as [|[c e] ces IHces]; [reflexivity|]; simpl.
+    induction l as [ | [c e] ces IHces]; [reflexivity|]; simpl.
     inversion IHces.
     repeat rewrite H0.
     repeat f_equal.
@@ -87,7 +90,7 @@ Proof.
 Qed.
 
 Lemma map_strip_vars xs : map mk_var (strip_vars xs) = xs.
-Proof. induction xs as [|[x] xs IHxs]; simpl; congruence. Qed.
+Proof. induction xs as [| [x] xs IHxs]; simpl; congruence. Qed.
 
 Local Ltac destruct_sings :=
   repeat match goal with |- context [match ?x with _ => _ end] => destruct x as [x]; simpl end.
@@ -96,7 +99,7 @@ Fixpoint proto_exp_proto e : proto_of_exp (exp_of_proto e) = e
 with proto_fundefs_proto fds : proto_of_fundefs (fundefs_of_proto fds) = fds.
 Proof.
   - destruct e; simpl; destruct_sings; try rewrite map_strip_vars; try congruence.
-    induction ces as [|[[c] e] ces IHces]; [reflexivity|]; simpl.
+    induction ces as [| [[c] e] ces IHces]; [reflexivity|]; simpl.
     inversion IHces.
     repeat rewrite H0.
     repeat f_equal.
@@ -105,3 +108,39 @@ Proof.
 Qed.
 
 (* ---------- exp_c with the right indices is isomorphic to cps.exp_ctx and cps.fundefs_ctx ---------- *)
+
+Fixpoint c_of_exp_ctx (C : exp_ctx) : exp_c exp_univ_exp exp_univ_exp
+with c_of_fundefs_ctx (C : fundefs_ctx) : exp_c exp_univ_exp exp_univ_fundefs.
+Proof.
+  - refine (
+      match C with
+      | Hole_c => <[]>
+      | Econstr_c x c ys C => <[Econstr3 (mk_var x) (mk_ctor_tag c) (map mk_var ys)]> >++ c_of_exp_ctx C
+      | Eproj_c x c n y C => <[Eproj4 (mk_var x) (mk_ctor_tag c) n (mk_var y)]> >++ c_of_exp_ctx C
+      | Eprim_c x p ys C => <[Eprim3 (mk_var x) (mk_prim p) (map mk_var ys)]> >++ c_of_exp_ctx C
+      | Eletapp_c x f ft ys C =>
+        <[Eletapp4 (mk_var x) (mk_var f) (mk_fun_tag ft) (map mk_var ys)]> >++ c_of_exp_ctx C
+      | Ecase_c x ces1 c C ces2 =>
+        let prefix := 
+          fold_right
+            (fun '(c, e) frames =>
+              frames >:: cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e))
+            <[Ecase1 (mk_var x)]>
+            ces1
+        in
+        prefix
+          >++ <[cons_prod_ctor_tag_exp0 (proto_of_ces ces2); pair_ctor_tag_exp1 (mk_ctor_tag c)]>
+          >++ c_of_exp_ctx C
+      | Efun1_c fds C => <[Efun1 (proto_of_fundefs fds)]> >++ c_of_exp_ctx C
+      | Efun2_c C e => <[Efun0 (proto_of_exp e)]> >++ c_of_fundefs_ctx C
+      end).
+  - refine (
+      match C with
+      | Fcons1_c f ft xs C fds =>
+        <[Fcons3 (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_fundefs fds)]> >++ c_of_exp_ctx C
+      | Fcons2_c f ft xs e C =>
+        <[Fcons4 (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_exp e)]> >++ c_of_fundefs_ctx C
+      end).
+Defined.
+
+Fixpoint exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx.
