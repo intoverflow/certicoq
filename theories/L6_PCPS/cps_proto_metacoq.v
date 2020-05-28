@@ -1,0 +1,31 @@
+From Coq Require Import ZArith.ZArith Lists.List Strings.String.
+Import ListNotations.
+
+From MetaCoq Require Import Template.All.
+
+From CertiCoq.L6 Require Import Prototype.
+
+Inductive var      := mk_var : positive -> var.
+Inductive fun_tag  := mk_fun_tag : positive -> fun_tag.
+Inductive ctor_tag := mk_ctor_tag : positive -> ctor_tag.
+Inductive prim     := mk_prim : positive -> prim.
+
+Inductive exp : Type :=
+| Econstr (x : var) (c : ctor_tag) (ys : list var) (e : exp)
+| Ecase (x : var) (ces : list (ctor_tag * exp))
+| Eproj (x : var) (c : ctor_tag) (n : N) (y : var) (e : exp)
+| Eletapp (x : var) (f : var) (ft : fun_tag) (ys : list var) (e : exp)
+| Efun (fds : fundefs) (e : exp)
+| Eapp (f : var) (ft : fun_tag) (xs : list var)
+| Eprim (x : var) (p : prim) (ys : list var) (e : exp)
+| Ehalt (x : var)
+with fundefs : Type :=
+| Fcons (f : var) (ft : fun_tag) (xs : list var) (e : exp) (fds : fundefs)
+| Fnil.
+
+(* Takes a while to save aux_data *)
+Run TemplateProgram (mk_Frame_ops
+  "exp" exp [var; fun_tag; ctor_tag; prim; N; list var]).
+
+Instance Frame_exp : Frame exp_univ := exp_Frame_ops.
+Instance AuxData_exp : AuxData exp_univ := exp_aux_data.

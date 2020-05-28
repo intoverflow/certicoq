@@ -16,7 +16,7 @@ Import ListNotations.
 
 Module M := Maps.PTree.
 
-
+(** * CPS Expressions *)
 
 Definition var      := M.elt. (* value variables *)
 Definition fun_tag  := M.elt. (* discrimination tags for functions *)
@@ -24,23 +24,11 @@ Definition ind_tag  := M.elt. (* discrimination tags for inductive types *)
 Definition ctor_tag := M.elt. (* discrimination tags for constructors *)
 Definition prim     := M.elt. (* primitive operators *)
 
-
-(* Remark.  It sure would be nice if we could use abstraction here,
-   so that M was instantiated differently for vars, types, and tags,
-   such that [var] was not beta-eta equal to [type].  But then the
-   type of maps [M.t] would have to be abstract, and that in turn
-   would mean that Coq could not determine that [M.t(A)] is covariant
-   in A.  Which, in turn, would make impossible the inductive definition
-   of [val], below.
- *)
-
-
 (* To describe the [i]th field of a record, we use type BinNat,
    that is, [N].  This has a more efficient representation than [nat],
    which is a consideration for programs that process large
    abstract syntax trees.
  *)
-
 
 (* Given a list of tagged variants, return the one with the matching tag. *)
 Fixpoint findtag {A} (cl: list (ctor_tag * A)) (c: ctor_tag) : option A :=
@@ -48,8 +36,6 @@ Fixpoint findtag {A} (cl: list (ctor_tag * A)) (c: ctor_tag) : option A :=
   | (c',a)::cl' => if M.elt_eq c' c then Some a else findtag cl' c
   | nil => None
   end.
-
-(** * CPS Expressions *)
 
 (* Expressions [exp] of the CPS language. *)
 Inductive exp : Type :=
@@ -105,6 +91,16 @@ with fundefs : Type :=
    (small-step) semantics requires this.  Some of the transformation
    (optimization, rewrite) algorithms may require it.
 *)
+
+
+(* Remark.  It sure would be nice if we could use abstraction here,
+   so that M was instantiated differently for vars, types, and tags,
+   such that [var] was not beta-eta equal to [type].  But then the
+   type of maps [M.t] would have to be abstract, and that in turn
+   would mean that Coq could not determine that [M.t(A)] is covariant
+   in A.  Which, in turn, would make impossible the inductive definition
+   of [val], below.
+ *)
 
 
 (** Induction principles for exp anf fundefs *)
