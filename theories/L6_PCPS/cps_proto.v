@@ -120,17 +120,18 @@ Qed.
 
 (* ---------- exp_c with the right indices is isomorphic to cps.exp_ctx and cps.fundefs_ctx ---------- *)
 
+Definition c_of_ces (ces : list (cps.ctor_tag * cps.exp)) :
+  exp_c exp_univ_list_prod_ctor_tag_exp exp_univ_list_prod_ctor_tag_exp :=
+  fold_right
+    (fun '(c, e) frames =>
+      <[cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e)]> >++ frames)
+    <[]>
+    ces.
+
 Definition c_of_ces_ctx' c_of_exp_ctx (ces1 : list (cps.ctor_tag * cps.exp)) (c : cps.ctor_tag)
            (C : exp_ctx) (ces2 : list (cps.ctor_tag * cps.exp))
   : exp_c exp_univ_exp exp_univ_list_prod_ctor_tag_exp :=
-  let prefix := 
-    fold_right
-      (fun '(c, e) frames =>
-        <[cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e)]> >++ frames)
-      <[]>
-      ces1
-  in
-  prefix
+  c_of_ces ces1
     >++ <[cons_prod_ctor_tag_exp0 (proto_of_ces ces2); pair_ctor_tag_exp1 (mk_ctor_tag c)]>
     >++ c_of_exp_ctx C.
 
@@ -221,7 +222,7 @@ Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
 Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_fundefs) : fundefs_ctx :=
   exp_c_rep C Hole_c.
 
-Local Ltac normalize_roundtrips :=
+Local Ltac normalize_roundtrips' :=
   try rewrite exp_c_rep_compose; simpl;
   try rewrite strip_vars_map;
   try rewrite exp_proto_exp;
@@ -236,25 +237,26 @@ Lemma fold_right_cons {A B} (f : A -> B -> B) z x xs :
   fold_right f z (x :: xs) = f x (fold_right f z xs).
 Proof. reflexivity. Qed.
 
+Lemma ces_ctx_c_ces_ctx : forall ces ces1 c C ces2,
+  exp_c_rep (c_of_ces ces) (ces1, c, C, ces2) = (ces ++ ces1, c, C, ces2).
+Proof.
+  clear; induction ces as [| [c e] ces IHces]; [reflexivity|]; intros ces1 ctr C ces2.
+  unfold c_of_ces; rewrite fold_right_cons, exp_c_rep_compose.
+  rewrite IHces; simpl; now normalize_roundtrips'.
+Qed.
+
 Fixpoint exp_ctx_c_exp_ctx (C : exp_ctx) : exp_ctx_of_c (c_of_exp_ctx C) = C
 with fundefs_ctx_c_fundefs_ctx (C : fundefs_ctx) : fundefs_ctx_of_c (c_of_fundefs_ctx C) = C.
 Proof.
   all: unfold exp_ctx_of_c, fundefs_ctx_of_c in *;
     destruct C; simpl;
     try reflexivity;
-    normalize_roundtrips;
+    normalize_roundtrips';
     try solve [(rewrite exp_ctx_c_exp_ctx + rewrite fundefs_ctx_c_fundefs_ctx); reflexivity].
   unfold c_of_ces_ctx'.
   rewrite exp_c_rep_compose.
-  match goal with |- context [fold_right ?f ?z] =>
-    assert (Harms : forall ces ces1 c C ces2,
-      exp_c_rep (fold_right f z ces) (ces1, c, C, ces2) = (ces ++ ces1, c, C, ces2))
-  end. {
-    clear; induction ces as [| [c e] ces IHces]; [reflexivity|]; intros ces1 ctr C ces2.
-    rewrite fold_right_cons, exp_c_rep_compose.
-    rewrite IHces; simpl; now normalize_roundtrips. }
-  normalize_roundtrips.
-  now rewrite Harms, app_nil_r, exp_ctx_c_exp_ctx.
+  normalize_roundtrips'.
+  now rewrite ces_ctx_c_ces_ctx, app_nil_r, exp_ctx_c_exp_ctx.
 Qed.
 
 Definition c_ctx_c_stmt {A B} : exp_c A B -> Prop :=
@@ -318,23 +320,23 @@ Proof.
           unfold exp_ctx_of_c, fundefs_ctx_of_c in IHn
         end
       end;
-      normalize_roundtrips;
+      normalize_roundtrips';
       try solve [erewrite IHn; eauto; rewrite frames_len_compose; simpl; omega].
     + destruct (exp_c_rep gs Hole_c) as [c e] eqn:Hce.
-      unfold c_of_ces_ctx, c_of_ces_ctx'; simpl; normalize_roundtrips.
+      unfold c_of_ces_ctx, c_of_ces_ctx'; simpl; normalize_roundtrips'.
       specialize IHn with (C := gs).
       rewrite Hce in IHn.
       erewrite <- IHn; eauto; [|rewrite frames_len_compose; simpl; omega].
       now rewrite frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
       destruct p as [[c'] e']; simpl.
-      unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips.
+      unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
       specialize IHn with (C := gs).
       rewrite Hces12 in IHn.
       erewrite <- IHn; eauto; [|rewrite frames_len_compose; simpl; omega].
       now rewrite frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
-      simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips.
+      simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
       specialize IHn with (C := gs).
       rewrite Hces12 in IHn.
       erewrite <- IHn; eauto; rewrite frames_len_compose; simpl; omega.
@@ -349,3 +351,102 @@ Proof. apply (c_ctx_c C). Qed.
 Corollary c_fundefs_ctx_c (C : exp_c exp_univ_exp exp_univ_fundefs) :
   c_of_fundefs_ctx (fundefs_ctx_of_c C) = C.
 Proof. apply (c_ctx_c C). Qed.
+
+Local Ltac normalize_roundtrips :=
+  try rewrite exp_c_rep_compose; simpl;
+  try rewrite strip_vars_map in *;
+  try rewrite exp_proto_exp in *;
+  try rewrite ces_proto_ces in *;
+  try rewrite fundefs_proto_fundefs in *;
+  try rewrite map_strip_vars in *;
+  try rewrite proto_exp_proto in *;
+  try rewrite proto_ces_proto in *;
+  try rewrite proto_fundefs_proto in *;
+  try rewrite c_exp_ctx_c in *;
+  try rewrite c_fundefs_ctx_c in *;
+  try rewrite exp_ctx_c_exp_ctx in *;
+  try rewrite fundefs_ctx_c_fundefs_ctx in *.
+
+(* ---------- package all the above together ---------- *)
+
+Class Iso A B := {
+  isoAofB : B -> A;
+  isoBofA : A -> B;
+  isoABA : forall x, isoAofB (isoBofA x) = x;
+  isoBAB : forall x, isoBofA (isoAofB x) = x }.
+
+Notation "'![' e ']'" := (isoBofA e).
+Notation "'[' e ']!'" := (isoAofB e).
+
+Instance Iso_exp : Iso exp cps.exp := {
+  isoAofB := proto_of_exp;
+  isoBofA := exp_of_proto;
+  isoABA := proto_exp_proto;
+  isoBAB := exp_proto_exp }.
+
+Instance Iso_exp_c_exp_ctx : Iso (exp_c exp_univ_exp exp_univ_exp) exp_ctx := {
+  isoAofB := c_of_exp_ctx;
+  isoBofA := exp_ctx_of_c;
+  isoABA := c_exp_ctx_c;
+  isoBAB := exp_ctx_c_exp_ctx }.
+
+Instance Iso_fundefs_c_fundefs_ctx : Iso (exp_c exp_univ_exp exp_univ_fundefs) fundefs_ctx := {
+  isoAofB := c_of_fundefs_ctx;
+  isoBofA := fundefs_ctx_of_c;
+  isoABA := c_fundefs_ctx_c;
+  isoBAB := fundefs_ctx_c_fundefs_ctx }.
+
+Lemma iso_proof {A B} `{Iso A B} (P : A -> Prop) (Hxy : forall y, P [y]!) : forall x, P x.
+Proof.
+  intros x; specialize (Hxy ![x]).
+  now rewrite isoABA in Hxy.
+Qed.
+
+Lemma iso_BofA_inj {A B} `{Iso A B} x y : ![x] = ![y] -> x = y.
+Proof.
+  intros Heq; apply f_equal with (f := fun x => [x]!) in Heq.
+  now repeat rewrite isoABA in Heq.
+Qed.
+
+Lemma iso_AofB_inj {A B} `{Iso A B} x y : [x]! = [y]! -> x = y.
+Proof.
+  intros Heq; apply f_equal with (f := fun x => ![x]) in Heq.
+  now repeat rewrite isoBAB in Heq.
+Qed.
+
+(* ---------- context application and composition agree ---------- *)
+
+Fixpoint app_exp_ctx_eq (C : exp_ctx) e {struct C} :
+  C |[ e ]| = exp_of_proto (c_of_exp_ctx C ⟦ proto_of_exp e ⟧)
+with app_fundefs_ctx_eq (C : fundefs_ctx) e {struct C} :
+  app_f_ctx_f C e = fundefs_of_proto (c_of_fundefs_ctx C ⟦ proto_of_exp e ⟧).
+Proof.
+  all: destruct C; simpl;
+    try lazymatch goal with
+    | |- context [(?fs >++ ?gs) ⟦ _ ⟧] =>
+      rewrite (@frames_compose_law exp_univ Frame_exp _ _ _ fs gs)
+    end; simpl; normalize_roundtrips; try reflexivity;
+    try solve [(rewrite <- app_exp_ctx_eq + rewrite <- app_fundefs_ctx_eq); reflexivity].
+  f_equal.
+  unfold c_of_ces_ctx'.
+  repeat rewrite frames_compose_law.
+  rewrite <- (proto_exp_proto (c_of_exp_ctx C ⟦ proto_of_exp e ⟧)).
+  rewrite <- app_exp_ctx_eq.
+  simpl.
+  assert (Harms : forall ces1 ces2, c_of_ces ces1 ⟦ ces2 ⟧ = proto_of_ces ces1 ++ ces2). {
+    clear; induction ces1 as [| [c e] ces1 IHces]; intros ces2; [reflexivity|].
+    unfold c_of_ces; now rewrite fold_right_cons, frames_compose_law, IHces. }
+  rewrite Harms, map_app; normalize_roundtrips.
+  now rewrite ces_proto_ces.
+Qed.
+
+Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) : forall e,
+  C ⟦ e ⟧ = proto_of_exp (exp_ctx_of_c C |[ exp_of_proto e ]|).
+Proof.
+  pattern C; revert C.
+  apply iso_proof; intros C.
+  intros e; pattern e; revert e.
+  apply iso_proof; intros e; simpl.
+  apply iso_BofA_inj; simpl; repeat normalize_roundtrips.
+  symmetry; apply app_exp_ctx_eq.
+Qed.
