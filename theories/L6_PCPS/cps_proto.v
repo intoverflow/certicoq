@@ -52,7 +52,8 @@ with fundefs_of_proto (fds : fundefs) : cps.fundefs :=
     cps.Fcons f ft (strip_vars xs) (exp_of_proto e) (fundefs_of_proto fds)
   | Fnil => cps.Fnil
   end.
-Definition ces_of_proto := map (fun '(mk_ctor_tag c, e) => (c, exp_of_proto e)).
+Definition ce_of_proto := fun '(mk_ctor_tag c, e) => (c, exp_of_proto e).
+Definition ces_of_proto := map ce_of_proto.
 
 Fixpoint proto_of_exp (e : cps.exp) : exp :=
   match e with
@@ -72,7 +73,8 @@ with proto_of_fundefs (fds : cps.fundefs) : fundefs :=
     Fcons (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_exp e) (proto_of_fundefs fds)
   | cps.Fnil => Fnil
   end.
-Definition proto_of_ces := map (fun '(c, e) => (mk_ctor_tag c, proto_of_exp e)).
+Definition proto_of_ce := fun '(c, e) => (mk_ctor_tag c, proto_of_exp e).
+Definition proto_of_ces := map proto_of_ce.
 
 Lemma strip_vars_map xs : strip_vars (map mk_var xs) = xs.
 Proof. induction xs as [|x xs IHxs]; simpl; congruence. Qed.
@@ -143,4 +145,56 @@ Proof.
       end).
 Defined.
 
-Fixpoint exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx.
+Inductive zero : Set :=.
+Definition univ_rep (A : exp_univ) : Set :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => cps.ctor_tag * exp_ctx
+  | exp_univ_list_prod_ctor_tag_exp =>
+    list (cps.ctor_tag * cps.exp) * cps.ctor_tag * exp_ctx * list (cps.ctor_tag * cps.exp)
+  | exp_univ_fundefs => fundefs_ctx
+  | exp_univ_exp => exp_ctx
+  | exp_univ_var => zero
+  | exp_univ_fun_tag => zero
+  | exp_univ_ctor_tag => zero
+  | exp_univ_prim => zero
+  | exp_univ_N => zero
+  | exp_univ_list_var => zero
+  end.
+
+Local Ltac unbox_newtypes :=
+  repeat lazymatch goal with
+  | x : var |- _ => destruct x as [x]
+  | x : prim |- _ => destruct x as [x]
+  | x : fun_tag |- _ => destruct x as [x]
+  | x : ctor_tag |- _ => destruct x as [x]
+  end.
+
+Definition exp_frame_rep {A B} (f : exp_frame_t A B) : univ_rep A -> univ_rep B.
+Proof.
+  destruct f eqn:Hf; simpl; unbox_newtypes;
+   try lazymatch goal with |- zero -> _ => inversion 1 end.
+  - exact (fun ctx => (c, ctx)).
+  - exact (fun '(c, e) => ([], c, e, ces_of_proto l)).
+  - exact (fun '(ces1, c, e, ces2) => (ce_of_proto p :: ces1, c, e, ces2)).
+  - exact (fun ctx => Fcons1_c v f0 (strip_vars l) ctx (fundefs_of_proto f1)).
+  - exact (fun ctx => Fcons2_c v f0 (strip_vars l) (exp_of_proto e) ctx).
+  - exact (fun ctx => Econstr_c v c (strip_vars l) ctx).
+  - exact (fun '(ces1, c, e, ces2) => Ecase_c v ces1 c e ces2).
+  - exact (fun ctx => Eproj_c v c n v0 ctx).
+  - exact (fun ctx => Eletapp_c v v0 f0 (strip_vars l) ctx).
+  - exact (fun ctx => Efun2_c ctx (exp_of_proto e)).
+  - exact (fun ctx => Efun1_c (fundefs_of_proto f0) ctx).
+  - exact (fun ctx => Eprim_c v p (strip_vars l) ctx).
+Defined.
+
+Fixpoint exp_c_rep {A B} (C : exp_c A B) : univ_rep A -> univ_rep B :=
+  match C with
+  | <[]> => fun x => x
+  | C >:: f => fun x => exp_c_rep C (exp_frame_rep f x)
+  end.
+
+Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
+  exp_c_rep C Hole_c.
+
+Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_fundefs) : fundefs_ctx :=
+  exp_c_rep C Hole_c.
