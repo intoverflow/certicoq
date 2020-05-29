@@ -91,6 +91,9 @@ Proof.
   - destruct fds; simpl; try rewrite strip_vars_map; congruence.
 Qed.
 
+Lemma ces_proto_ces ces : ces_of_proto (proto_of_ces ces) = ces.
+Proof. induction ces as [| [c e] ces IHces]; [reflexivity|simpl]; now rewrite exp_proto_exp, IHces. Qed.
+
 Lemma map_strip_vars xs : map mk_var (strip_vars xs) = xs.
 Proof. induction xs as [| [x] xs IHxs]; simpl; congruence. Qed.
 
@@ -107,6 +110,12 @@ Proof.
     repeat f_equal.
     now apply proto_exp_proto.
   - destruct fds; simpl; destruct_sings; try rewrite map_strip_vars; congruence.
+Qed.
+
+Lemma proto_ces_proto ces : proto_of_ces (ces_of_proto ces) = ces.
+Proof.
+  induction ces as [| [[c] e] ces IHces]; [reflexivity|simpl];
+  now rewrite proto_exp_proto, IHces.
 Qed.
 
 (* ---------- exp_c with the right indices is isomorphic to cps.exp_ctx and cps.fundefs_ctx ---------- *)
@@ -126,11 +135,12 @@ Proof.
         let prefix := 
           fold_right
             (fun '(c, e) frames =>
-              frames >:: cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e))
-            <[Ecase1 (mk_var x)]>
+              <[cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e)]> >++ frames)
+            <[]>
             ces1
         in
-        prefix
+        <[Ecase1 (mk_var x)]>
+          >++ prefix
           >++ <[cons_prod_ctor_tag_exp0 (proto_of_ces ces2); pair_ctor_tag_exp1 (mk_ctor_tag c)]>
           >++ c_of_exp_ctx C
       | Efun1_c fds C => <[Efun1 (proto_of_fundefs fds)]> >++ c_of_exp_ctx C
@@ -193,8 +203,49 @@ Fixpoint exp_c_rep {A B} (C : exp_c A B) : univ_rep A -> univ_rep B :=
   | C >:: f => fun x => exp_c_rep C (exp_frame_rep f x)
   end.
 
+Lemma exp_c_rep_cons {A B C} (f : exp_frame_t A B) (fs : exp_c B C) x :
+  exp_c_rep (fs >:: f) x = exp_c_rep fs (exp_frame_rep f x).
+Proof. reflexivity. Qed.
+
+Fixpoint exp_c_rep_compose {A B C} (fs : exp_c A B) (gs : exp_c B C) x {struct fs} :
+  exp_c_rep (gs >++ fs) x = exp_c_rep gs (exp_c_rep fs x).
+Proof.
+  destruct fs as [ |A' AB B' f fs]; [reflexivity|simpl].
+  now rewrite exp_c_rep_compose.
+Qed.
+
+Lemma fold_right_cons {A B} (f : A -> B -> B) z x xs :
+  fold_right f z (x :: xs) = f x (fold_right f z xs).
+Proof. reflexivity. Qed.
+
 Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
   exp_c_rep C Hole_c.
 
 Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_fundefs) : fundefs_ctx :=
   exp_c_rep C Hole_c.
+
+Local Ltac normalize_roundtrips :=
+  try rewrite exp_c_rep_compose; simpl;
+  try rewrite strip_vars_map;
+  try rewrite exp_proto_exp;
+  try rewrite ces_proto_ces;
+  try rewrite fundefs_proto_fundefs.
+
+Fixpoint exp_ctx_c_exp_ctx (C : exp_ctx) : exp_ctx_of_c (c_of_exp_ctx C) = C
+with fundefs_ctx_c_fundefs_ctx (C : fundefs_ctx) : fundefs_ctx_of_c (c_of_fundefs_ctx C) = C.
+Proof.
+  all: unfold exp_ctx_of_c, fundefs_ctx_of_c in *;
+    destruct C; simpl;
+    try reflexivity;
+    normalize_roundtrips;
+    try solve [(rewrite exp_ctx_c_exp_ctx + rewrite fundefs_ctx_c_fundefs_ctx); reflexivity].
+  rewrite exp_c_rep_compose.
+  match goal with |- context [fold_right ?f ?z] =>
+    assert (Harms : forall ces ces1 c C ces2,
+      exp_c_rep (fold_right f z ces) (ces1, c, C, ces2) = (ces ++ ces1, c, C, ces2))
+  end. {
+    clear; induction ces as [| [c e] ces IHces]; [reflexivity|]; intros ces1 ctr C ces2.
+    rewrite fold_right_cons, exp_c_rep_compose.
+    rewrite IHces; simpl; now normalize_roundtrips. }
+  now rewrite Harms, app_nil_r, exp_ctx_c_exp_ctx.
+Qed.
