@@ -402,6 +402,8 @@ Proof.
   now rewrite isoABA in Hxy.
 Qed.
 
+Ltac iso x := pattern x; revert x; apply iso_proof; intros x.
+
 Lemma iso_BofA_inj {A B} `{Iso A B} x y : ![x] = ![y] -> x = y.
 Proof.
   intros Heq; apply f_equal with (f := fun x => [x]!) in Heq.
@@ -414,7 +416,7 @@ Proof.
   now repeat rewrite isoBAB in Heq.
 Qed.
 
-(* ---------- context application and composition agree ---------- *)
+(* ---------- exp_c application agreees with app_ctx_f + app_f_ctx_f ---------- *)
 
 Fixpoint app_exp_ctx_eq (C : exp_ctx) e {struct C} :
   C |[ e ]| = exp_of_proto (c_of_exp_ctx C ⟦ proto_of_exp e ⟧)
@@ -440,13 +442,127 @@ Proof.
   now rewrite ces_proto_ces.
 Qed.
 
+Local Ltac mk_corollary parent :=
+  apply iso_BofA_inj; simpl; repeat normalize_roundtrips;
+  symmetry; apply parent.
+
 Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) : forall e,
   C ⟦ e ⟧ = proto_of_exp (exp_ctx_of_c C |[ exp_of_proto e ]|).
+Proof. iso C; intros e; iso e; mk_corollary app_exp_ctx_eq. Qed.
+
+(* ---------- exp_c composition agreees with comp_ctx_f + comp_f_ctx_f ---------- *)
+
+(* Part 1: app_ctx_f C `ext_eq` app_ctx_f D ==> C = D (and ditto for app_f_ctx_f)
+   This allows to prove (>++) agrees with comp_ctx_f via fusion law *)
+
+Lemma app_l_inj {A} (xs ys zs : list A) : xs ++ ys = xs ++ zs -> ys = zs.
+Proof. induction xs; auto; simpl; inversion 1; intuition congruence. Qed.
+
+Fixpoint app_ctx_inj (C : exp_ctx) e1 e2 : app_ctx_f C e1 = app_ctx_f C e2 -> e1 = e2
+with app_f_ctx_inj (C : fundefs_ctx) e1 e2 : app_f_ctx_f C e1 = app_f_ctx_f C e2 -> e1 = e2.
 Proof.
-  pattern C; revert C.
-  apply iso_proof; intros C.
-  intros e; pattern e; revert e.
-  apply iso_proof; intros e; simpl.
-  apply iso_BofA_inj; simpl; repeat normalize_roundtrips.
-  symmetry; apply app_exp_ctx_eq.
+  all: destruct C; simpl; inversion 1;
+      try solve [congruence|now eapply app_f_ctx_inj|now eapply app_ctx_inj].
+  apply app_l_inj in H1; inversion H1.
+  now eapply app_ctx_inj.
 Qed.
+
+Corollary app_ctx_ne_inj C e1 e2 : e1 <> e2 -> app_ctx_f C e1 <> app_ctx_f C e2.
+Proof. intros; intros oops; now apply app_ctx_inj in oops. Qed.
+
+Corollary app_f_ctx_ne_inj C e1 e2 : e1 <> e2 -> app_f_ctx_f C e1 <> app_f_ctx_f C e2.
+Proof. intros; intros oops; now apply app_f_ctx_inj in oops. Qed.
+
+Local Ltac use_IH Heq IHexp IHfds :=
+  let HeqCD := fresh "HeqCD" in
+  match goal with
+  | C : exp_ctx, D : exp_ctx |- _ =>
+    assert (HeqCD : forall e, C |[ e ]| = D |[ e ]|)
+      by (clear - Heq; let e := fresh "e" in intros e; specialize (Heq e); congruence)
+  | C : fundefs_ctx, D : fundefs_ctx |- _ =>
+    assert (HeqCD : forall e, app_f_ctx_f C e = app_f_ctx_f D e)
+      by (clear - Heq; let e := fresh "e" in intros e; specialize (Heq e); congruence)
+  end;
+  (apply IHexp in HeqCD || apply IHfds in HeqCD);
+  specialize (Heq (cps.Ehalt xH)); inversion Heq; subst; congruence.
+
+Local Ltac cancel_app_l :=
+  match goal with H : ?l ++ _ = ?l ++ _ |- _ => apply app_l_inj in H end.
+
+Local Ltac hole_in_different_child Heq :=
+  let Heq1 := fresh "Heq1" in
+  let Heq2 := fresh "Heq2" in
+  pose (Heq1 := Heq (cps.Ehalt xH)); clearbody Heq1;
+  pose (Heq2 := Heq (cps.Ehalt (xO xH))); clearbody Heq2;
+  inversion Heq1; inversion Heq2; subst;
+  try match goal with H : ?l ++ _ = ?l ++ _ |- _ => apply app_l_inj in H; inversion H; subst end;
+  match goal with
+  | oops : ?C |[ ?e1 ]| = ?C |[ ?e2 ]| |- _ => apply app_ctx_inj in oops; inversion oops
+  | oops : app_f_ctx_f ?C ?e1 = app_f_ctx_f ?C ?e2 |- _ => apply app_f_ctx_inj in oops; inversion oops
+  end.
+
+Lemma app_ctx_ces_unique_prefix : forall l1 l2 (c1 c2 : cps.ctor_tag) r1 r2 C D
+  (Heq : forall e, l1 ++ (c1, C |[ e ]|) :: r1 = l2 ++ (c2, D |[ e ]|) :: r2),
+  l1 = l2.
+Proof.
+  intros l1 l2; remember (length l1 + length l2) as n;
+  generalize dependent l2; generalize dependent l1;
+  induction n as [n IHn] using lt_wf_ind;
+  intros [| [c1' e1'] l1] [| [c2' e2'] l2] Hlen; simpl; intros.
+  - reflexivity.
+  - hole_in_different_child Heq.
+  - hole_in_different_child Heq.
+  - assert ((c1', e1') = (c2', e2')) by (specialize (Heq (cps.Ehalt xH)); congruence).
+    f_equal; auto.
+    eapply IHn; eauto; [subst; simpl; omega|].
+    let e := fresh "e" in intros e; specialize (Heq e); inversion Heq; eassumption.
+Qed.
+
+Fixpoint app_ctx_unique_ctx (C D : exp_ctx) : (forall e, app_ctx_f C e = app_ctx_f D e) -> C = D
+with app_f_ctx_unique_ctx (C D : fundefs_ctx) : (forall e, app_f_ctx_f C e = app_f_ctx_f D e) -> C = D.
+Proof.
+  - destruct C, D; simpl; intros Heq; try solve
+      [reflexivity|specialize Heq with (cps.Ehalt xH); inversion Heq
+      |hole_in_different_child Heq
+      |use_IH Heq app_ctx_unique_ctx app_f_ctx_unique_ctx].
+    assert (l = l1). {
+      eapply app_ctx_ces_unique_prefix.
+      intros e; specialize (Heq e); inversion Heq; eassumption. }
+    subst; f_equal; try solve
+      [specialize (Heq (cps.Ehalt xH)); inversion Heq; try cancel_app_l; congruence].
+    apply app_ctx_unique_ctx.
+    intros e; specialize (Heq e); inversion Heq; try cancel_app_l; congruence.
+  - destruct C, D; simpl; intros Heq; try solve
+      [hole_in_different_child Heq
+      |use_IH Heq app_ctx_unique_ctx app_f_ctx_unique_ctx].
+Qed.
+
+(* Part 2: exp_c composition corresponds to comp_ctx_f, comp_f_ctx_f via fusion *)
+
+Lemma comp_exp_ctx_eq C D : comp_ctx_f C D = exp_ctx_of_c (c_of_exp_ctx C >++ c_of_exp_ctx D).
+Proof.
+  apply app_ctx_unique_ctx; intros e.
+  rewrite (app_exp_ctx_eq (exp_ctx_of_c _)) at 1; normalize_roundtrips.
+  rewrite (@frames_compose_law exp_univ Frame_exp).
+  rewrite <- (proto_exp_proto (c_of_exp_ctx D ⟦ _ ⟧)).
+  do 2 rewrite <- app_exp_ctx_eq.
+  now rewrite app_ctx_f_fuse.
+Qed.
+
+Lemma comp_fundefs_ctx_eq C D : comp_f_ctx_f C D = fundefs_ctx_of_c (c_of_fundefs_ctx C >++ c_of_exp_ctx D).
+Proof.
+  apply app_f_ctx_unique_ctx; intros e.
+  rewrite (app_fundefs_ctx_eq (fundefs_ctx_of_c _)) at 1; normalize_roundtrips.
+  rewrite (@frames_compose_law exp_univ Frame_exp).
+  rewrite <- (proto_exp_proto (c_of_exp_ctx D ⟦ _ ⟧)).
+  rewrite <- app_exp_ctx_eq.
+  rewrite <- app_fundefs_ctx_eq.
+  now rewrite app_f_ctx_f_fuse.
+Qed.
+
+Corollary comp_exp_c_eq C D : C >++ D = c_of_exp_ctx (comp_ctx_f (exp_ctx_of_c C) (exp_ctx_of_c D)).
+Proof. revert D; iso C; intros D; iso D; mk_corollary comp_exp_ctx_eq. Qed.
+
+Corollary comp_fundefs_c_eq C D :
+  C >++ D = c_of_fundefs_ctx (comp_f_ctx_f (fundefs_ctx_of_c C) (exp_ctx_of_c D)).
+Proof. revert D; iso C; intros D; iso D; mk_corollary comp_fundefs_ctx_eq. Qed.
