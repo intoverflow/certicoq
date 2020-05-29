@@ -185,7 +185,7 @@ Definition univ_rep (A : exp_univ) : Set :=
   | exp_univ_list_var => zero
   end.
 
-Local Ltac unbox_newtypes :=
+Ltac unbox_newtypes :=
   repeat lazymatch goal with
   | x : var |- _ => destruct x as [x]
   | x : prim |- _ => destruct x as [x]
@@ -376,7 +376,7 @@ Corollary c_fundefs_ctx_c (C : exp_c exp_univ_exp exp_univ_fundefs) :
   c_of_fundefs_ctx (fundefs_ctx_of_c C) = C.
 Proof. apply (c_ctx_c C). Qed.
 
-Local Ltac normalize_roundtrips :=
+Ltac normalize_roundtrips :=
   try rewrite exp_c_rep_compose; simpl;
   try rewrite strip_vars_map in *;
   try rewrite exp_proto_exp in *;
@@ -407,6 +407,12 @@ Instance Iso_exp : Iso exp cps.exp := {
   isoBofA := exp_of_proto;
   isoABA := proto_exp_proto;
   isoBAB := exp_proto_exp }.
+
+Instance Iso_fundefs : Iso fundefs cps.fundefs := {
+  isoAofB := proto_of_fundefs;
+  isoBofA := fundefs_of_proto;
+  isoABA := proto_fundefs_proto;
+  isoBAB := fundefs_proto_fundefs }.
 
 Instance Iso_exp_c_exp_ctx : Iso (exp_c exp_univ_exp exp_univ_exp) exp_ctx := {
   isoAofB := c_of_exp_ctx;
@@ -443,9 +449,9 @@ Qed.
 (* ---------- exp_c application agrees with app_ctx_f + app_f_ctx_f ---------- *)
 
 Fixpoint app_exp_ctx_eq (C : exp_ctx) e {struct C} :
-  C |[ e ]| = exp_of_proto (c_of_exp_ctx C ⟦ proto_of_exp e ⟧)
+  C |[ e ]| = ![([C]! : exp_c exp_univ_exp exp_univ_exp) ⟦ [e]! ⟧]
 with app_fundefs_ctx_eq (C : fundefs_ctx) e {struct C} :
-  app_f_ctx_f C e = fundefs_of_proto (c_of_fundefs_ctx C ⟦ proto_of_exp e ⟧).
+  app_f_ctx_f C e = ![([C]! : exp_c exp_univ_exp exp_univ_fundefs) ⟦ [e]! ⟧].
 Proof.
   all: destruct C; simpl;
     try lazymatch goal with
@@ -470,8 +476,8 @@ Local Ltac mk_corollary parent :=
   apply iso_BofA_inj; simpl; repeat normalize_roundtrips;
   symmetry; apply parent.
 
-Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) : forall e,
-  C ⟦ e ⟧ = proto_of_exp (exp_ctx_of_c C |[ exp_of_proto e ]|).
+Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) :
+  forall e, C ⟦ e ⟧ = [![C] |[ ![e] ]|]!.
 Proof. iso C; intros e; iso e; mk_corollary app_exp_ctx_eq. Qed.
 
 (* ---------- exp_c composition agrees with comp_ctx_f + comp_f_ctx_f ---------- *)
@@ -488,12 +494,10 @@ Local Ltac fold_exp_c_reps :=
     end
   end.
 
-Fixpoint comp_exp_ctx_eq C D {struct C} :
-  comp_ctx_f C D = exp_ctx_of_c (c_of_exp_ctx C >++ c_of_exp_ctx D)
-with comp_fundefs_ctx_eq C D {struct C} :
-  comp_f_ctx_f C D = fundefs_ctx_of_c (c_of_fundefs_ctx C >++ c_of_exp_ctx D).
+Fixpoint comp_exp_ctx_eq C D {struct C} : comp_ctx_f C D = ![[C]! >++ [D]!]
+with comp_fundefs_ctx_eq C D {struct C} : comp_f_ctx_f C D = ![[C]! >++ [D]!].
 Proof.
-  all: destruct C; simpl; unfold exp_ctx_of_c, fundefs_ctx_of_c;
+  all: simpl in *; destruct C; simpl; unfold exp_ctx_of_c, fundefs_ctx_of_c;
     repeat rewrite exp_c_rep_compose; simpl;
     fold_exp_c_reps; normalize_roundtrips; f_equal; try solve
     [reflexivity
@@ -514,9 +518,8 @@ Proof.
   rewrite exp_c_rep_compose in comp_exp_ctx_eq; fold_exp_c_reps; now normalize_roundtrips.
 Qed.
 
-Corollary comp_exp_c_eq C D : C >++ D = c_of_exp_ctx (comp_ctx_f (exp_ctx_of_c C) (exp_ctx_of_c D)).
+Corollary comp_exp_c_eq C D : C >++ D = [comp_ctx_f ![C] ![D]]!.
 Proof. revert D; iso C; intros D; iso D; mk_corollary comp_exp_ctx_eq. Qed.
 
-Corollary comp_fundefs_c_eq C D :
-  C >++ D = c_of_fundefs_ctx (comp_f_ctx_f (fundefs_ctx_of_c C) (exp_ctx_of_c D)).
+Corollary comp_fundefs_c_eq C D : C >++ D = [comp_f_ctx_f ![C] ![D]]!.
 Proof. revert D; iso C; intros D; iso D; mk_corollary comp_fundefs_ctx_eq. Qed.
