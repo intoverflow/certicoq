@@ -480,6 +480,10 @@ Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) :
   forall e, C ⟦ e ⟧ = [![C] |[ ![e] ]|]!.
 Proof. iso C; intros e; iso e; mk_corollary app_exp_ctx_eq. Qed.
 
+Corollary app_f_exp_c_eq (C : exp_c exp_univ_exp exp_univ_fundefs) :
+  forall e, C ⟦ e ⟧ = [app_f_ctx_f ![C] ![e]]!.
+Proof. iso C; intros e; iso e; mk_corollary app_fundefs_ctx_eq. Qed.
+
 (* ---------- exp_c composition agrees with comp_ctx_f + comp_f_ctx_f ---------- *)
 
 Local Ltac fold_exp_c_reps :=

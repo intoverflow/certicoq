@@ -17,7 +17,7 @@ Require Import ExtLib.Structures.Traversable.
 Require Import ExtLib.Core.RelDec.
 Require Import ExtLib.Data.Positive.
 Require Import Coq.Bool.Bool.
-Require Import identifiers.  (* for max_var *)
+Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
 Require Import AltBinNotations.
 Require Import L6.List_util L6.cps_util L6.state.
 
@@ -32,49 +32,6 @@ Section UNCURRY.
   (** We need to determine whether variables occur free in some terms.  We
       over-approximate by determining whether the variable occurs at all. *)
   
-  (* Returns true iff [k] is in [xs]. *)
-  Fixpoint occurs_in_vars (k:var) (xs:list var) : bool :=
-    match xs with
-    | nil => false
-    | x::xs1 => eq_var k x || occurs_in_vars k xs1
-    end.
-
-  (* Returns true iff [k] occurs (at all) within the expression [e] *)
-  (* TODO: move to identifier utils *)
-  Definition occurs_in_arms' (occurs_in_exp : var -> exp -> bool) k : list (ctor_tag * exp) -> bool :=
-    fix go arms :=
-      match arms with
-      | nil => false
-      | (_, e) :: arms1 => occurs_in_exp k e || go arms1
-      end.
-  Fixpoint occurs_in_exp (k:var) (e:exp) : bool :=
-    match e with
-    | Econstr z _ xs e1 =>
-      eq_var z k || occurs_in_vars k xs || occurs_in_exp k e1
-    | Ecase x arms =>
-      eq_var k x || occurs_in_arms' occurs_in_exp k arms
-    | Eproj z _ _ x e1 =>
-      eq_var z k || eq_var k x || occurs_in_exp k e1
-    | Eletapp z f _ xs e1 =>
-      eq_var z k || eq_var f k || occurs_in_vars k xs || occurs_in_exp k e1
-    | Efun fds e =>
-      occurs_in_fundefs k fds || occurs_in_exp k e
-    | Eapp x _ xs => eq_var k x || occurs_in_vars k xs
-    | Eprim z _ xs e1 =>
-      eq_var z k || occurs_in_vars k xs || occurs_in_exp k e1
-    | Ehalt x => eq_var x k
-    end
-  (* Returns true iff [k] occurs within the function definitions [fds] *)
-  with occurs_in_fundefs (k:var) (fds:fundefs) : bool :=
-         match fds with
-         | Fnil => false
-         | Fcons z _ zs e fds1 =>
-           eq_var z k || occurs_in_vars k zs || occurs_in_exp k e ||
-                   occurs_in_fundefs k fds1
-         end.
-  Definition occurs_in_arms := occurs_in_arms' occurs_in_exp.
-
-
   (* pair of 
      1- max number of arguments 
      2- encoding of inlining decision for beta-contraction phase *)
