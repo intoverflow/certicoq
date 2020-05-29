@@ -203,20 +203,12 @@ Fixpoint exp_c_rep {A B} (C : exp_c A B) : univ_rep A -> univ_rep B :=
   | C >:: f => fun x => exp_c_rep C (exp_frame_rep f x)
   end.
 
-Lemma exp_c_rep_cons {A B C} (f : exp_frame_t A B) (fs : exp_c B C) x :
-  exp_c_rep (fs >:: f) x = exp_c_rep fs (exp_frame_rep f x).
-Proof. reflexivity. Qed.
-
 Fixpoint exp_c_rep_compose {A B C} (fs : exp_c A B) (gs : exp_c B C) x {struct fs} :
   exp_c_rep (gs >++ fs) x = exp_c_rep gs (exp_c_rep fs x).
 Proof.
   destruct fs as [ |A' AB B' f fs]; [reflexivity|simpl].
   now rewrite exp_c_rep_compose.
 Qed.
-
-Lemma fold_right_cons {A B} (f : A -> B -> B) z x xs :
-  fold_right f z (x :: xs) = f x (fold_right f z xs).
-Proof. reflexivity. Qed.
 
 Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
   exp_c_rep C Hole_c.
@@ -229,7 +221,15 @@ Local Ltac normalize_roundtrips :=
   try rewrite strip_vars_map;
   try rewrite exp_proto_exp;
   try rewrite ces_proto_ces;
-  try rewrite fundefs_proto_fundefs.
+  try rewrite fundefs_proto_fundefs;
+  try rewrite map_strip_vars;
+  try rewrite proto_exp_proto;
+  try rewrite proto_ces_proto;
+  try rewrite proto_fundefs_proto.
+
+Lemma fold_right_cons {A B} (f : A -> B -> B) z x xs :
+  fold_right f z (x :: xs) = f x (fold_right f z xs).
+Proof. reflexivity. Qed.
 
 Fixpoint exp_ctx_c_exp_ctx (C : exp_ctx) : exp_ctx_of_c (c_of_exp_ctx C) = C
 with fundefs_ctx_c_fundefs_ctx (C : fundefs_ctx) : fundefs_ctx_of_c (c_of_fundefs_ctx C) = C.
@@ -249,3 +249,64 @@ Proof.
     rewrite IHces; simpl; now normalize_roundtrips. }
   now rewrite Harms, app_nil_r, exp_ctx_c_exp_ctx.
 Qed.
+
+Definition c_exp_ctx_c_stmt {A B} : exp_c A B -> Prop :=
+  match A, B with
+  | exp_univ_exp, exp_univ_exp => fun C => c_of_exp_ctx (exp_ctx_of_c C) = C
+  | exp_univ_exp, exp_univ_fundefs => fun C => c_of_fundefs_ctx (fundefs_ctx_of_c C) = C
+  | _, _ => fun _ => True
+  end.
+
+Fixpoint frames_len {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) : nat :=
+  match fs with
+  | <[]> => 0
+  | fs >:: f => S (frames_len fs)
+  end.
+
+Fixpoint frames_len_compose {U : Set} {F : U -> U -> Set} {A B C}
+         (fs : frames_t' F A B) (gs : frames_t' F B C) {struct fs} :
+  frames_len (gs >++ fs) = frames_len fs + frames_len gs.
+Proof.
+  destruct fs as [ |A' AB B' f fs]; [reflexivity|simpl].
+  now rewrite frames_len_compose.
+Qed.
+
+Fixpoint frames_split {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
+  (exists AB (g : F AB B) (gs : frames_t' F A AB), fs = <[g]> >++ gs) \/ (frames_len fs = 0).
+Proof.
+  destruct fs as [| A' AB B' f fs]; [now right|left].
+  destruct (frames_split _ _ _ _ fs) as [[AB' [g [gs Hgs]]] | Hnil].
+  - subst.
+    do 2 eexists; exists (gs >:: f); reflexivity.
+  - destruct fs; simpl in Hnil; inversion Hnil.
+    do 2 eexists; exists <[]>; reflexivity.
+Qed.
+
+Definition c_exp_ctx_c {A B} (C : exp_c A B) : c_exp_ctx_c_stmt C.
+Proof.
+  remember (frames_len C) as n eqn:Heqn; generalize dependent C; revert A B.
+  induction n as [n IHn] using lt_wf_ind.
+  intros A B C Hlen.
+  destruct (frames_split C) as [[AB [g [gs Hgs]]] | Hnil].
+  - destruct g, A; try exact I; unbox_newtypes; simpl;
+      unfold exp_ctx_of_c, fundefs_ctx_of_c;
+      subst C n; try rewrite exp_c_rep_compose; simpl;
+      try match goal with
+      | |- context [match ?e with end] =>
+        let H := fresh "H" in assert (H : zero) by exact e; inversion H
+      end;
+      match goal with |- context [exp_c_rep gs Hole_c] =>
+        match type of gs with
+        | frames_t' _ ?hole ?root =>
+          specialize IHn with (A := hole) (B := root);
+          unfold c_exp_ctx_c_stmt in IHn;
+          unfold exp_ctx_of_c, fundefs_ctx_of_c in IHn
+        end
+      end;
+      normalize_roundtrips;
+      try solve [
+        erewrite IHn; eauto; rewrite frames_len_compose; simpl; omega].
+    admit.
+  - destruct C; simpl in Hnil; inversion Hnil.
+    destruct A; try exact I; reflexivity.
+Admitted.    .
