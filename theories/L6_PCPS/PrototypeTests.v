@@ -858,7 +858,7 @@ Proof.
 Defined.
 Check rw_cp_top.
 
-Compute rw_cp_top (
+Compute (rw_cp_top (
   let x0 := mk_var 0 in
   let x1 := mk_var 1 in
   let x2 := mk_var 2 in
@@ -877,6 +877,4 @@ Compute rw_cp_top (
       (eProj x4 x0 (2%nat)
       (eProj x5 x2 (1%nat)
       (eApp x4 [x5]))));
-    (c3, (eApp x0 [x0]))]))).
-
-
+    (c3, (eApp x0 [x0]))])))).
