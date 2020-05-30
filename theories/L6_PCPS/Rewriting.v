@@ -9,8 +9,11 @@ Set Default Proof Mode "Ltac2".
 
 (* One layer of a 1-hole context *)
 Class Frame (U : Set) := {
-  univD : U -> Set; (* The type to poke holes in + all its transitive dependencies *)
-  frame_t : U -> U -> Set; (* Frames, indexed by hole type + root type *)
+  (* The type to poke holes in + all its transitive dependencies *)
+  univD : U -> Set;
+  (* Frames, indexed by hole type + root type *)
+  frame_t : U -> U -> Set;
+  (* Frame application *)
   frameD : forall {A B : U}, frame_t A B -> univD A -> univD B }.
 
 Class Frame_inj (U : Set) `{Frame U} :=
@@ -26,8 +29,11 @@ Arguments frames_t' {U} F _ _.
 Notation "C '>::' f" := (frames_cons f C) (at level 50, left associativity).
 Notation "<[]>" := (frames_nil).
 Notation "<[ x ; .. ; z ]>" := (frames_cons z .. (frames_cons x frames_nil) ..).
+
+(* The 1-hole contexts you usually want *)
 Definition frames_t {U : Set} `{Frame U} : U -> U -> Set := frames_t' frame_t.
 
+(* Context application *)
 Reserved Notation "C '⟦' x '⟧'" (at level 50, no associativity).
 Fixpoint framesD {U : Set} `{Frame U} {A B : U}
          (fs : frames_t A B) : univD A -> univD B :=
@@ -43,7 +49,7 @@ Lemma framesD_cons {U : Set} `{Frame U} {A B C : U}
   : (fs >:: f) ⟦ x ⟧ = fs ⟦ frameD f x ⟧.
 Proof. reflexivity. Defined.
 
-(* Composition of 1-hole contexts *)
+(* Context composition *)
 Reserved Notation "gs '>++' fs" (at level 50, left associativity).
 Fixpoint frames_compose {U : Set} {F : U -> U -> Set} {A B C : U}
          (fs : frames_t' F A B) : frames_t' F B C -> frames_t' F A C :=
@@ -52,6 +58,8 @@ Fixpoint frames_compose {U : Set} {F : U -> U -> Set} {A B C : U}
   | fs >:: f => fun gs => gs >++ fs >:: f
   end
 where "gs '>++' fs" := (frames_compose fs gs).
+
+(* Laws: functor laws + injectivity *)
 
 Lemma frames_id_law {U : Set} `{Frame U} {A} (x : univD A) : <[]> ⟦ x ⟧ = x.
 Proof. auto. Defined.
@@ -68,6 +76,8 @@ Proof.
   apply frames_inj with (fs := fs) in Heq; auto.
   apply (frame_inj f) in Heq; auto.
 Defined.
+
+(* Misc. lemmas (mostly about how frames_t is similar to list) *)
 
 Definition flip {U} (F : U -> U -> Set) : U -> U -> Set := fun A B => F B A.
 Fixpoint frames_rev {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) : frames_t' (flip F) B A :=
@@ -169,7 +179,7 @@ Fixpoint frames_len {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
 
 Fixpoint frames_len_compose {U : Set} {F : U -> U -> Set} {A B C}
          (fs : frames_t' F A B) (gs : frames_t' F B C) {struct fs} :
-  frames_len (gs >++ fs) = (frames_len fs + frames_len gs)%nat.
+  frames_len (gs >++ fs) = frames_len fs + frames_len gs.
 Proof.
   destruct fs as [ |A' AB B' f fs] > [reflexivity|simpl].
   now rewrite frames_len_compose.
@@ -185,6 +195,8 @@ Proof.
   - destruct fs; simpl in Hnil; inversion Hnil.
     do 2 eexists; exists <[]>; reflexivity.
 Qed.
+
+(* Misc. equality experiments *)
 
 Inductive Feq {U : Set} {F : U -> U -> Set} : forall {A B C D : U}, F A B -> F C D -> Prop :=
 | Feq_refl : forall {A B} (f : F A B), Feq f f.
@@ -276,74 +288,62 @@ Definition BottomUp {A} (rhs : A) : A := rhs.
 
 (* -------------------- The type of the rewriter -------------------- *)
 
+Section Rewriters.
+
+Context
+  (* Types the rewriter will encounter + type of 1-hole contexts *)
+  {U} `{HFrame : Frame U} 
+  (* The type of trees being rewritten *)
+  (root : U) 
+  (* One rewriting step *)
+  (R : relation (univD root)) 
+  (* Env and state that aren't relevant to R *)
+  (R_misc : Set) (S_misc : Set) 
+  (* Delayed computation *)
+  (D : forall A, univD A -> Set) `{@Delayed U HFrame (@D)} 
+  (* Env relevant to R; depends on current context C *)
+  (R_C : forall A, frames_t A root -> Set) 
+  (* Env relevant to R; depends on current focus e *)
+  (R_e : forall A, univD A -> Set) 
+  (* State relevant to R *)
+  (St : forall A, frames_t A root -> univD A -> Set).
+
+Section Rewriters1.
+
+(* The current context and focus *)
+Context {A} (C : frames_t A root) (e : univD A).
+
 (* The result returned by a rewriter when called with context C and exp e *)
-Record result {U} `{Frame U} (root : U) (R : relation (univD root))
-       (S_misc : Set)
-       (St : forall {A}, frames_t A root -> univD A -> Set)
-       {A} (C : frames_t A root) (e : univD A) : Set := mk_result {
+Record result : Set := mk_result {
   resTree : univD A;
-  resState : St C resTree;
+  resState : St _ C resTree;
   resSMisc : S_misc;
   resProof : clos_refl_trans _ R (C ⟦ e ⟧) (C ⟦ resTree ⟧) }.
 
-Definition rw_for {U} `{Frame U} (root : U) (R : relation (univD root))
-  (S_misc : Set)
-  (R_C : forall {A}, frames_t A root -> Set) (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  {A} (C : frames_t A root) (e : univD A) : Set
-:=
-  R_C C -> R_e e -> St C e -> 
-  result root R S_misc (@St) C e.
+Definition rw_for : Set := R_C _ C -> R_e _ e -> St _ C e -> result.
 
-Definition rw_for' {U} `{Frame U} (root : U) (R : relation (univD root))
-  (S_misc : Set)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  {A} (C : frames_t A root) (e : univD A) : Set
-:=
-  R_C C -> St C e -> 
-  result root R S_misc (@St) C e.
+Definition rw_for' : Set := R_C _ C -> St _ C e -> result.
+
+End Rewriters1.
 
 (* The identity rewriter *)
-Definition rw_id {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) :
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C e.
+Definition rw_id (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) : rw_for C e.
 Proof. intros r_C r_e s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
 
-Definition rw_id' {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) :
-  rw_for' root R S_misc (@R_C) (@St) C e.
+Definition rw_id' (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) : rw_for' C e.
 Proof. intros r_C s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
 
 (* The simplest rewriter *)
-Definition rw_base {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (D : forall {A}, univD A -> Set) `{@Delayed U H (@D)}
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) (d : D e) :
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C (delayD e d).
+Definition rw_base (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) (d : D _ e) :
+  rw_for C (delayD e d).
 Proof. intros r_C r_e s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
 
 (* Extend rw1 with rw2 *)
-Definition rw_chain {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (D : forall {A}, univD A -> Set) `{@Delayed U H (@D)}
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  A (C : frames_t A root) (e : univD A) (d : D e)
-  (rw1 : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C (delayD e d))
-  (rw2 : forall e, R_misc -> S_misc -> rw_for' root R S_misc (@R_C) (@St) C e)
-  : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C (delayD e d).
+Definition rw_chain
+  A (C : frames_t A root) (e : univD A) (d : D _ e)
+  (rw1 : R_misc -> S_misc -> rw_for C (delayD e d))
+  (rw2 : forall e, R_misc -> S_misc -> rw_for' C e)
+  : R_misc -> S_misc -> rw_for C (delayD e d).
 Proof.
   intros mr ms r_C r_e s.
   destruct (rw1 mr ms r_C r_e s) as [e' s' ms' Hrel]; clear s ms.
@@ -351,27 +351,36 @@ Proof.
   econstructor > [exact s''|exact ms''|eapply rt_trans; eauto].
 Defined.
 
-Definition rw_Put {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
+End Rewriters.
+
+Section Rewriters.
+
+(* Here the arguments are slightly different (this matters to the MetaCoq): each combinator
+   takes in two extra parameters R_misc and S_misc. *)
+Context
+  {U}
+  `{HFrame : Frame U}
+  (root : U)
+  (R : relation (univD root))
+  (R_misc : Set)
+  (S_misc : Set)
   (mr : R_misc) (ms : S_misc)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  A (C : frames_t A root) (new_state : S_misc) (rhs : univD A)
+  (R_C : forall A, frames_t A root -> Set)
+  (R_e : forall A, univD A -> Set)
+  (St : forall A, frames_t A root -> univD A -> Set)
+  A (C : frames_t A root)
+.
+
+Definition rw_Put (new_state : S_misc) (rhs : univD A)
   (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
   rw_for root R S_misc (@R_C) (@R_e) (@St) C (Put new_state rhs).
 Proof.
   unfold Put; intros r_C r_e s.
-  exact (rw mr new_state r_C r_e s).
+  (* Hack: the extra redex is to force Coq's section mechanism to include ms as a parameter. *)
+  exact (rw mr ((fun _ => new_state) ms) r_C r_e s).
 Defined.
 
-Definition rw_Modify {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (mr : R_misc) (ms : S_misc)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  A (C : frames_t A root) (f : S_misc -> S_misc) (rhs : univD A)
+Definition rw_Modify (f : S_misc -> S_misc) (rhs : univD A)
   (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
   rw_for root R S_misc (@R_C) (@R_e) (@St) C (Modify f rhs).
 Proof.
@@ -379,16 +388,12 @@ Proof.
   exact (rw mr (f ms) r_C r_e s).
 Defined.
 
-Definition rw_Local {U} `{Frame U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
-  (mr : R_misc) (ms : S_misc)
-  (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
-  (St : forall {A}, frames_t A root -> univD A -> Set)
-  A (C : frames_t A root) (f : R_misc -> R_misc) (rhs : univD A)
+Definition rw_Local (f : R_misc -> R_misc) (rhs : univD A)
   (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
   rw_for root R S_misc (@R_C) (@R_e) (@St) C (Local f rhs).
 Proof.
   unfold Local; intros r_C r_e s.
   exact (rw (f mr) ms r_C r_e s).
 Defined.
+
+End Rewriters.
