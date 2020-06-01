@@ -1,0 +1,186 @@
+Require Import Coq.Strings.String Coq.Classes.Morphisms.
+Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
+Require Import L6.cps_proto.
+Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
+Require Import AltBinNotations.
+Require Import L6.Ensembles_util L6.List_util L6.cps_util L6.state.
+
+Require Import Coq.Lists.List.
+Import ListNotations.
+
+Definition fresher_than (x : cps.var) (S : Ensemble cps.var) : Prop :=
+  forall y, y \in S -> (x > y)%positive.
+
+Lemma fresher_than_not_In x S : fresher_than x S -> ~ x \in S.
+Proof. intros Hfresh Hin; assert (x > x)%positive by now apply Hfresh. lia. Qed.
+
+Lemma fresher_than_antimon x S1 S2 : S1 \subset S2 -> fresher_than x S2 -> fresher_than x S1.
+Proof. intros HS12 Hfresh y Hy; apply Hfresh, HS12, Hy. Qed.
+
+Lemma fresher_than_monotonic x y S : (y >= x -> fresher_than x S -> fresher_than y S)%positive.
+Proof. intros Hxy Hfresh z Hz. assert (x > z)%positive by now apply Hfresh. lia. Qed.
+
+Lemma fresher_than_Union x S1 S2 : fresher_than x S1 -> fresher_than x S2 -> fresher_than x (S1 :|: S2).
+Proof. intros HS1 HS2 y Hy; destruct Hy as [y Hy|y Hy]; auto. Qed.
+
+Instance Proper_fresher_than_r : Proper (Logic.eq ==> Same_set _ ==> iff) fresher_than.
+Proof.
+  unfold Proper, "==>", fresher_than.
+  intros x y Hxy x0 y0 Hxy0; subst; split; intros Hforall dummy; now (rewrite <- Hxy0 || rewrite Hxy0).
+Qed.
+
+Definition fresh_copies (S : Ensemble cps.var) (l : list var) : Prop := Disjoint _ S (FromList ![l]) /\ NoDup l.
+
+Fixpoint gensyms {A} (x : cps.var) (xs : list A) : cps.var * list var :=
+  match xs with
+  | [] => (x, [])
+  | _ :: xs => let '(x', xs') := gensyms (1 + x)%positive xs in (x', mk_var x :: xs')
+  end.
+
+Lemma gensyms_len' {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> length xs' = length xs.
+Proof.
+  intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen; [simpl in Hgen; now inv Hgen|].
+  unfold gensyms in Hgen; fold @gensyms in Hgen.
+  destruct (gensyms (1 + x0)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; now simpl.
+Qed.
+
+Lemma gensyms_increasing' {A} :
+  forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> 
+  forall y, List.In y xs' -> (![y] >= x)%positive.
+Proof.
+  intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen [y] Hy;
+    [simpl in Hgen; now inv Hgen|].
+  unfold gensyms in Hgen; fold @gensyms in Hgen.
+  destruct (gensyms (1 + x0)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; simpl.
+  simpl in Hy; destruct Hy as [H|H]; [inversion H; simpl; lia|].
+  specialize IHxs with (x := (1 + x0)%positive) (y := mk_var y).
+  rewrite Hx0 in IHxs; unfold snd in IHxs.
+  specialize (IHxs x'' xs'' eq_refl H); unfold isoBofA, Iso_var, un_var in IHxs; lia.
+Qed.
+
+Local Ltac mk_corollary parent := 
+  intros x xs x' xs';
+  pose (Hparent := parent _ x xs); clearbody Hparent; intros H;
+  destruct (gensyms x xs); now inversion H.
+
+Lemma gensyms_upper {A} x (xs : list A) :
+  (fst (gensyms x xs) >= x)%positive /\
+  forall y, List.In y (snd (gensyms x xs)) -> (fst (gensyms x xs) > ![y])%positive.
+Proof.
+  revert x; induction xs; [simpl; split; [lia|easy]|intros x; split; [|intros [y] Hy]].
+  - unfold gensyms; fold @gensyms.
+    destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold fst.
+    specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
+    destruct IHxs; lia.
+  - unfold gensyms in *; fold @gensyms in *.
+    destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold fst; unfold snd in Hy.
+    specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
+    destruct IHxs as [IHxs IHxsy].
+    destruct Hy as [Hy|Hy]; [inversion Hy; simpl; lia|].
+    now specialize (IHxsy (mk_var y) Hy).
+Qed.
+
+Corollary gensyms_upper1 {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> (x' >= x)%positive.
+Proof. mk_corollary @gensyms_upper. Qed.
+
+Corollary gensyms_upper2 {A} :
+  forall x (xs : list A) x' xs', (x', xs') = gensyms x xs ->
+  forall y, List.In y xs' -> (x' > ![y])%positive.
+Proof. mk_corollary @gensyms_upper. Qed.
+
+Lemma gensyms_NoDup {A} x (xs : list A) : NoDup (snd (gensyms x xs)).
+Proof.
+  revert x; induction xs; intros; [now constructor|].
+  unfold gensyms; fold @gensyms.
+  destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold snd.
+  specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold snd in IHxs.
+  constructor; [|auto].
+  pose (Hinc := gensyms_increasing' (1 + x)%positive xs); clearbody Hinc.
+  rewrite Hxs' in Hinc; unfold snd in Hinc.
+  remember (snd (gensyms (1 + x)%positive xs)) as ys; clear - Hinc.
+  induction xs'; auto.
+  specialize (Hinc x' (a :: xs')).
+  intros [|Hin_ys]; [|apply IHxs'; auto; intros; apply Hinc; auto; now right].
+  assert (Hxa : In (mk_var x) (a :: xs')) by now left.
+  specialize (Hinc eq_refl (mk_var x) Hxa); unfold isoBofA, Iso_var, un_var in Hinc; lia.
+Qed.
+
+Corollary gensyms_NoDup' {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> NoDup xs'.
+Proof. mk_corollary @gensyms_NoDup. Qed.
+
+Lemma gensyms_fresher_than {A} (xs : list A) :
+  forall x y S x' xs',
+  fresher_than x S ->
+  (y >= x)%positive ->
+  (x', xs') = gensyms y xs ->
+  Disjoint _ S (FromList ![xs']).
+Proof.
+  induction xs.
+  - simpl; intros x y S x' xs' Hfresh Hyx Hgen; inversion Hgen; subst.
+    simpl; normalize_sets; eauto with Ensembles_DB.
+  - unfold gensyms; fold @gensyms; intros x y S x' xs' Hfresh Hyx Hgen.
+    destruct (gensyms (1 + y)%positive xs) as [x'' xs''] eqn:Hxs.
+    inversion Hgen; subst; simpl; normalize_sets.
+    apply Union_Disjoint_r; [|eapply (IHxs (1 + y)%positive); eauto; try lia].
+    + unfold fresher_than in Hfresh.
+      constructor; intros arb; intros HSx; unfold Ensembles.In in HSx.
+      destruct HSx as [arb HS Hx]; inversion Hx; subst.
+      specialize (Hfresh _ HS); lia.
+    + eapply fresher_than_monotonic; eauto; lia.
+Qed.
+
+Local Ltac show_Disjoint arb Harbx Harby :=
+  let Harb := fresh "Harb" in
+  constructor; intros arb Harb; unfold Ensembles.In in Harb;
+  destruct Harb as [arb Harbx Harby].
+
+Lemma gensyms_disjoint {A B} (xs : list A) (ys : list B) x0 x1 x2 xs' ys' :
+  (x1, xs') = gensyms x0 xs ->
+  (x2, ys') = gensyms x1 ys ->
+  Disjoint _ (FromList ![xs']) (FromList ![ys']).
+Proof.
+  intros Hxs' Hys'; show_Disjoint arb Harbx Harby.
+  unfold Ensembles.In, FromList in Harbx, Harby.
+  apply (in_map mk_var) in Harbx; apply (in_map mk_var) in Harby.
+  simpl in Harbx, Harby; normalize_roundtrips.
+  assert (x1 > ![mk_var arb])%positive by (eapply gensyms_upper2; eassumption); simpl in *.
+  assert (![mk_var arb] >= x1)%positive by (eapply gensyms_increasing'; eassumption); simpl in *.
+  lia.
+Qed.
+
+Lemma gensyms_list_fresher {A} x y (ys : list A) y' ys' S :
+  fresher_than x S ->
+  (y >= x)%positive ->
+  (y', ys') = gensyms y ys ->
+  Disjoint _ S (FromList ![ys']).
+Proof.
+  intros Hfresh Hyx Hgen; show_Disjoint arb Harbx Harby.
+  unfold Ensembles.In, FromList in Harby.
+  apply (in_map mk_var) in Harby; simpl in Harby; normalize_roundtrips.
+  assert (![mk_var arb] >= y)%positive by (eapply gensyms_increasing'; eauto); simpl in *.
+  assert (x > arb)%positive by now apply Hfresh.
+  lia.
+Qed.
+
+Lemma gensyms_spec {A} x S (xs : list A) x' xs' : 
+  fresher_than x S ->
+  (x', xs') = gensyms x xs ->
+  fresh_copies S xs' /\ fresher_than x' (S :|: FromList ![xs']) /\ length xs' = length xs.
+Proof.
+  intros Hfresh Hgen; unfold fresh_copies; split; [split|split].
+  - show_Disjoint arb Harbx Harby.
+    unfold Ensembles.In, FromList in Harby; apply (in_map mk_var) in Harby.
+    simpl in Harby; normalize_roundtrips.
+    assert (x > arb)%positive by now apply Hfresh.
+    assert (![mk_var arb] >= x)%positive by (eapply gensyms_increasing'; eauto).
+    simpl in *; lia.
+  - eapply gensyms_NoDup'; eauto.
+  - intros y Hy; destruct Hy as [y Hy|y Hy].
+    + assert (x > y)%positive by now apply Hfresh.
+      assert (x' >= x)%positive by (eapply gensyms_upper1; eauto); lia.
+    + unfold Ensembles.In, FromList in Hy; apply (in_map mk_var) in Hy.
+      simpl in Hy; normalize_roundtrips.
+      change y with ![mk_var y].
+      eapply gensyms_upper2; eauto.
+  - eapply gensyms_len'; eauto.
+Qed.
