@@ -27,6 +27,8 @@ From CertiCoq.L6 Require Import identifiers ctx Ensembles_util.
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
 
+Module M := cps.M.
+
 (* -------------------- exp is isomorphic to cps.exp -------------------- *)
 
 Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).

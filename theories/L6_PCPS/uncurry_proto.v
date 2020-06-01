@@ -74,14 +74,13 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   ~ ![f1] \in (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
   (* (3) next_x must be a fresh variable *)
   fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
-  (* (4) ft1 is the appropriate fun_tag and ms is an updated misc state. *)
-  fp_numargs = length fv + length gv /\
-  (True \/ let '(_, aenv, _, _) := ms in cps.M.get ![ft1] aenv <> None) -> (* TODO: proper side condition *)
+  (* (4) misc. let bindings (needed for computation of new ms) *)
+  fp_numargs = length fv + length gv -> ms = ms ->
   (* 'Irrelevant' guard *)
   When (fun (r : R_misc) (s : S_misc) =>
     let '(b, aenv, lm, s, cdata) := s in
     (* g must not have been already uncurried by an earlier pass *)
-    match cps.M.get ![g] lm with
+    match M.get ![g] lm with
     | Some true => true
     | _ => false
     end) ->
@@ -93,9 +92,9 @@ Inductive uncurry_step : exp -> exp -> Prop :=
            (* Set flag to indicate that a rewrite was performed (used to iterate to fixed point) *)
            let b := true in
            (* Mark g as uncurried *)
-           let lm := cps.M.set ![g] true lm in
+           let lm := M.set ![g] true lm in
            (* Update inlining heuristic so inliner knows to inline fully saturated calls to f *)
-           let s := (max (fst s) fp_numargs, (cps.M.set ![f] 1 (cps.M.set ![g] 2 (snd s)))) in
+           let s := (max (fst s) fp_numargs, (M.set ![f] 1 (M.set ![g] 2 (snd s)))) in
            (true, aenv, lm, s, cdata) : S_misc)
          (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
          (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
@@ -105,6 +104,22 @@ Lemma bool_true_false b : b = false -> b <> true. Proof. now destruct b. Qed.
 
 Local Ltac clearpose H x e :=
   pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
+
+(* Based on [get_fun_tag] from uncurry.v *)
+Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
+  let '(b, aenv, lm, s, cdata) := ms in
+  let n' := N.succ_pos n in
+  match M.get n' aenv with
+  | Some ft => (ft, ms)
+  | None =>
+    let '(mft, (cdata, tt)) := compM.runState (get_ftag n) tt (cdata, tt) in
+    match mft with
+    | compM.Err _ => (mk_fun_tag xH, ms) (* bogus *)
+    | compM.Ret ft =>
+      let ft := mk_fun_tag ft in
+      (ft, (b, M.set n' ft aenv, lm, s, cdata))
+    end
+  end.
 
 (* Uncurrying as a recursive function *)
 Definition uncurry_proto : rewriter exp_univ_exp uncurry_step R_misc S_misc (@delay_t) (@R_C) (@R_e) (@S).
@@ -127,33 +142,32 @@ Proof.
     rewrite Pos.eqb_eq in Hkk', Hgg'.
     (* Check whether g has already been uncurried before *)
     destruct ms as [[[[b aenv] lm] heuristic] cdata] eqn:Hms.
-    destruct (cps.M.get g lm) as [[|]|] eqn:Huncurried; [|exact failure..].
+    destruct (M.get g lm) as [[|]|] eqn:Huncurried; [|exact failure..].
     (* Check that {g, k} ∩ vars(ge) = ∅ *)
     destruct (occurs_in_exp g ![ge]) eqn:Hocc_g; [exact failure|]. (* TODO: avoid the conversion *)
     destruct (occurs_in_exp k ![ge]) eqn:Hocc_k; [exact failure|]. (* TODO: avoid the conversion *)
     apply bool_true_false in Hocc_g; apply bool_true_false in Hocc_k.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g, Hocc_k.
-    (* Generate ft1 + new misc state ms *)
-    idtac "TODO: generate ft1 and new misc state ms".
-    specialize success with (ft1 := mk_fun_tag xH). (* Until comp_data : Set, put some bogus stuff *)
-    specialize success with (ms := ms).
+    (* Generate ft1 + new misc state ms. Follow [get_fun_tag] from uncurry.v *)
+    pose (fp_numargs := length fv + length gv).
+    destruct (get_fun_tag (N.of_nat fp_numargs) ms) as [ft1 ms'] eqn:Hget_ft.
+    specialize success with (ft1 := ft1) (ms := ms') (fp_numargs := fp_numargs).
     (* Generate f1, fv1, gv1, next_x *)
     destruct s as [next_x Hnext_x].
     clearpose Hxgv1 xgv1 (gensyms next_x gv); destruct xgv1 as [next_x0 gv1].
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
+    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1) (next_x := (next_x1 + 1)%positive).
     (* Prove that all the above code actually satisfies the side condition *)
     assert (next_x0 >= next_x)%positive by (eapply gensyms_upper1; eassumption).
     assert (next_x1 >= next_x0)%positive by (eapply gensyms_upper1; eassumption).
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
-    eapply success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1) (next_x := (next_x1 + 1)%positive);
-      repeat match goal with |- _ /\ _ => split end;
+    eapply success; repeat match goal with |- _ /\ _ => split end;
       try solve [reflexivity|eassumption|subst;reflexivity].
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
     + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
       eapply fresher_than_monotonic; eauto; lia.
-    + left; exact I. (* TODO replace with actual proof *)
     + destruct (Maps.PTree.get _ _) as [[|]|] eqn:Hget'; [reflexivity|inversion Huncurried..].
   (* Obligation 2 of 2: explain how to maintain fresh name invariant across edit *)
   - clear; unfold Put, Rec; intros.
