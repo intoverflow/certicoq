@@ -10,6 +10,11 @@ Inductive fun_tag  := mk_fun_tag : positive -> fun_tag.
 Inductive ctor_tag := mk_ctor_tag : positive -> ctor_tag.
 Inductive prim     := mk_prim : positive -> prim.
 
+Definition un_var := fun '(mk_var x) => x.
+Definition un_fun_tag := fun '(mk_fun_tag x) => x.
+Definition un_ctor_tag := fun '(mk_ctor_tag x) => x.
+Definition un_prim := fun '(mk_prim x) => x.
+
 Inductive exp : Type :=
 | Econstr (x : var) (c : ctor_tag) (ys : list var) (e : exp)
 | Ecase (x : var) (ces : list (ctor_tag * exp))

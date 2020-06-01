@@ -27,6 +27,10 @@ Require Import CertiCoq.L6.ctx.
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
 
+(* The type of finite maps, restricted to Set (MetaCoq struggles a bit with Type) *)
+Definition PM : Set -> Set := Maps.PTree.tree.
+Module PM := Maps.PTree.
+
 (* -------------------- exp is isomorphic to cps.exp -------------------- *)
 
 Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).
@@ -370,6 +374,36 @@ Class Iso A B := {
 
 Notation "'![' e ']'" := (isoBofA e).
 Notation "'[' e ']!'" := (isoAofB e).
+
+Instance Iso_var : Iso var cps.var := {
+  isoAofB := mk_var;
+  isoBofA := un_var;
+  isoABA := fun '(mk_var x) => eq_refl;
+  isoBAB := fun x => eq_refl }.
+
+Instance Iso_vars : Iso (list var) (list cps.var) := {
+  isoAofB := map mk_var;
+  isoBofA := strip_vars;
+  isoABA := map_strip_vars;
+  isoBAB := strip_vars_map }.
+
+Instance Iso_fun_tag : Iso fun_tag cps.fun_tag := {
+  isoAofB := mk_fun_tag;
+  isoBofA := un_fun_tag;
+  isoABA := fun '(mk_fun_tag x) => eq_refl;
+  isoBAB := fun x => eq_refl }.
+
+Instance Iso_ctor_tag : Iso ctor_tag cps.ctor_tag := {
+  isoAofB := mk_ctor_tag;
+  isoBofA := un_ctor_tag;
+  isoABA := fun '(mk_ctor_tag x) => eq_refl;
+  isoBAB := fun x => eq_refl }.
+
+Instance Iso_prim : Iso prim cps.prim := {
+  isoAofB := mk_prim;
+  isoBofA := un_prim;
+  isoABA := fun '(mk_prim x) => eq_refl;
+  isoBAB := fun x => eq_refl }.
 
 Instance Iso_exp : Iso exp cps.exp := {
   isoAofB := proto_of_exp;
