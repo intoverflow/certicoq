@@ -13,6 +13,8 @@ Import ListNotations.
 
 Require L6.cps.
 
+(** * Auxiliary data used by the rewriter *)
+
 Definition R_misc : Set := unit.
 
 (* pair of 
@@ -29,8 +31,7 @@ Definition local_map : Set := cps.PM bool.
    1 - a boolean for tracking whether or not a reduction happens
    2 - Map recording the (new) fun_tag associated to each arity
    3 - local map from var to if function has already been uncurried
-   4 - Map for uncurried functions for a version of inlining
-*)
+   4 - Map for uncurried functions for a version of inlining *)
 Definition S_misc : Set := (bool * arity_map * local_map * St * comp_data). 
 
 Definition delay_t {A} (e : univD A) : Set := unit.
@@ -49,7 +50,8 @@ Instance Preserves_R_e_R_e : Preserves_R_e _ (@R_e). Proof. constructor. Defined
 (* We don't have to do anything to preserve a fresh variable as we move around *)
 Instance Preserves_S_S : Preserves_S _ exp_univ_exp (@S). Proof. constructor; intros; assumption. Defined.
 
-(* Uncurrying as a guarded rewrite rule *)
+(** * Uncurrying as a guarded rewrite rule *)
+
 Inductive uncurry_step : exp -> exp -> Prop :=
 | uncurry_cps :
   forall (C : frames_t exp_univ_fundefs exp_univ_exp)
@@ -100,10 +102,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
          (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
          (Fcons f1 ft1 (gv ++ fv) ge (Rec fds))) ⟧).
 
-Lemma bool_true_false b : b = false -> b <> true. Proof. now destruct b. Qed.
-
-Local Ltac clearpose H x e :=
-  pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
+(** * Uncurrying as a recursive function *)
 
 (* Based on [get_fun_tag] from uncurry.v *)
 Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
@@ -121,7 +120,11 @@ Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
     end
   end.
 
-(* Uncurrying as a recursive function *)
+Lemma bool_true_false b : b = false -> b <> true. Proof. now destruct b. Qed.
+
+Local Ltac clearpose H x e :=
+  pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
+
 Definition uncurry_proto : rewriter exp_univ_exp uncurry_step R_misc S_misc (@delay_t) (@R_C) (@R_e) (@S).
 Proof.
   mk_rw;
@@ -148,7 +151,7 @@ Proof.
     destruct (occurs_in_exp k ![ge]) eqn:Hocc_k; [exact failure|]. (* TODO: avoid the conversion *)
     apply bool_true_false in Hocc_g; apply bool_true_false in Hocc_k.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g, Hocc_k.
-    (* Generate ft1 + new misc state ms. Follow [get_fun_tag] from uncurry.v *)
+    (* Generate ft1 + new misc state ms *)
     pose (fp_numargs := length fv + length gv).
     destruct (get_fun_tag (N.of_nat fp_numargs) ms) as [ft1 ms'] eqn:Hget_ft.
     specialize success with (ft1 := ft1) (ms := ms') (fp_numargs := fp_numargs).
@@ -159,8 +162,6 @@ Proof.
     clearpose Hf1 f1 next_x1.
     specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1) (next_x := (next_x1 + 1)%positive).
     (* Prove that all the above code actually satisfies the side condition *)
-    assert (next_x0 >= next_x)%positive by (eapply gensyms_upper1; eassumption).
-    assert (next_x1 >= next_x0)%positive by (eapply gensyms_upper1; eassumption).
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
     eapply success; repeat match goal with |- _ /\ _ => split end;
