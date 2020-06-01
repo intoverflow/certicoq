@@ -2367,16 +2367,16 @@ Ltac mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr
           (* match goal with |- ?G => idtac G end; *)
           (* idtac) *)
           apply (@rw_Put univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear mr ms; intros mr ms; go tt)
+          clear dependent mr; clear dependent ms; intros mr ms; go tt)
         ltac:(fun f e' =>
           (* idtac "modify" f e'; *)
           (* match goal with |- ?G => idtac G end; *)
           (* idtac) *)
           apply (@rw_Modify univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear mr ms; intros mr ms; go tt)
+          clear dependent mr; clear dependent ms; intros mr ms; go tt)
         ltac:(fun f e' => 
           apply (@rw_Local univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear mr ms; intros mr ms; go tt)
+          clear dependent mr; clear dependent ms; intros mr ms; go tt)
         (* Recursive calls: *)
         ltac:(fun e' =>
           match e' with
@@ -2491,8 +2491,9 @@ Ltac mk_rewriter :=
          | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
            intros _ _; intros;
            lazymatch goal with He : delayD e d = _ |- _ => rewrite He end;
-           eapply (Hrun (MkRunRule rule)); [eassumption..|];
-           mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr ms
+           eapply (Hrun (MkRunRule rule) mr ms);
+           [try eassumption..
+           |mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr ms]
          (* Congruence cases *)
          | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
            intros _ _; intros;
