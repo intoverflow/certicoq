@@ -11,17 +11,19 @@ Require Import L6.Ensembles_util L6.List_util L6.cps_util L6.state.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
+Require L6.cps.
+
 Definition R_misc : Set := unit.
 
 (* pair of 
    1 - max number of arguments 
    2 - encoding of inlining decision for beta-contraction phase *)
-Definition St : Set := (nat * (PM nat))%type.
+Definition St : Set := (nat * (cps.PM nat))%type.
 (* 0 -> Do not inline, 1 -> uncurried function, 2 -> continuation of uncurried function *)
 
 (* Maps (arity+1) to the right fun_tag *)
-Definition arity_map : Set := PM fun_tag.
-Definition local_map : Set := PM bool.
+Definition arity_map : Set := cps.PM fun_tag.
+Definition local_map : Set := cps.PM bool.
  
 (* The state for this includes 
    1 - a boolean for tracking whether or not a reduction happens
@@ -29,8 +31,7 @@ Definition local_map : Set := PM bool.
    3 - local map from var to if function has already been uncurried
    4 - Map for uncurried functions for a version of inlining
 *)
-Definition S_misc : Set := (bool * arity_map * local_map * St). 
-(* TODO: comp_data for updating arity_map. Need to make comp_data be in Set *)
+Definition S_misc : Set := (bool * arity_map * local_map * St * comp_data). 
 
 Definition delay_t {A} (e : univD A) : Set := unit.
 
@@ -62,25 +63,14 @@ Definition S {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
   {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
 
 Instance Delayed_delay_t : Delayed (@delay_t).
-Proof.
-  unshelve econstructor.
-  - intros A e _; exact e.
-  - reflexivity.
-  - reflexivity.
-Defined.
-
-Instance Preserves_R_C_R_C : Preserves_R_C _ exp_univ_exp (@R_C).
-Proof. constructor. Defined.
-
-Instance Preserves_R_e_R_e : Preserves_R_e _ (@R_e).
-Proof. constructor. Defined.
+Proof. unshelve econstructor; [intros A e _; exact e|..]; reflexivity. Defined.
+Instance Preserves_R_C_R_C : Preserves_R_C _ exp_univ_exp (@R_C). Proof. constructor. Defined.
+Instance Preserves_R_e_R_e : Preserves_R_e _ (@R_e). Proof. constructor. Defined.
 
 (* We don't have to do anything to preserve a fresh variable as we move around *)
-Instance Preserves_S_S : Preserves_S _ exp_univ_exp (@S).
-Proof. constructor; intros; assumption. Defined.
+Instance Preserves_S_S : Preserves_S _ exp_univ_exp (@S). Proof. constructor; intros; assumption. Defined.
 
-Definition fresh_copies (S : Ensemble cps.var) (l : list var) : Prop :=
-  Disjoint _ S (FromList ![l]) /\ NoDup l.
+Definition fresh_copies (S : Ensemble cps.var) (l : list var) : Prop := Disjoint _ S (FromList ![l]) /\ NoDup l.
 
 (* Uncurrying as a guarded rewrite rule *)
 Inductive uncurry_step : exp -> exp -> Prop :=
@@ -109,10 +99,10 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
   (* (4) ft1 is the appropriate fun_tag and ms is an updated misc state. *)
   fp_numargs = length fv + length gv /\
-  (True \/ let '(_, aenv, _, _) := ms in PM.get ![ft1] aenv <> None) -> (* TODO: proper side condition *)
+  (True \/ let '(_, aenv, _, _) := ms in cps.M.get ![ft1] aenv <> None) -> (* TODO: proper side condition *)
   (* 'Irrelevant' guard *)
   When (fun (r : R_misc) (s : S_misc) =>
-    let '(b, aenv, lm, s) := s in
+    let '(b, aenv, lm, s, cdata) := s in
     (* g must not have been already uncurried by an earlier pass *)
     match cps.M.get ![g] lm with
     | Some true => true
@@ -122,14 +112,14 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   uncurry_step
     (C ⟦ Fcons f ft (k :: fv) (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds ⟧)
     (C ⟦ Put (
-           let '(b, aenv, lm, s) := ms in
+           let '(b, aenv, lm, s, cdata) := ms in
            (* Set flag to indicate that a rewrite was performed (used to iterate to fixed point) *)
            let b := true in
            (* Mark g as uncurried *)
-           let lm := PM.set ![g] true lm in
+           let lm := cps.M.set ![g] true lm in
            (* Update inlining heuristic so inliner knows to inline fully saturated calls to f *)
-           let s := (max (fst s) fp_numargs, (PM.set ![f] 1 (PM.set ![g] 2 (snd s)))) in
-           (true, aenv, lm, s) : S_misc)
+           let s := (max (fst s) fp_numargs, (cps.M.set ![f] 1 (cps.M.set ![g] 2 (snd s)))) in
+           (true, aenv, lm, s, cdata) : S_misc)
          (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
          (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
          (Fcons f1 ft1 (gv ++ fv) ge (Rec fds))) ⟧).
@@ -313,8 +303,8 @@ Proof.
     destruct (eq_var g g') eqn:Hgg'; [|exact failure].
     rewrite Pos.eqb_eq in Hkk', Hgg'.
     (* Check whether g has already been uncurried before *)
-    destruct ms as [[[b aenv] lm] heuristic] eqn:Hms.
-    destruct (PM.get g lm) as [[|]|] eqn:Huncurried; [|exact failure..].
+    destruct ms as [[[[b aenv] lm] heuristic] cdata] eqn:Hms.
+    destruct (cps.M.get g lm) as [[|]|] eqn:Huncurried; [|exact failure..].
     (* Check that {g, k} ∩ vars(ge) = ∅ *)
     destruct (occurs_in_exp g ![ge]) eqn:Hocc_g; [exact failure|]. (* TODO: avoid the conversion *)
     destruct (occurs_in_exp k ![ge]) eqn:Hocc_k; [exact failure|]. (* TODO: avoid the conversion *)

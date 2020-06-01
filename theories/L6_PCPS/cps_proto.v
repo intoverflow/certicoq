@@ -27,10 +27,6 @@ From CertiCoq.L6 Require Import identifiers ctx Ensembles_util.
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
 
-(* The type of finite maps, restricted to Set (MetaCoq struggles a bit with Type) *)
-Definition PM : Set -> Set := Maps.PTree.tree.
-Module PM := Maps.PTree.
-
 (* -------------------- exp is isomorphic to cps.exp -------------------- *)
 
 Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).
