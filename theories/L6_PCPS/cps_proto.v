@@ -9,7 +9,7 @@
    The actual definition of [exp] is in cps_proto_metacoq.v because the MetaCoq takes a
    lot of time and space (~6 GB) to run (most of this is for quoting exp_aux_data). *)
 
-From Coq Require Import ZArith.ZArith Lists.List.
+From Coq Require Import ZArith.ZArith Lists.List Sets.Ensembles.
 Import ListNotations.
 
 Require Import CertiCoq.L6.Prototype.
@@ -22,7 +22,7 @@ Print exp_frameD.
 Print exp_Frame_ops.
 
 Require CertiCoq.L6.cps.
-Require Import CertiCoq.L6.ctx.
+From CertiCoq.L6 Require Import identifiers ctx Ensembles_util.
 
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
@@ -34,6 +34,9 @@ Module PM := Maps.PTree.
 (* -------------------- exp is isomorphic to cps.exp -------------------- *)
 
 Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).
+
+Lemma strip_vars_app xs ys : strip_vars (xs ++ ys) = strip_vars xs ++ strip_vars ys.
+Proof. unfold strip_vars; now rewrite map_app. Qed.
 
 Fixpoint exp_of_proto (e : exp) : cps.exp :=
   match e with
@@ -530,3 +533,134 @@ Proof. revert D; iso C; intros D; iso D; mk_corollary comp_exp_ctx_eq. Qed.
 
 Corollary comp_fundefs_c_eq C D : C >++ D = [comp_f_ctx_f ![C] ![D]]!.
 Proof. revert D; iso C; intros D; iso D; mk_corollary comp_fundefs_ctx_eq. Qed.
+
+(* ---------- Facts about used variables ---------- *)
+
+Fixpoint used_ces (ces : list (ctor_tag * exp)) : Ensemble cps.var :=
+  match ces with
+  | [] => Empty_set _
+  | (_, e) :: ces => used_vars ![e] :|: used_ces ces
+  end.
+
+Definition used {A} : univD A -> Ensemble cps.var :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => fun '(_, e) => used_vars ![e]
+  | exp_univ_list_prod_ctor_tag_exp => used_ces
+  | exp_univ_fundefs => fun fds => used_vars_fundefs ![fds]
+  | exp_univ_exp => fun e => used_vars ![e]
+  | exp_univ_var => fun '(mk_var x) => [set x]
+  | exp_univ_fun_tag => fun _ => Empty_set _
+  | exp_univ_ctor_tag => fun _ => Empty_set _
+  | exp_univ_prim => fun _ => Empty_set _
+  | exp_univ_N => fun _ =>  Empty_set _
+  | exp_univ_list_var => fun xs => FromList ![xs]
+  end.
+
+(*
+(* TODO: use a prettier definition in terms of greatest lower bound of all [frameD f x]s.
+   Then show that for every hole type can find x1, x2 such that
+     glb_x (frameD f x) = frameD f x1 ∩ frameD f x2 *)
+Definition used_c {A B} (C : exp_c A B) : Ensemble cps.var :=
+  fun x => forall e, In _ (used (C ⟦ e ⟧)) x.
+
+Local Ltac clearpose H x e :=
+  pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
+
+Local Ltac insts_disagree H spec1 spec2 :=
+  pose (Hx1 := H spec1); clearbody Hx1; simpl in Hx1;
+  pose (Hx2 := H spec2); clearbody Hx2; simpl in Hx2;
+  repeat normalize_used_vars; inversion Hx1; now inversion Hx2.
+
+Lemma used_c_nil {A} : used_c (<[]> : exp_c A A) <--> Empty_set _.
+Proof.
+  split; [|auto with Ensembles_DB].
+  intros x Hx; unfold In, used_c in Hx; simpl in Hx.
+  destruct A; simpl in Hx.
+  - insts_disagree Hx (mk_ctor_tag xH, Ehalt (mk_var xH)) (mk_ctor_tag xH, Ehalt (mk_var (xO xH))).
+  - specialize (Hx []); assumption.
+  - specialize (Hx Fnil); simpl in Hx; now normalize_used_vars.
+  - insts_disagree Hx (Ehalt (mk_var xH)) (Ehalt (mk_var (xO xH))).
+  - insts_disagree Hx (mk_var xH) (mk_var (xO xH)).
+  - apply Hx; exact (mk_fun_tag xH).
+  - apply Hx; exact (mk_ctor_tag xH).
+  - apply Hx; exact (mk_prim xH).
+  - apply Hx; exact N0.
+  - specialize (Hx []); inversion Hx.
+Qed. *)
+
+Definition used_frame {A B} (f : exp_frame_t A B) : Ensemble cps.var. refine (
+  match f with
+  | pair_ctor_tag_exp0 e => used_vars ![e]
+  | pair_ctor_tag_exp1 c => Empty_set _
+  | cons_prod_ctor_tag_exp0 ces => used_ces ces
+  | cons_prod_ctor_tag_exp1 (_, e) => used_vars ![e]
+  | Fcons0 ft xs e fds => FromList ![xs] :|: used_vars ![e] :|: used_vars_fundefs ![fds]
+  | Fcons1 f xs e fds => ![f] |: FromList ![xs] :|: used_vars ![e] :|: used_vars_fundefs ![fds]
+  | Fcons2 f ft e fds => ![f] |: used_vars ![e] :|: used_vars_fundefs ![fds]
+  | Fcons3 f ft xs fds => ![f] |: FromList ![xs] :|: used_vars_fundefs ![fds]
+  | Fcons4 f ft xs e => ![f] |: FromList ![xs] :|: used_vars ![e]
+  | Econstr0 c ys e => FromList ![ys] :|: used_vars ![e]
+  | Econstr1 x ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
+  | Econstr2 x c e => ![x] |: used_vars ![e]
+  | Econstr3 x c ys => ![x] |: FromList ![ys]
+  | Ecase0 ces => used_ces ces
+  | Ecase1 x => [set ![x]]
+  | Eproj0 c n y e => ![y] |: used_vars ![e]
+  | Eproj1 x n y e => ![x] |: (![y] |: used_vars ![e])
+  | Eproj2 x c y e => ![x] |: (![y] |: used_vars ![e])
+  | Eproj3 x c n e => ![x] |: used_vars ![e]
+  | Eproj4 x c n y => ![x] |: [set ![y]]
+  | Eletapp0 f ft ys e => ![f] |: FromList ![ys] :|: used_vars ![e]
+  | Eletapp1 x ft ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
+  | Eletapp2 x f ys e => ![x] |: (![f] |: FromList ![ys] :|: used_vars ![e])
+  | Eletapp3 x f ft e => ![x] |: (![f] |: used_vars ![e])
+  | Eletapp4 x f ft ys => ![x] |: (![f] |: FromList ![ys])
+  | Efun0 e => used_vars ![e]
+  | Efun1 fds => used_vars_fundefs ![fds]
+  | Eapp0 ft xs => FromList ![xs]
+  | Eapp1 f xs => ![f] |: FromList ![xs]
+  | Eapp2 f ft => [set ![f]]
+  | Eprim0 p ys e => FromList ![ys] :|: used_vars ![e]
+  | Eprim1 x ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
+  | Eprim2 x p e => ![x] |: used_vars ![e]
+  | Eprim3 x p ys => ![x] |: FromList ![ys]
+  | Ehalt0 => Empty_set _
+  end).
+Defined.
+
+Lemma used_frameD {A B} (f : exp_frame_t A B) (x : univD A) :
+  used (frameD f x) <--> used_frame f :|: used x.
+Proof.
+  destruct f; simpl in *|-;
+  repeat (try match goal with p : _ * _ |- _ => destruct p end; unbox_newtypes); simpl;
+  repeat normalize_used_vars;
+  repeat normalize_sets;
+  try solve [rewrite Ensemble_iff_In_iff; intros arbitrary; repeat rewrite In_or_Iff_Union; tauto].
+  - induction l as [| [[c] e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
+    rewrite IHces; eauto with Ensembles_DB.
+  - induction x as [| [[c] e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
+    rewrite IHces; eauto with Ensembles_DB.
+Qed.
+
+Fixpoint used_c {A B} (C : exp_c A B) : Ensemble cps.var :=
+  match C with
+  | <[]> => Empty_set _
+  | C >:: f => used_c C :|: used_frame f
+  end.
+
+Fixpoint used_c_comp {A B root} (C : exp_c B root) (D : exp_c A B) {struct D} :
+  used_c (C >++ D) <--> used_c C :|: used_c D.
+Proof. destruct D; simpl; [|rewrite used_c_comp]; eauto with Ensembles_DB. Qed.
+
+Fixpoint used_app {A B} (C : exp_c A B) (e : univD A) {struct C} :
+  used (C ⟦ e ⟧) <--> used_c C :|: used e.
+Proof.
+  destruct C; simpl; [eauto with Ensembles_DB|].
+  rewrite used_app, used_frameD; eauto with Ensembles_DB.
+Qed.
+
+Definition used_iso (e : cps.exp) : used_vars e <--> @used exp_univ_exp [e]!.
+Proof. simpl; normalize_roundtrips; reflexivity. Qed.
+
+Definition used_vars_iso (e : univD exp_univ_exp) : used e <--> used_vars ![e].
+Proof. reflexivity. Qed.

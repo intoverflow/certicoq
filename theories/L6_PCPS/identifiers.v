@@ -5532,6 +5532,22 @@ Ltac normalize_occurs_free_ctx_in_ctx :=
   Lemma used_vars_Fnil : used_vars_fundefs Fnil <--> Empty_set _.
   Proof. solve_used_vars_lemma. Qed.
 
+  Ltac normalize_used_vars' := 
+    match goal with
+    | |- context [ used_vars (Econstr _ _ _ _) ] => rewrite used_vars_Econstr
+    | |- context [ used_vars (Eproj _ _ _ _ _) ] => rewrite used_vars_Eproj
+    | |- context [ used_vars (Ecase _ []) ] => rewrite used_vars_Ecase_nil
+    | |- context [ used_vars (Ecase _ (_ :: _)) ] => rewrite used_vars_Ecase_cons
+    | |- context [ used_vars (Ecase _ (_ ++ _)) ] => rewrite used_vars_Ecase_app
+    | |- context [ used_vars (Efun _ _) ] => rewrite used_vars_Efun
+    | |- context [ used_vars (Eletapp _ _ _ _ _) ] => rewrite used_vars_Eletapp
+    | |- context [ used_vars (Eapp _ _ _) ] => rewrite used_vars_Eapp
+    | |- context [ used_vars (Eprim _ _ _ _) ] => rewrite used_vars_Eprim
+    | |- context [ used_vars (Ehalt _) ] => rewrite used_vars_Ehalt
+    | |- context [ used_vars_fundefs (Fcons _ _ _ _ _) ] => rewrite used_vars_Fcons
+    | |- context [ used_vars_fundefs Fnil ] => rewrite used_vars_Fnil
+    end.
+
   Ltac normalize_used_vars := 
     match goal with
     | |- context [ used_vars (Econstr _ _ _ _) ] => rewrite used_vars_Econstr

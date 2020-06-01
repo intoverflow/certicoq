@@ -1,7 +1,7 @@
 (** Uncurrying written as a guarded rewrite rule *)
 
 Require Import Coq.Strings.String.
-Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles micromega.Lia.
+Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
 Require Import L6.Prototype.
 Require Import L6.cps_proto.
 Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
@@ -91,7 +91,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   fresh_copies (s :|: FromList ![gv1]) fv1 -> length fv1 = length fv /\
   ~ ![f1] \in (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
   (* (3) next_x must be a fresh variable *)
-  fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
+  fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
   (* (4) ft1 is the appropriate fun_tag and ms is an updated misc state. *)
   fp_numargs = length fv + length gv /\
   (True \/ let '(_, aenv, _, _) := ms in PM.get ![ft1] aenv <> None) -> (* TODO: proper side condition *)
@@ -205,8 +205,7 @@ Proof.
       clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
     end.
   (* Obligation 1 of 2: explain how to satisfy side conditions for the rewrite *)
-  - intros.
-    rename X into success, H0 into failure.
+  - intros. rename X into success, H0 into failure.
     (* Check nonlinearities *)
     destruct k as [k], k' as [k'], g as [g], g' as [g'].
     destruct (eq_var k k') eqn:Hkk'; [|exact failure].
@@ -239,7 +238,7 @@ Proof.
     + admit.
     + admit.
     + admit.
-    + admit.
+    + left; exact I. (* TODO replace with actual proof *)
     + destruct (Maps.PTree.get _ _) as [[|]|] eqn:Hget'; [reflexivity|inversion Huncurried..].
   (* Obligation 2 of 2: explain how to maintain fresh name invariant across edit *)
   - clear; unfold Put, Rec; intros.
@@ -248,5 +247,11 @@ Proof.
     (* For state, need create a fresh variable. Thankfully, we have one: next_x *)
     exists next_x; repeat match goal with H : _ /\ _ |- _ => destruct H end.
     eapply fresher_than_antimon; [|eassumption].
-    admit.
+    rewrite used_iso, isoABA, used_app.
+    subst s lhs. change (exp_of_proto ?A) with ![A].
+    rewrite used_iso, isoABA, used_app.
+    unfold used; simpl; unbox_newtypes.
+    do 10 normalize_used_vars'; repeat normalize_sets.
+    repeat rewrite strip_vars_app; repeat normalize_sets.
+    intros arbitrary; repeat rewrite In_or_Iff_Union; tauto.
 Admitted.
