@@ -130,6 +130,12 @@ Pipeline_utils
 Set_util
 Identifiers
 Uncurry
+Rewriting
+Prototype
+Cps_proto_metacoq
+Cps_proto
+Proto_util
+Uncurry_proto
 Color
 Shrink_cps
 Freshen
