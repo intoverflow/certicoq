@@ -13,6 +13,20 @@ Import VeriStar.
 
 CertiCoq -help.
 
+Fixpoint long_id n (x y z : nat) {struct n} :=
+  match n with
+  | 0 => 0
+  | S n => S (long_id n x y z)
+  end.
+
+CertiCoq Show IR -anf -ext "_anf" long_id.
+CertiCoq Show IR -ext "_cps" long_id.
+
+Definition easy_demo1 := 1 + 1.
+
+(* CertiCoq Compile -ext "_cps" easy_demo1. *)
+CertiCoq Show IR -ext "_cps" easy_demo1.
+
 Definition demo1 := List.app (List.repeat true 5) (List.repeat false 3).
 Definition demo2 := List.map negb [true; false; true].
 Definition demo3 := andb. 

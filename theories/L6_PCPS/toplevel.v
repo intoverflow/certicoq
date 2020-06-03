@@ -3,7 +3,8 @@ Require Import Common.compM.
 From CertiCoq Require Import L6.cps_proto L6.proto_util.
 From CertiCoq Require Import
      L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps L6.inline.
-From CertiCoq Require Import (* L6.uncurry *) L6.uncurry_proto.
+(* From CertiCoq Require Import L6.uncurry. *)
+From CertiCoq Require Import L6.uncurry_proto.
 From CertiCoq Require Import L6.L4_to_L6_anf.
 From CertiCoq Require Import L6.L5_to_L6.
 From CertiCoq Require Import L6.closure_conversion L6.hoisting L6.dead_param_elim L6.lambda_lifting.
@@ -121,7 +122,7 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
   let res : error (exp * comp_data):=
       (* uncurring *)
       (* let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in *)
-      let '(e_pure, s, c_data) := uncurry_top 100 c_data [shrink_cps.shrink_top e0]! in
+      let '(e_pure, s, c_data) := uncurry_top cps 100 c_data [shrink_cps.shrink_top e0]! in
       let e_err1 := compM.Ret ![e_pure] in
       (* inlining *)
       e1 <- e_err1 ;;
@@ -147,7 +148,8 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
       let e6 := shrink_cps.shrink_top e5 in
       (* Dead parameter elimination *)
       let (e_err7, c_data) := dead_param_elim.eliminate e6 c_data in
-      e7 <- e_err7 ;;
+      (* e7 <- e_err7 ;; *)
+      let e7 := e6 in
       (* Shrink reduction *)
       let e8 := shrink_cps.shrink_top e7 in
       ret (e8, c_data)
