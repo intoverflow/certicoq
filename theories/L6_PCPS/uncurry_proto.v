@@ -65,8 +65,9 @@ Definition set_name old_var new_var suff cdata :=
           cenv := e; fenv := fenv; nenv := names; log := log |} := cdata
   in
   let names' := add_entry names new_var old_var suff in
-  {| next_var := Pos.max old_var new_var; nect_ctor_tag := c; next_ind_tag := i; next_fun_tag := f;
-     cenv := e; fenv := fenv; nenv := names'; log := log |}.
+  {| next_var := (1 + Pos.max old_var new_var)%positive; nect_ctor_tag := c;
+     next_ind_tag := i; next_fun_tag := f; cenv := e; fenv := fenv;
+     nenv := names'; log := log |}.
 
 Definition set_names_lst olds news suff cdata :=
   fold_right (fun '(old, new) cdata => set_name old new suff cdata) cdata (combine olds news).
