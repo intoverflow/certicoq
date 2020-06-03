@@ -41,6 +41,7 @@ benchmarks/demo1
 benchmarks/demo2
 benchmarks/CertiCoq.Benchmarks.*.c
 benchmarks/CertiCoq.Benchmarks.*.h
+benchmarks/*.ir
 test_plugin.*.c
 test_plugin.*.h
 benchmarks/config.h
@@ -54,3 +55,4 @@ plugin/.Makefile.d
 CertiCoq.Benchmarks.Binom.main.c
 CertiCoq.Benchmarks.Binom.main.h
 plugin/g_certicoq.ml
+*~
