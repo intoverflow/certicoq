@@ -101,7 +101,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   When (fun (r : R_misc) (s : S_misc) =>
     let '(b, aenv, lm, s, cdata) := s in
     (* g must not have been already uncurried by an earlier pass *)
-    match M.get ![g] lm with
+    negb match M.get ![g] lm with
     | Some true => true
     | _ => false
     end) ->
@@ -172,7 +172,8 @@ Proof.
     rewrite Pos.eqb_eq in Hkk', Hgg'.
     (* Check whether g has already been uncurried before *)
     destruct ms as [[[[b aenv] lm] heuristic] cdata] eqn:Hms.
-    destruct (M.get g lm) as [[|]|] eqn:Huncurried; [|exact failure..].
+    destruct (negb (match M.get g lm with Some true => true | _ => false end))
+      as [|] eqn:Huncurried; [|exact failure].
     (* Check that {g, k} ∩ vars(ge) = ∅ *)
     destruct (occurs_in_exp g ![ge]) eqn:Hocc_g; [exact failure|]. (* TODO: avoid the conversion *)
     destruct (occurs_in_exp k ![ge]) eqn:Hocc_k; [exact failure|]. (* TODO: avoid the conversion *)
@@ -196,7 +197,6 @@ Proof.
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
     + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
       eapply fresher_than_monotonic; eauto; lia.
-    + destruct (Maps.PTree.get _ _) as [[|]|] eqn:Hget'; [reflexivity|inversion Huncurried..].
   (* Obligation 2 of 2: explain how to maintain fresh name invariant across edit *)
   - clear; unfold Put, Rec; intros.
     (* Env is easy, because the uncurryer doesn't need it *)
@@ -219,8 +219,7 @@ Defined.
 Lemma uncurry_one (ms : S_misc) (e : exp) (s : S <[]> e)
   : option (result exp_univ_exp uncurry_step S_misc (@S) <[]> e).
 Proof.
-  pose (res := run_rewriter' rw_uncurry tt ms e tt tt s).
-  destruct (run_rewriter' rw_uncurry tt ms e tt tt s) eqn:Hres.
+  pose (res := run_rewriter' rw_uncurry tt ms e tt tt s); destruct res eqn:Hres.
   exact (let '(b, _, _, _, _) := resSMisc in if b then Some res else None).
 Defined.
 
