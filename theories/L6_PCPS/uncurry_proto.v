@@ -2,16 +2,19 @@
 
 Require Import Coq.Strings.String Coq.Classes.Morphisms.
 Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
-Require Import L6.Prototype L6.proto_util.
+Require Import L6.Prototype.
+Require Import L6.proto_util.
 Require Import L6.cps_proto.
 Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
-Require Import AltBinNotations.
 Require Import L6.Ensembles_util L6.List_util L6.cps_util L6.state.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
 
 Require L6.cps.
+
+Set Universe Polymorphism.
+Unset Strict Unquote Universe Mode.
 
 (** * Auxiliary data used by the rewriter *)
 
@@ -52,6 +55,22 @@ Instance Preserves_S_S : Preserves_S _ exp_univ_exp (@S). Proof. constructor; in
 
 (** * Uncurrying as a guarded rewrite rule *)
 
+(* Hack: the pretty-printer uses cdata to associate strings with freshly generated names.
+   In order to be able to pretty-print our terms, we'll need to update cdata accordingly even
+   though we don't use it to generate fresh names. [set_name] and [set_names_lst] are analogues
+   of [get_name] and [get_names_lst] from state.v. *)
+
+Definition set_name old_var new_var suff cdata :=
+  let '{| next_var := n; nect_ctor_tag := c; next_ind_tag := i; next_fun_tag := f;
+          cenv := e; fenv := fenv; nenv := names; log := log |} := cdata
+  in
+  let names' := add_entry names new_var old_var suff in
+  {| next_var := Pos.max old_var new_var; nect_ctor_tag := c; next_ind_tag := i; next_fun_tag := f;
+     cenv := e; fenv := fenv; nenv := names'; log := log |}.
+
+Definition set_names_lst olds news suff cdata :=
+  fold_right (fun '(old, new) cdata => set_name old new suff cdata) cdata (combine olds news).
+
 Inductive uncurry_step : exp -> exp -> Prop :=
 | uncurry_cps :
   forall (C : frames_t exp_univ_fundefs exp_univ_exp)
@@ -71,13 +90,13 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   rhs = Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
         (Fcons f1 ft1 (gv ++ fv) ge (Rec fds)) /\
   s = used_vars (exp_of_proto (C ⟦ lhs ⟧)) /\
-  fresh_copies s gv1 -> length gv1 = length gv /\
-  fresh_copies (s :|: FromList ![gv1]) fv1 -> length fv1 = length fv /\
+  fresh_copies s gv1 /\ length gv1 = length gv /\
+  fresh_copies (s :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
   ~ ![f1] \in (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
   (* (3) next_x must be a fresh variable *)
   fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
   (* (4) misc. let bindings (needed for computation of new ms) *)
-  fp_numargs = length fv + length gv -> ms = ms ->
+  fp_numargs = length fv + length gv /\ ms = ms ->
   (* 'Irrelevant' guard *)
   When (fun (r : R_misc) (s : S_misc) =>
     let '(b, aenv, lm, s, cdata) := s in
@@ -97,6 +116,12 @@ Inductive uncurry_step : exp -> exp -> Prop :=
            let lm := M.set ![g] true lm in
            (* Update inlining heuristic so inliner knows to inline fully saturated calls to f *)
            let s := (max (fst s) fp_numargs, (M.set ![f] 1 (M.set ![g] 2 (snd s)))) in
+           (* Hack: update cdata to agree with fresh names generated above *)
+           let cdata :=
+             set_name ![f] ![f1] "_uncurried"
+             (set_names_lst ![fv] ![fv1] ""
+             (set_names_lst ![gv] ![gv1] "" cdata))
+           in
            (true, aenv, lm, s, cdata) : S_misc)
          (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
          (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
@@ -120,16 +145,18 @@ Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
     end
   end.
 
+Set Printing Universes.
+
 Lemma bool_true_false b : b = false -> b <> true. Proof. now destruct b. Qed.
 
 Local Ltac clearpose H x e :=
   pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
 
-Definition uncurry_proto : rewriter exp_univ_exp uncurry_step R_misc S_misc (@delay_t) (@R_C) (@R_e) (@S).
+Definition rw_uncurry : rewriter exp_univ_exp uncurry_step R_misc S_misc (@delay_t) (@R_C) (@R_e) (@S).
 Proof.
   mk_rw;
     (* This particular rewriter's delayed computation is just the identity function,
-        so ConstrDelay and EditDelay are easy *)
+       so ConstrDelay and EditDelay are easy *)
     try lazymatch goal with
     | |- ConstrDelay _ -> _ =>
       clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
@@ -186,4 +213,41 @@ Proof.
     intros arbitrary; repeat rewrite In_or_Iff_Union; tauto.
 Defined.
 
-Recursive Extraction uncurry_proto.
+(* Check rw_uncurry. *)
+(* Recursive Extraction rw_uncurry. *)
+
+Lemma uncurry_one (ms : S_misc) (e : exp) (s : S <[]> e)
+  : option (result exp_univ_exp uncurry_step S_misc (@S) <[]> e).
+Proof.
+  pose (res := run_rewriter' rw_uncurry tt ms e tt tt s).
+  destruct (run_rewriter' rw_uncurry tt ms e tt tt s) eqn:Hres.
+  exact (let '(b, _, _, _, _) := resSMisc in if b then Some res else None).
+Defined.
+
+Fixpoint uncurry_fuel (n : nat) (ms : S_misc) (e : exp) (s : S <[]> e) {struct n}
+  : result exp_univ_exp uncurry_step S_misc (@S) <[]> e.
+Proof.
+  destruct n as [|n].
+  - unshelve econstructor; [exact e|auto|auto|apply Relation_Operators.rt_refl].
+  - pose (res := uncurry_one ms e s).
+    refine (match res with Some res' => _ | None => _ end).
+    + destruct res'.
+      destruct resSMisc as [[[[_ aenv] lm] st] cdata].
+      destruct (uncurry_fuel n (false, aenv, lm, st, cdata) resTree resState)
+        as [resTree' resState' resSMisc' resProof'].
+      unshelve econstructor; [exact resTree'|auto|auto|].
+      eapply Relation_Operators.rt_trans; eauto.
+    + unshelve econstructor; [exact e|auto|auto|apply Relation_Operators.rt_refl].
+Defined.
+
+Definition uncurry_top (n : nat) (cdata : comp_data) (e : exp) : exp * M.t nat * comp_data.
+Proof.
+  refine (let '{| resTree := e'; resSMisc := ms |} := uncurry_fuel n _ e _ in _).
+  - exact (false, M.empty _, M.empty _, (0%nat, (M.empty _)), cdata).
+  - exists (1 + max_var ![e] 1)%positive.
+    change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
+    intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
+    destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
+  - destruct ms as [[[[_ _] _] [_ st]] cdata'].
+    exact (e', st, cdata').
+Defined.

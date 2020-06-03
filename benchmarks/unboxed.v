@@ -78,7 +78,6 @@ Definition digits31 t := Eval compute in nfun digits size t.
 
 Inductive int31 : Type := I31 : digits31 int31.
 
-
 Delimit Scope int31_scope with int31.
 Local Open Scope int31_scope.
 

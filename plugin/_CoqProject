@@ -14,14 +14,14 @@ certicoq_debug.ml
 # extraction/fappli_IEEE_bits.mli
 extraction/aST.ml
 extraction/aST.mli
-extraction/alpha_fresh.ml
-extraction/alpha_fresh.mli
+#extraction/alpha_fresh.ml
+#extraction/alpha_fresh.mli
 extraction/archi.ml
 extraction/archi.mli
 extraction/astCommon.ml
 extraction/astCommon.mli
-extraction/beta_contraction.ml
-extraction/beta_contraction.mli
+#extraction/beta_contraction.ml
+#extraction/beta_contraction.mli
 extraction/binary.ml
 extraction/binary.mli
 extraction/bits.ml
@@ -108,6 +108,8 @@ extraction/ffi.ml
 extraction/ffi.mli
 extraction/floats.ml
 extraction/floats.mli
+extraction/freshen.ml
+extraction/freshen.mli
 # extraction/globalenvs.ml
 # extraction/globalenvs.mli
 extraction/glue.ml
@@ -120,6 +122,8 @@ extraction/identifiers.ml
 extraction/identifiers.mli
 extraction/init.ml
 extraction/init.mli
+extraction/inline.ml
+extraction/inline.mli
 extraction/integers.ml
 extraction/integers.mli
 extraction/l3_to_L3_eta.ml

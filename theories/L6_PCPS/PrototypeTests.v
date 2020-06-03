@@ -25,6 +25,8 @@ Import Ltac2.Notations.
 
 Set Default Proof Mode "Ltac2".
 
+Unset Strict Unquote Universe Mode.
+
 (* ---------- Example ---------- *)
 
 Instance Frame_exp_inj : Frame_inj exp_univ.
@@ -343,11 +345,6 @@ Goal True.
   end))).
 Abort.
 
-Goal True.
-  ltac1:(assert_typed_terms constr:([existT_typed_term Prop (1 + 1 = 2); existT_typed_term Prop False])
-    ltac:(fun _ => idtac)).
-Abort.
-
 (* Context (opaque_delay_t : forall {A : exp_univ}, univD A -> Set) *)
 (*        `{Hopaque_delay : @Delayed exp_univ Frame_exp (@opaque_delay_t)}. *)
 Definition opaque_delay_t {A : exp_univ} (e : univD A) := unit.
@@ -421,9 +418,7 @@ Proof.
   { exists tt. reflexivity. }
 Defined.
 
-Definition Fuel_of_nat (n : nat) := Nat.iter n More Empty.
-
-Compute rw_R' (Fuel_of_nat (100%nat)) tt (0%nat) exp_univ_exp <[]>
+Compute rw_R' (xI (xI (xI (xI (xI xH))))) tt (0%nat) exp_univ_exp <[]>
   (eCons (mk_var 0) (mk_constr 0) [] (eApp (mk_var 1) []))
   tt
   {| envVal := 0; envPrf := eq_refl |}
@@ -848,12 +843,11 @@ Check rw_cp.
 Eval unfold rewriter, rw_for in rewriter exp_univ_exp cp_fold unit (nat × nat) (@renaming) (@cp_env) (@R_e) (@cp_state).
 Recursive Extraction rw_cp.
 
-(* Definition Fuel_of_nat (n : nat) : Fuel := Nat.iter n More Empty. *)
 Definition rw_cp_top e : result exp_univ_exp cp_fold (nat × nat) (@cp_state) <[]> e.
 Proof.
   rewrite <- delay_id_law.
   ltac1:(refine(
-  rw_cp (Fuel_of_nat (100%nat)) tt (0%nat, 0%nat) exp_univ_exp <[]> e
+  rw_cp lots_of_fuel tt (0%nat, 0%nat) exp_univ_exp <[]> e
     id (exist _ (fun _ => None) _) tt tt); intros; congruence).
 Defined.
 Check rw_cp_top.

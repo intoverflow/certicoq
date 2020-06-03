@@ -22,6 +22,8 @@ Require Import Ltac2.Ltac2.
 Import Ltac2.Notations.
 Set Default Proof Mode "Ltac2".
 
+Set Universe Polymorphism.
+
 Require Export CertiCoq.L6.Rewriting.
 
 Instance Monad_TemplateMonad : Monad TemplateMonad := {
@@ -687,7 +689,7 @@ Record aux_data_t := mk_aux_data {
 
 Class AuxData (U : Set) := aux_data : aux_data_t.
 
-Polymorphic Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Type) : TemplateMonad unit :=
+Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Type) : TemplateMonad unit :=
   p <- tmQuoteRec T ;;
   atoms <- monad_map tmQuote atoms ;;
   mlet (inds, g, fs, cfs, univ, univ_of_tyname, univD, univD_body, frame_t) <-
@@ -924,15 +926,6 @@ Definition rename (σ : Map string string) : term -> term :=
     end.
 
 (* -------------------- Generation of helper function types -------------------- *)
-
-Inductive Fuel := Empty | More (F : Fuel).
-Definition Fuel_Fix {A} (d : A) (f : A -> A) : Fuel -> A :=
-  let fix go F :=
-    match F with
-    | Empty => d
-    | More F => f (go F)
-    end
-  in go.
 
 (* The type of correct rewriters (AuxData and Preserves instances are additional assumptions
    needed by the generator) *)
@@ -2062,7 +2055,11 @@ Definition gen_all : GM (RwObligations term). ltac1:(refine(
 )).
 Defined.
 
-Definition unquote_all (obs : RwObligations term) : TemplateMonad (RwObligations typed_term). ltac1:(refine(
+(* Danger: once invoked [unquote_all] generates universe constraints between the things inside each
+   typed_term and pretty common monomorphic types like [list], [pair], [option], etc.
+   It's safer to unquote each term in obs with ltac. *)
+Definition unquote_all (obs : RwObligations term)
+ : TemplateMonad (RwObligations typed_term). ltac1:(refine(
   let '(mk_obs extra_vars edit_delays preserve_edits run_rules constr_delays smart_constrs topdowns bottomups) :=
     obs
   in
@@ -2079,6 +2076,29 @@ Definition unquote_all (obs : RwObligations term) : TemplateMonad (RwObligations
 Defined.
 
 End GoalGeneration.
+
+Ltac unquote_and_assert_terms terms k :=
+  lazymatch terms with
+  | [] => k tt
+  | ?t :: ?rest =>
+    run_template_program (tmUnquote t) ltac:(fun t' =>
+    match t' with
+    | {| my_projT2 := ?t'' |} => assert t''; [|unquote_and_assert_terms rest k]
+    end)
+  end.
+
+Ltac unquote_and_assert_obs obs k :=
+  lazymatch obs with
+  | mk_obs ?extra_vars ?edit_delays ?preserve_edits ?run_rules ?constr_delays ?smart_constrs ?topdowns ?bottomups =>
+    unquote_and_assert_terms extra_vars ltac:(fun _ =>
+    unquote_and_assert_terms edit_delays ltac:(fun _ =>
+    unquote_and_assert_terms preserve_edits ltac:(fun _ =>
+    unquote_and_assert_terms run_rules ltac:(fun _ =>
+    unquote_and_assert_terms constr_delays ltac:(fun _ =>
+    unquote_and_assert_terms smart_constrs ltac:(fun _ =>
+    unquote_and_assert_terms topdowns ltac:(fun _ =>
+    unquote_and_assert_terms bottomups k)))))))
+  end.
 
 Ltac mk_rw_obs k :=
   lazymatch goal with
@@ -2100,10 +2120,14 @@ Ltac mk_rw_obs k :=
         let! R_e'' := named_of [] R_e' in
         let! St'' := named_of [] St' in
         gen_all HAux delay_t' delayD' R_C'' R_e'' St'' rules) ltac:(fun qobs n =>
-        run_template_program (unquote_all qobs) k)
+        unquote_and_assert_obs qobs k)
+        (* run_template_program (unquote_all qobs) k) *)
     end))
   end.
 
+Ltac mk_rw' := mk_rw_obs ltac:(fun _ => idtac).
+
+(*
 Ltac assert_typed_terms terms k :=
   lazymatch terms with
   | [] => k tt
@@ -2123,8 +2147,7 @@ Ltac assert_obs obs k :=
     assert_typed_terms topdowns ltac:(fun _ =>
     assert_typed_terms bottomups k)))))))
   end.
-
-Ltac mk_rw' := mk_rw_obs ltac:(fun obs => assert_obs obs ltac:(fun _ => idtac)).
+*)
 
 Ltac mk_smart_constr_children root R_C R_e St mr ms s hasHrel Hrel :=
   lazymatch goal with
@@ -2451,7 +2474,7 @@ Ltac mk_rewriter :=
   | |- @rewriter ?univ ?HFrame _ ?root ?R ?R_misc ?S_misc ?delay_t ?HD ?R_C ?R_e ?St _ _ =>
     unfold rewriter;
     lazymatch goal with
-    | |- Fuel -> ?T =>
+    | |- Rewriting.Fuel -> ?T =>
       let recur := fresh "recur" in
       let mr := fresh "mr" in
       let ms := fresh "ms" in
@@ -2534,11 +2557,9 @@ Ltac mk_rewriter :=
              intros _ _; intros;
              lazymatch goal with He : e = _ |- _ => rewrite He end;
              (* Run the rule... *)
-             idtac Hrun;
              eapply (Hrun (MkRunRule rule) mr ms); [eassumption..|];
-             (* (* ...and then just return the modified tree *) *)
-             apply (@rw_id' univ HFrame root R R_misc S_misc R_C St mr ms);
-             idtac
+             (* ...and then just return the modified tree *)
+             apply (@rw_id' univ HFrame root R R_misc S_misc R_C St mr ms)
            (* Fallback (just return the child) *)
            | |- Fallback -> _ =>
              intros _;
@@ -2559,10 +2580,11 @@ Ltac mk_rewriter :=
 (* Like mk_rw', but apply the default automation and only leave behind nontrivial goals *)
 Ltac mk_rw :=
   mk_rw';
-  try lazymatch goal with
+  lazymatch goal with
   | |- SmartConstr _ -> _ => mk_smart_constr
   | |- RunRule _ -> _ => mk_run_rule
   | |- Topdown _ -> _ => mk_topdown
   | |- Bottomup _ -> _ => mk_bottomup
+  | _ => idtac
   end;
   [..|mk_rewriter].

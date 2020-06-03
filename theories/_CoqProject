@@ -132,161 +132,161 @@ L6_PCPS/identifiers.v
 L6_PCPS/cps_proto_metacoq.v
 L6_PCPS/cps_proto.v
 L6_PCPS/proto_util.v
-# L6_PCPS/size_cps.v
-# L6_PCPS/eval.v
-# L6_PCPS/L5_to_L6.v
+L6_PCPS/size_cps.v
+L6_PCPS/eval.v
+L6_PCPS/L5_to_L6.v
 L6_PCPS/cps_show.v
 L6_PCPS/state.v
-# L6_PCPS/L4_to_L6_anf.v
-# L6_PCPS/stemctx.v
-# L6_PCPS/env.v
-# L6_PCPS/relations.v
-# # L6_PCPS/tags.v
-# L6_PCPS/logical_relations.v
-# L6_PCPS/logical_relations_cc.v
-# L6_PCPS/bounds.v
-# # L6_PCPS/ctx_approx.v
-# L6_PCPS/alpha_conv.v
-# L6_PCPS/hoare.v
-# L6_PCPS/hoisting.v
-# L6_PCPS/closure_conversion.v
-# # L6_PCPS/closure_conversion2.v
-# L6_PCPS/closure_conversion_util.v
-# L6_PCPS/closure_conversion_invariants.v
-# #L6_PCPS/closure_conversion_correct.v
-# #L6_PCPS/closure_conversion_corresp.v
-# L6_PCPS/shrink_cps.v
-# L6_PCPS/shrink_cps_correct.v
-# # L6_PCPS/shrink_cps_corresp.v
-# L6_PCPS/uncurry.v
-# L6_PCPS/uncurry_correct.v
+L6_PCPS/L4_to_L6_anf.v
+L6_PCPS/stemctx.v
+L6_PCPS/env.v
+L6_PCPS/relations.v
+# L6_PCPS/tags.v
+L6_PCPS/logical_relations.v
+L6_PCPS/logical_relations_cc.v
+L6_PCPS/bounds.v
+# L6_PCPS/ctx_approx.v
+L6_PCPS/alpha_conv.v
+L6_PCPS/hoare.v
+L6_PCPS/hoisting.v
+L6_PCPS/closure_conversion.v
+# L6_PCPS/closure_conversion2.v
+L6_PCPS/closure_conversion_util.v
+L6_PCPS/closure_conversion_invariants.v
+#L6_PCPS/closure_conversion_correct.v
+#L6_PCPS/closure_conversion_corresp.v
+L6_PCPS/shrink_cps.v
+L6_PCPS/shrink_cps_correct.v
+# L6_PCPS/shrink_cps_corresp.v
+L6_PCPS/uncurry.v
+#L6_PCPS/uncurry_correct.v
 L6_PCPS/uncurry_proto.v
-# # L6_PCPS/L6_compose.v
-# L6_PCPS/lambda_lifting.v
-# L6_PCPS/dead_param_elim.v
-# #L6_PCPS/freshen.v
-# L6_PCPS/lambda_lifting_correct.v
-# # L6_PCPS/lambda_lifting_corresp.v
-# #L6_PCPS/inline.v
-# # L6_PCPS/instances.v
-# #L6_PCPS/toplevel.v
+# L6_PCPS/L6_compose.v
+L6_PCPS/lambda_lifting.v
+L6_PCPS/dead_param_elim.v
+L6_PCPS/freshen.v
+L6_PCPS/lambda_lifting_correct.v
+# L6_PCPS/lambda_lifting_corresp.v
+L6_PCPS/inline.v
+# L6_PCPS/instances.v
+L6_PCPS/toplevel.v
 
-# L6/Heap
-# L6_PCPS/Heap/heap.v
-# L6_PCPS/Heap/heap_impl.v
-# L6_PCPS/Heap/heap_defs.v
-# L6_PCPS/Heap/heap_equiv.v
-# L6_PCPS/Heap/GC.v
-# L6_PCPS/Heap/space_sem.v
-# L6_PCPS/Heap/cc_log_rel.v
-# L6_PCPS/Heap/log_rel_defs.v
-# L6_PCPS/Heap/log_rel_post_cc.v
-# L6_PCPS/Heap/compat.v
-# L6_PCPS/Heap/closure_conversion.v
-# L6_PCPS/Heap/closure_conversion_util.v
-# L6_PCPS/Heap/dead_param_elim_rel.v
-# L6_PCPS/Heap/bounds.v
-# L6_PCPS/Heap/invariants.v
-# L6_PCPS/Heap/closure_conversion_correct.v
-# L6_PCPS/Heap/toplevel.v
+## L6/Heap
+#L6_PCPS/Heap/heap.v
+#L6_PCPS/Heap/heap_impl.v
+#L6_PCPS/Heap/heap_defs.v
+#L6_PCPS/Heap/heap_equiv.v
+#L6_PCPS/Heap/GC.v
+#L6_PCPS/Heap/space_sem.v
+#L6_PCPS/Heap/cc_log_rel.v
+#L6_PCPS/Heap/log_rel_defs.v
+#L6_PCPS/Heap/log_rel_post_cc.v
+#L6_PCPS/Heap/compat.v
+#L6_PCPS/Heap/closure_conversion.v
+#L6_PCPS/Heap/closure_conversion_util.v
+#L6_PCPS/Heap/dead_param_elim_rel.v
+#L6_PCPS/Heap/bounds.v
+#L6_PCPS/Heap/invariants.v
+#L6_PCPS/Heap/closure_conversion_correct.v
+#L6_PCPS/Heap/toplevel.v
 
-# # Compcert
-# compcert/lib/Coqlib.v
-# compcert/flocq/Core/Zaux.v
-# compcert/flocq/Core/Raux.v
-# compcert/flocq/Core/Defs.v
-# compcert/flocq/Core/Digits.v
-# compcert/flocq/Core/Round_pred.v
-# compcert/flocq/Core/Float_prop.v
-# compcert/flocq/Core/Generic_fmt.v
-# compcert/flocq/Core/Ulp.v
-# compcert/flocq/Core/Round_NE.v
-# compcert/flocq/Core/FIX.v
-# compcert/flocq/Core/FLX.v
-# compcert/flocq/Core/FLT.v
-# compcert/flocq/Core/Core.v
-# compcert/flocq/Calc/Bracket.v
-# compcert/flocq/Calc/Round.v
-# compcert/flocq/Calc/Operations.v
-# compcert/flocq/Calc/Div.v
-# compcert/flocq/Calc/Sqrt.v
-# compcert/flocq/Prop/Relative.v
-# compcert/flocq/IEEE754/Binary.v
-# compcert/flocq/IEEE754/Bits.v
-# compcert/x86_64/Archi.v
-# compcert/lib/Integers.v
-# compcert/flocq/Prop/Sterbenz.v
-# compcert/flocq/Prop/Round_odd.v
-# compcert/lib/Fappli_IEEE_extra.v
-# compcert/lib/Floats.v
-# compcert/lib/Maps.v
-# compcert/lib/Axioms.v
-# compcert/lib/Intv.v
-# compcert/lib/Decidableplus.v
-# # compcert/flocq/Core/Fcore_Zaux.v
-# #compcert/flocq/Core/Fcore_Raux.v
-# #compcert/flocq/Core/Fcore_defs.v
-# #compcert/flocq/Core/Fcore_float_prop.v
-# #compcert/flocq/Core/Fcore_rnd.v
-# #compcert/flocq/Core/Fcore_generic_fmt.v
-# #compcert/flocq/Core/Fcore_ulp.v
-# #compcert/flocq/Core/Fcore_rnd_ne.v
-# #compcert/flocq/Core/Fcore_FIX.v
-# #compcert/flocq/Core/Fcore_FLX.v
-# #compcert/flocq/Core/Fcore_FLT.v
-# #compcert/flocq/Core/Fcore.v
-# #compcert/flocq/Core/Fcore_digits.v
-# #compcert/flocq/Calc/Fcalc_digits.v
-# #compcert/flocq/Calc/Fcalc_bracket.v
-# #compcert/flocq/Calc/Fcalc_round.v
-# #compcert/flocq/Calc/Fcalc_ops.v
-# #compcert/flocq/Calc/Fcalc_div.v
-# #compcert/flocq/Calc/Fcalc_sqrt.v
-# #compcert/flocq/Prop/Fprop_relative.v
-# #compcert/flocq/Appli/Fappli_IEEE.v
-# #compcert/flocq/Appli/Fappli_IEEE_bits.v
-# #compcert/flocq/Prop/Fprop_Sterbenz.v
-# #compcert/flocq/Appli/Fappli_rnd_odd.v
-# #compcert/ia32/Archi.v
-# compcert/common/Errors.v
-# compcert/common/AST.v
-# compcert/common/Linking.v
-# compcert/common/Values.v
-# compcert/common/Memdata.v
-# compcert/common/Memtype.v
-# compcert/common/Memory.v
-# compcert/common/Globalenvs.v
-# compcert/common/Events.v
-# compcert/common/Smallstep.v
-# compcert/common/Behaviors.v
-# compcert/common/Determinism.v
-# compcert/cfrontend/Ctypes.v
-# compcert/cfrontend/Cop.v
-# compcert/cfrontend/Clight.v
-# compcert/cfrontend/Csyntax.v
-# compcert/cfrontend/Csem.v
-# compcert/cfrontend/Cstrategy.v
-# compcert/cfrontend/Cexec.v
-# compcert/exportclight/Clightdefs.v
-# 
-# # L7
-# L7/tactics.v
-# L7/L6_to_Clight.v
-# L7/L6_to_Clight_stack.v
-# L7/Clightexec.v
-# L7/toplevel.v
-# 
-# # Glue
-# Glue/glue_utils.v
-# Glue/glue.v
-# Glue/ffi.v
-# 
-# # Runtime
-# Runtime/runtime.v
-# 
-# # Compiler
-# #Compiler/allInstances.v
-# Compiler/pipeline.v
-# 
-# # Extraction
-# Extraction/extraction.v
+# Compcert
+compcert/lib/Coqlib.v
+compcert/flocq/Core/Zaux.v
+compcert/flocq/Core/Raux.v
+compcert/flocq/Core/Defs.v
+compcert/flocq/Core/Digits.v
+compcert/flocq/Core/Round_pred.v
+compcert/flocq/Core/Float_prop.v
+compcert/flocq/Core/Generic_fmt.v
+compcert/flocq/Core/Ulp.v
+compcert/flocq/Core/Round_NE.v
+compcert/flocq/Core/FIX.v
+compcert/flocq/Core/FLX.v
+compcert/flocq/Core/FLT.v
+compcert/flocq/Core/Core.v
+compcert/flocq/Calc/Bracket.v
+compcert/flocq/Calc/Round.v
+compcert/flocq/Calc/Operations.v
+compcert/flocq/Calc/Div.v
+compcert/flocq/Calc/Sqrt.v
+compcert/flocq/Prop/Relative.v
+compcert/flocq/IEEE754/Binary.v
+compcert/flocq/IEEE754/Bits.v
+compcert/x86_64/Archi.v
+compcert/lib/Integers.v
+compcert/flocq/Prop/Sterbenz.v
+compcert/flocq/Prop/Round_odd.v
+compcert/lib/Fappli_IEEE_extra.v
+compcert/lib/Floats.v
+compcert/lib/Maps.v
+compcert/lib/Axioms.v
+compcert/lib/Intv.v
+compcert/lib/Decidableplus.v
+# compcert/flocq/Core/Fcore_Zaux.v
+#compcert/flocq/Core/Fcore_Raux.v
+#compcert/flocq/Core/Fcore_defs.v
+#compcert/flocq/Core/Fcore_float_prop.v
+#compcert/flocq/Core/Fcore_rnd.v
+#compcert/flocq/Core/Fcore_generic_fmt.v
+#compcert/flocq/Core/Fcore_ulp.v
+#compcert/flocq/Core/Fcore_rnd_ne.v
+#compcert/flocq/Core/Fcore_FIX.v
+#compcert/flocq/Core/Fcore_FLX.v
+#compcert/flocq/Core/Fcore_FLT.v
+#compcert/flocq/Core/Fcore.v
+#compcert/flocq/Core/Fcore_digits.v
+#compcert/flocq/Calc/Fcalc_digits.v
+#compcert/flocq/Calc/Fcalc_bracket.v
+#compcert/flocq/Calc/Fcalc_round.v
+#compcert/flocq/Calc/Fcalc_ops.v
+#compcert/flocq/Calc/Fcalc_div.v
+#compcert/flocq/Calc/Fcalc_sqrt.v
+#compcert/flocq/Prop/Fprop_relative.v
+#compcert/flocq/Appli/Fappli_IEEE.v
+#compcert/flocq/Appli/Fappli_IEEE_bits.v
+#compcert/flocq/Prop/Fprop_Sterbenz.v
+#compcert/flocq/Appli/Fappli_rnd_odd.v
+#compcert/ia32/Archi.v
+compcert/common/Errors.v
+compcert/common/AST.v
+compcert/common/Linking.v
+compcert/common/Values.v
+compcert/common/Memdata.v
+compcert/common/Memtype.v
+compcert/common/Memory.v
+compcert/common/Globalenvs.v
+compcert/common/Events.v
+compcert/common/Smallstep.v
+compcert/common/Behaviors.v
+compcert/common/Determinism.v
+compcert/cfrontend/Ctypes.v
+compcert/cfrontend/Cop.v
+compcert/cfrontend/Clight.v
+compcert/cfrontend/Csyntax.v
+compcert/cfrontend/Csem.v
+compcert/cfrontend/Cstrategy.v
+compcert/cfrontend/Cexec.v
+compcert/exportclight/Clightdefs.v
+
+# L7
+L7/tactics.v
+L7/L6_to_Clight.v
+L7/L6_to_Clight_stack.v
+L7/Clightexec.v
+L7/toplevel.v
+
+# Glue
+Glue/glue_utils.v
+Glue/glue.v
+Glue/ffi.v
+
+# Runtime
+Runtime/runtime.v
+
+# Compiler
+#Compiler/allInstances.v
+Compiler/pipeline.v
+
+# Extraction
+Extraction/extraction.v

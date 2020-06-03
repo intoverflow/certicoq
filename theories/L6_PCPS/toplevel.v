@@ -1,9 +1,12 @@
 Require Import ZArith.
 Require Import Common.compM.
+From CertiCoq Require Import L6.cps_proto L6.proto_util.
 From CertiCoq Require Import
-     L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps L6.L4_to_L6_anf L6.L5_to_L6
-     (* L6.inline *) L6.uncurry L6.closure_conversion
-     L6.closure_conversion L6.hoisting L6.dead_param_elim L6.lambda_lifting.
+     L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps L6.inline.
+From CertiCoq Require Import (* L6.uncurry *) L6.uncurry_proto.
+From CertiCoq Require Import L6.L4_to_L6_anf.
+From CertiCoq Require Import L6.L5_to_L6.
+From CertiCoq Require Import L6.closure_conversion L6.hoisting L6.dead_param_elim L6.lambda_lifting.
 From CertiCoq Require Import L4.toplevel.
 (* From CertiCoq.L7 Require Import L6_to_Clight. *)
 
@@ -14,10 +17,12 @@ Import Monads.
 
 Import MonadNotation.
 
-Let L6env : Type := prims * ctor_env * ctor_tag * ind_tag * name_env * fun_env * eval.env.
-Let L6term : Type := cps.exp.
-Let L6val : Type := cps.val.
-Let L6_FullTerm : Type := L6env * L6term.
+Set Universe Polymorphism.
+
+Let L6env : Set := prims * ctor_env * ctor_tag * ind_tag * name_env * fun_env * eval.env.
+Let L6term : Set := cps.exp.
+Let L6val : Set := cps.val.
+Let L6_FullTerm : Set := L6env * L6term.
 
 Instance L6_Lang : Lang L6_FullTerm :=
   { Value := L6val;
@@ -103,7 +108,8 @@ with add_binders_fundefs (names : cps_util.name_env) (B : fundefs) : cps_util.na
 
 
 (* Optimizing L6 pipeline *)
-Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_FullTerm) : error L6_FullTerm * string :=
+Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_FullTerm)
+ : error L6_FullTerm * string :=
   let '(prims, cenv, ctag, itag, nenv, fenv, _, e0) := t in
   (* make compilation state *)
   let c_data :=
@@ -114,7 +120,9 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
   in
   let res : error (exp * comp_data):=
       (* uncurring *)
-      let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in
+      (* let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in *)
+      let '(e_pure, s, c_data) := uncurry_top 100 c_data [shrink_cps.shrink_top e0]! in
+      let e_err1 := compM.Ret ![e_pure] in
       (* inlining *)
       e1 <- e_err1 ;;
       let (e_err2, c_data) := if cps then inline_uncurry e1 s 10 10 c_data

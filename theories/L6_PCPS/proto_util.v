@@ -1,9 +1,7 @@
-Require Import Coq.Strings.String Coq.Classes.Morphisms.
-Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
-Require Import L6.cps_proto.
-Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
-Require Import AltBinNotations.
-Require Import L6.Ensembles_util L6.List_util L6.cps_util L6.state.
+Require Import Coq.Strings.String Coq.Classes.Morphisms Coq.Relations.Relations.
+Require Import Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
+Require Import L6.Prototype L6.cps_proto.
+Require Import L6.Ensembles_util.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -184,3 +182,31 @@ Proof.
       eapply gensyms_upper2; eauto.
   - eapply gensyms_len'; eauto.
 Qed.
+
+Section RunRewriter.
+
+Context 
+  {root : exp_univ} {R : relation (univD root)}
+  {R_misc S_misc : Set}
+  {D : forall A, univD A -> Set} `{@Delayed exp_univ Frame_exp (@D)}
+  {R_C : forall A, frames_t A root -> Set}
+  {R_e : forall A, univD A -> Set}
+  {St : forall A, frames_t A root -> univD A -> Set}
+  `{@Preserves_R_C exp_univ Frame_exp root (@R_C)}
+  `{@Preserves_S exp_univ Frame_exp root (@St)}
+  (rw : rewriter root R R_misc S_misc (@D) (@R_C) (@R_e) (@St)).
+
+Definition run_rewriter' :
+  R_misc -> S_misc -> forall (e : univD root), R_C _ <[]> -> R_e _ e -> St _ <[]> e ->
+  result root R S_misc (@St) <[]> e.
+Proof.
+  intros mr ms e r_C r_e st; unfold rewriter, rw_for in rw.
+  specialize (rw lots_of_fuel mr ms _ <[]> e (delay_id _)).
+  rewrite delay_id_law in rw; exact (rw r_C r_e st).
+Defined.
+
+Definition run_rewriter (mr : R_misc) (ms : S_misc) (e : univD root)
+           (r_C : R_C _ <[]>) (r_e : R_e _ e) (st : St _ <[]> e) : univD root :=
+  let '{| resTree := e' |} := run_rewriter' mr ms e r_C r_e st in e'.
+
+End RunRewriter.

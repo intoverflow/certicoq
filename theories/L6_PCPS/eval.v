@@ -11,13 +11,13 @@ Require Import compcert.lib.Coqlib.
 
 
 (** An [env]ironment maps [var]s to their [val]ues *)
-Definition env := M.t val.
+Definition env : Set := M.tree val.
 
 (** A pair of an environment and an expression. The small step semantics is a transition system between this state *)
 Definition state := (env * exp)%type.
 
 (** Primitive functions map. *)
-Definition prims := M.t (list val -> option val).
+Definition prims : Set := M.tree (list val -> option val).
 
 Section EVAL.
 

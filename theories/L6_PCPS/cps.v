@@ -42,7 +42,7 @@ Fixpoint findtag {A} (cl: list (ctor_tag * A)) (c: ctor_tag) : option A :=
   end.
 
 (* Expressions [exp] of the CPS language. *)
-Inductive exp : Type :=
+Inductive exp : Set :=
 | Econstr: var -> ctor_tag -> list var -> exp -> exp
 | Ecase: var -> list (ctor_tag * exp) -> exp
 | Eproj: var -> ctor_tag -> N -> var -> exp -> exp
@@ -51,7 +51,7 @@ Inductive exp : Type :=
 | Eapp: var -> fun_tag -> list var -> exp
 | Eprim: var -> prim -> list var -> exp -> exp (* where prim is id *)
 | Ehalt : var -> exp
-with fundefs : Type :=
+with fundefs : Set :=
 | Fcons: var -> fun_tag -> list var -> exp -> fundefs -> fundefs
 | Fnil: fundefs.
 
@@ -319,9 +319,9 @@ Ltac exp_defs_induction IH1 IHl IH2 :=
 
 (** * CPS Values *)
 
-Inductive val : Type :=
+Inductive val : Set :=
 | Vconstr : ctor_tag -> list val -> val
-| Vfun : M.t val -> fundefs -> var -> val
+| Vfun : M.tree val -> fundefs -> var -> val
 (* [Vfun env fds f]
      where env is the environment at the function binding site
      fds is the list of mutually recursive functions including f *)

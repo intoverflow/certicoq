@@ -1,5 +1,8 @@
 Require Import Coq.Relations.Relations.
 Require Import Coq.Setoids.Setoid.
+Require Import Coq.funind.Recdef.
+Require Import Coq.PArith.BinPos.
+Require Import Lia.
 
 Require Import Ltac2.Ltac2.
 Import Ltac2.Notations.
@@ -397,3 +400,25 @@ Proof.
 Defined.
 
 End Rewriters.
+
+Definition Fuel := positive.
+
+Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
+
+Section FuelFix.
+
+Fixpoint Fuel_Fix {A} (d : A) (f : A -> A) (n : Fuel) : A :=
+  match n with
+  | xH => d
+  | xO n => Fuel_Fix (Fuel_Fix d f n) f n
+  | xI n => f (Fuel_Fix (Fuel_Fix d f n) f n)
+  end.
+
+(* Function Fuel_Fix (n : Fuel) (x : A) {measure Pos.to_nat n} : B := *)
+(*   match n with *)
+(*   | xH => d x *)
+(*   | _ => f (Fuel_Fix (Pos.pred n)) x *)
+(*   end. *)
+(* Proof. ltac1:(lia). ltac1:(lia). Defined. *)
+
+End FuelFix.

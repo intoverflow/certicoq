@@ -21,7 +21,7 @@ Definition var_dec := M.elt_eq.
 
 (** Common name environment handling *)
 
-Definition name_env := M.t BasicAst.name.
+Definition name_env : Set := M.tree BasicAst.name.
 Definition n_empty:name_env := M.empty _.
 
 

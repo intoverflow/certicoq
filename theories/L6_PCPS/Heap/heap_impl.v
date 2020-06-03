@@ -447,7 +447,7 @@ Module MHeap : Heap.
    Qed.
 
    Lemma NoDup_filter (A : Type) P (l : list A) :
-     NoDup l -> NoDup (filter P l).
+     NoDup l -> NoDup (List.filter P l).
    Proof.
      intros Hnd; induction l. now constructor.
      inv Hnd. simpl. destruct (P a); eauto. constructor; eauto.
@@ -457,14 +457,14 @@ Module MHeap : Heap.
 
    Lemma filter_eq A P1 P2 (l : list A) :
      (forall x, P1 x = P2 x) ->
-     filter P1 l = filter P2 l.
+     List.filter P1 l = List.filter P2 l.
    Proof.
      intros Heq. induction l; eauto.
      simpl. rewrite Heq, IHl. reflexivity.
    Qed. 
      
    Definition heap_elements_filter {A : Type} S {Hs : ToMSet S} (h : heap A) : list (loc * A) :=
-     filter (fun p => @Dec _ S _ (fst p)) (heap_elements h). 
+     List.filter (fun p => @Dec _ S _ (fst p)) (heap_elements h). 
                                                                                     
 
    Lemma heap_elements_filter_sound (A : Type) (S : Ensemble loc) (H : ToMSet S) 
@@ -514,7 +514,7 @@ Module MHeap : Heap.
 
 
    Definition heap_elements_minus {A : Type} S {Hs : ToMSet S} (h : heap A) : list (loc * A) :=
-     filter (fun p => match @Dec _ S _ (fst p) with
+     List.filter (fun p => match @Dec _ S _ (fst p) with
                    | left _ => false
                    | right _ => true
                    end) (heap_elements h).

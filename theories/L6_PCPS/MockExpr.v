@@ -7,6 +7,8 @@ Import ListNotations.
 
 From MetaCoq Require Import Template.All.
 
+Unset Strict Unquote Universe Mode.
+
 Inductive var := mk_var : nat -> var.
 Inductive constr := mk_constr : nat -> constr.
 Inductive exp :=

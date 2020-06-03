@@ -132,6 +132,8 @@ Identifiers
 Uncurry
 Color
 Shrink_cps
+Freshen
+Inline
 TermsDB
 Variables
 Closure_conversion
@@ -157,8 +159,6 @@ Camlcoq
 AST
 Ctypes
 Cop
-Alpha_fresh
-Beta_contraction
 Dead_param_elim
 Csyntax
 Clightdefs

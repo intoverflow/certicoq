@@ -5,6 +5,8 @@ From MetaCoq Require Import Template.All.
 
 From CertiCoq.L6 Require Import Prototype.
 
+Unset Strict Unquote Universe Mode.
+
 Inductive var      := mk_var : positive -> var.
 Inductive fun_tag  := mk_fun_tag : positive -> fun_tag.
 Inductive ctor_tag := mk_ctor_tag : positive -> ctor_tag.
