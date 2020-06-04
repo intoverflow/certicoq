@@ -662,3 +662,58 @@ Proof. simpl; normalize_roundtrips; reflexivity. Qed.
 
 Definition used_vars_iso (e : univD exp_univ_exp) : used e <--> used_vars ![e].
 Proof. reflexivity. Qed.
+
+(* Useful fact for some of the passes: every C : exp_c exp_univ_fundefs exp_univ_exp
+   can be decomposed into D, fds, e such that C = D ∘ (Efun (rev fds ++ _) e) *)
+
+Fixpoint fundefs_app (fds1 fds2 : fundefs) : fundefs :=
+  match fds1 with
+  | Fnil => fds2
+  | Fcons f ft xs e fds1 => Fcons f ft xs e (fundefs_app fds1 fds2)
+  end.
+
+Fixpoint fundefs_app_iso fds1 fds2 : fundefs_app fds1 fds2 = [cps_util.fundefs_append ![fds1] ![fds2]]!.
+Proof.
+  destruct fds1 as [[f] [ft] xs e fds1|]; [|simpl; now normalize_roundtrips].
+  unfold fundefs_app; fold fundefs_app; rewrite fundefs_app_iso; simpl; now normalize_roundtrips.
+Qed.
+
+Lemma fundefs_app_assoc fds1 fds2 fds3 :
+  fundefs_app (fundefs_app fds1 fds2) fds3 = fundefs_app fds1 (fundefs_app fds2 fds3).
+Proof. induction fds1; [simpl; now rewrite IHfds1|reflexivity]. Qed.
+
+Definition fundef : Set := (var * fun_tag * list var * exp).
+
+Fixpoint fundefs_of_fds (fds : list fundef) : fundefs :=
+  match fds with
+  | [] => Fnil
+  | (f, ft, xs, e) :: fds => fundefs_app (fundefs_of_fds fds) (Fcons f ft xs e Fnil)
+  end.
+
+Fixpoint ctx_of_fds (fds : list fundef) : exp_c exp_univ_fundefs exp_univ_fundefs :=
+  match fds with
+  | [] => <[]>
+  | (f, ft, xs, e) :: fds => ctx_of_fds fds >:: Fcons4 f ft xs e
+  end.
+
+Lemma ctx_of_fds_app (fds1 : list fundef) : forall fds2 : fundefs,
+  ctx_of_fds fds1 ⟦ fds2 ⟧ = fundefs_app (fundefs_of_fds fds1) fds2.
+Proof.
+  induction fds1 as [| [[[f ft] xs] e] fds1 IHfds1]; [reflexivity|].
+  simpl; intros fds2; rewrite IHfds1, fundefs_app_assoc; reflexivity.
+Qed.
+
+Fixpoint decompose_fd_c' {A B} (C : exp_c A B) {struct C} :
+  match A as A', B as B' return exp_c A' B' -> Set with
+  | exp_univ_fundefs, exp_univ_exp => fun C => {'(D, fds, e) | C = D >:: Efun0 e >++ ctx_of_fds fds}
+  | _, _ => fun _ => unit
+  end C.
+Proof.
+  destruct C as [|A AB B f C]; [destruct A; exact tt|destruct f, B; try exact tt].
+  - specialize (decompose_fd_c' exp_univ_fundefs exp_univ_exp C); simpl in decompose_fd_c'.
+    destruct decompose_fd_c' as [[[C' fds'] e'] HCfdse'].
+    exists (C', (v, f, l, e) :: fds', e'); now simpl.
+  - exists (C, [], e); now simpl.
+Defined.
+
+Definition decompose_fd_c := @decompose_fd_c' exp_univ_fundefs exp_univ_exp.
