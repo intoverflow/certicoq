@@ -38,22 +38,6 @@ Definition local_map : Set := cps.PM bool.
    4 - Map for uncurried functions for a version of inlining *)
 Definition S_misc : Set := (bool * arity_map * local_map * St * comp_data). 
 
-Definition delay_t {A} (e : univD A) : Set := unit.
-
-Definition R_C {A} (C : exp_c A exp_univ_exp) : Set := unit.
-Definition R_e {A} (e : univD A) : Set := unit.
-
-Definition S {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
-  {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
-
-Instance Delayed_delay_t : Delayed (@delay_t).
-Proof. unshelve econstructor; [intros A e _; exact e|..]; reflexivity. Defined.
-Instance Preserves_R_C_R_C : Preserves_R_C _ exp_univ_exp (@R_C). Proof. constructor. Defined.
-Instance Preserves_R_e_R_e : Preserves_R_e _ (@R_e). Proof. constructor. Defined.
-
-(* We don't have to do anything to preserve a fresh variable as we move around *)
-Instance Preserves_S_S : Preserves_S _ exp_univ_exp (@S). Proof. constructor; intros; assumption. Defined.
-
 (** * Uncurrying as a guarded rewrite rule *)
 
 (* Hack: the pretty-printer uses cdata to associate strings with freshly generated names.
@@ -210,7 +194,9 @@ Lemma bool_true_false b : b = false -> b <> true. Proof. now destruct b. Qed.
 Local Ltac clearpose H x e :=
   pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
 
-Definition rw_uncurry : rewriter exp_univ_exp uncurry_step R_misc S_misc (@delay_t) (@R_C) (@R_e) (@S).
+Definition rw_uncurry :
+  rewriter exp_univ_exp uncurry_step R_misc S_misc
+    (@trivial_delay_t) (@trivial_R_C) (@trivial_R_e) (@S_fresh).
 Proof.
   mk_rw;
     (* This particular rewriter's delayed computation is just the identity function,
@@ -320,15 +306,15 @@ Defined.
 (* Check rw_uncurry. *)
 (* Recursive Extraction rw_uncurry. *)
 
-Lemma uncurry_one (cps : bool) (ms : S_misc) (e : exp) (s : S <[]> e)
-  : option (result exp_univ_exp uncurry_step S_misc (@S) <[]> e).
+Lemma uncurry_one (cps : bool) (ms : S_misc) (e : exp) (s : S_fresh <[]> e)
+  : option (result exp_univ_exp uncurry_step S_misc (@S_fresh) <[]> e).
 Proof.
   pose (res := run_rewriter' rw_uncurry cps ms e tt tt s); destruct res eqn:Hres.
   exact (let '(b, _, _, _, _) := resSMisc in if b then Some res else None).
 Defined.
 
-Fixpoint uncurry_fuel (cps : bool) (n : nat) (ms : S_misc) (e : exp) (s : S <[]> e) {struct n}
-  : result exp_univ_exp uncurry_step S_misc (@S) <[]> e.
+Fixpoint uncurry_fuel (cps : bool) (n : nat) (ms : S_misc) (e : exp) (s : S_fresh <[]> e) {struct n}
+  : result exp_univ_exp uncurry_step S_misc (@S_fresh) <[]> e.
 Proof.
   destruct n as [|n].
   - unshelve econstructor; [exact e|auto|auto|apply Relation_Operators.rt_refl].

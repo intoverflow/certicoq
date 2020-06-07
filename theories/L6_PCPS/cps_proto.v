@@ -682,6 +682,7 @@ Lemma fundefs_app_assoc fds1 fds2 fds3 :
   fundefs_app (fundefs_app fds1 fds2) fds3 = fundefs_app fds1 (fundefs_app fds2 fds3).
 Proof. induction fds1; [simpl; now rewrite IHfds1|reflexivity]. Qed.
 
+(* Represent a stack of function definitions (in reverse order) as [list fundef] *)
 Definition fundef : Set := (var * fun_tag * list var * exp).
 
 Fixpoint fundefs_of_fds (fds : list fundef) : fundefs :=
@@ -689,6 +690,47 @@ Fixpoint fundefs_of_fds (fds : list fundef) : fundefs :=
   | [] => Fnil
   | (f, ft, xs, e) :: fds => fundefs_app (fundefs_of_fds fds) (Fcons f ft xs e Fnil)
   end.
+
+Fixpoint fds_of_fundefs (fds : fundefs) : list fundef :=
+  match fds with
+  | Fnil => []
+  | Fcons f ft xs e fds => fds_of_fundefs fds ++ [(f, ft, xs, e)]
+  end.
+
+Lemma fundefs_app_nil_r fds : fundefs_app fds Fnil = fds.
+Proof. induction fds; simpl; congruence. Qed.
+
+Lemma fundefs_of_fds_app fds1 fds2 :
+  fundefs_of_fds (fds1 ++ fds2) = fundefs_app (fundefs_of_fds fds2) (fundefs_of_fds fds1).
+Proof.
+  induction fds1 as [| [[[f ft] xs] e] fds1 IHfds1]; [now rewrite fundefs_app_nil_r|].
+  now simpl; rewrite IHfds1, fundefs_app_assoc.
+Qed.
+
+Lemma fds_of_fundefs_app fds1 fds2 :
+  fds_of_fundefs (fundefs_app fds1 fds2) = fds_of_fundefs fds2 ++ fds_of_fundefs fds1.
+Proof.
+  induction fds1; [simpl|now rewrite app_nil_r].
+  now rewrite IHfds1, app_assoc.
+Qed.
+
+Lemma fundefs_fds_fundefs fds : fundefs_of_fds (fds_of_fundefs fds) = fds.
+Proof.
+  induction fds; simpl; [|reflexivity].
+  rewrite fundefs_of_fds_app; simpl; congruence.
+Qed.
+
+Lemma fds_fundefs_fds fds : fds_of_fundefs (fundefs_of_fds fds) = fds.
+Proof.
+  induction fds as [| [[[f ft] xs] e] fds IHfds]; simpl; [reflexivity|].
+  rewrite fds_of_fundefs_app; simpl; congruence.
+Qed.
+
+Instance Iso_fds_fundefs : Iso (list fundef) fundefs := {
+  isoAofB := fds_of_fundefs;
+  isoBofA := fundefs_of_fds;
+  isoABA := fds_fundefs_fds;
+  isoBAB := fundefs_fds_fundefs }.
 
 Fixpoint ctx_of_fds (fds : list fundef) : exp_c exp_univ_fundefs exp_univ_fundefs :=
   match fds with
@@ -717,3 +759,12 @@ Proof.
 Defined.
 
 Definition decompose_fd_c := @decompose_fd_c' exp_univ_fundefs exp_univ_exp.
+
+(* Useful helper data structures *)
+
+Definition S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+  {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
+
+(* We don't have to do anything to preserve a fresh variable as we move around *)
+Instance Preserves_S_S_fresh : Preserves_S _ exp_univ_exp (@S_fresh).
+Proof. constructor; intros; assumption. Defined.

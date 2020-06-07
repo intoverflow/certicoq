@@ -351,38 +351,40 @@ Definition opaque_delay_t {A : exp_univ} (e : univD A) := unit.
 
 Definition const_fun {A B} (x : A) (y : B) : B := y.
 
+Definition misc_S : Set := nat.
+
 Inductive R' : exp -> exp -> Prop :=
 | R'0 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ys ys' e,
     ys' = ys ++ ys ->
-    When (fun (r : unit) (s : nat) => true) ->
+    When (fun (r : unit) (s : misc_S) => true) ->
     R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys'
-                                (Put O (Modify (fun s : nat => s)
+                                (Put O (Modify (fun s : misc_S => s)
                                 (Rec (const_fun tt e))))⟧)
 | R'1 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c y ys ys' e,
     #|ys| = 4%nat ->
     (forall D : frames_t exp_univ_exp exp_univ_exp, D >++ C = D >++ C) ->
     e = e ->
     ys' = ys ++ [y; y] ->
-    When (fun (r : unit) (s : nat) => false) ->
-    R' (C⟦eCons x c (y :: ys) e⟧) (C⟦eCons (Put O x) c (Modify (fun s : nat => s) ys')
+    When (fun (r : unit) (s : misc_S) => false) ->
+    R' (C⟦eCons x c (y :: ys) e⟧) (C⟦eCons (Put O x) c (Modify (fun s : misc_S => s) ys')
                                          (Local (fun r : unit => tt) (Rec e))⟧)
 | R'4 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ys e,
-    When (fun (r : unit) (s : nat) => true) ->
+    When (fun (r : unit) (s : misc_S) => true) ->
     R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys (Modify S (Rec (eCons x c ys e)))⟧)
 | R'2 : forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f x xs xs' e fds,
     #|xs| = 0%nat ->
     xs ++ [x] = xs' ->
     C = C ->
-    When (fun (r : unit) (s : nat) => true) ->
+    When (fun (r : unit) (s : misc_S) => true) ->
     BottomUp (R' (C⟦fFun f (x :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧))
 | R'3 : forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f x x' xs xs' e fds,
     #|xs| = 0%nat ->
     xs ++ [x] = xs' ->
     C = C ->
-    When (fun (r : unit) (s : nat) => true) ->
+    When (fun (r : unit) (s : misc_S) => true) ->
     BottomUp (R' (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)).
 
-Definition rw_R' : rewriter exp_univ_exp R' unit nat (@opaque_delay_t) (@R_C) (@R_e) (@St).
+Definition rw_R' : rewriter exp_univ_exp R' unit misc_S (@opaque_delay_t) (@R_C) (@R_e) (@St).
 Proof.
   ltac1:(mk_rw';
     try lazymatch goal with

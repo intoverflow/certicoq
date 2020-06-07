@@ -263,7 +263,7 @@ Class Preserves_S (U : Set) `{Frame U} (Root : U)
 Class Preserves_R_C (U : Set) `{Frame U} (Root : U)
       (P : forall {A : U}, frames_t A Root -> Set) : Set :=
   preserve_R_C :
-    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B) (x : univD A),
+    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B),
     P fs -> P (fs >:: f).
 
 (* The other half of environment can only depend on focus *)

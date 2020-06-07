@@ -1,6 +1,6 @@
 Require Import Coq.Strings.String Coq.Classes.Morphisms Coq.Relations.Relations.
 Require Import Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
-Require Import L6.Prototype L6.cps_proto.
+Require Import L6.identifiers L6.Prototype L6.cps_proto.
 Require Import L6.Ensembles_util.
 
 Require Import Coq.Lists.List.
@@ -29,17 +29,35 @@ Qed.
 
 Definition fresh_copies (S : Ensemble cps.var) (l : list var) : Prop := Disjoint _ S (FromList ![l]) /\ NoDup l.
 
+Definition gensym (x : cps.var) : cps.var * var := (x + 1, [x]!)%positive.
+
+Lemma gensym_spec x S x' y : 
+  fresher_than x S ->
+  (x', y) = gensym x ->
+  ~ ![y] \in S /\ fresher_than x' (![y] |: S).
+Proof.
+  destruct y as [y]; unfold gensym; intros Hfresh Hgen; split.
+  - intros Hy.
+    assert (y = x) by now simpl in *.
+    assert (x > y)%positive by now apply Hfresh.
+    lia.
+  - unfold isoAofB, Iso_var in *; assert (x' = (x + 1)%positive) by easy; assert (y = x) by easy.
+    assert (x' > y)%positive by lia.
+    apply fresher_than_Union; [|eapply fresher_than_monotonic; try eassumption; lia].
+    simpl; intros z Hz; inversion Hz; lia.
+Qed.
+
 Fixpoint gensyms {A} (x : cps.var) (xs : list A) : cps.var * list var :=
   match xs with
   | [] => (x, [])
-  | _ :: xs => let '(x', xs') := gensyms (1 + x)%positive xs in (x', mk_var x :: xs')
+  | _ :: xs => let '(x', xs') := gensyms (x + 1)%positive xs in (x', mk_var x :: xs')
   end.
 
 Lemma gensyms_len' {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> length xs' = length xs.
 Proof.
   intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen; [simpl in Hgen; now inv Hgen|].
   unfold gensyms in Hgen; fold @gensyms in Hgen.
-  destruct (gensyms (1 + x0)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; now simpl.
+  destruct (gensyms (x0 + 1)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; now simpl.
 Qed.
 
 Lemma gensyms_increasing' {A} :
@@ -49,9 +67,9 @@ Proof.
   intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen [y] Hy;
     [simpl in Hgen; now inv Hgen|].
   unfold gensyms in Hgen; fold @gensyms in Hgen.
-  destruct (gensyms (1 + x0)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; simpl.
+  destruct (gensyms (x0 + 1)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; simpl.
   simpl in Hy; destruct Hy as [H|H]; [inversion H; simpl; lia|].
-  specialize IHxs with (x := (1 + x0)%positive) (y := mk_var y).
+  specialize IHxs with (x := (x0 + 1)%positive) (y := mk_var y).
   rewrite Hx0 in IHxs; unfold snd in IHxs.
   specialize (IHxs x'' xs'' eq_refl H); unfold isoBofA, Iso_var, un_var in IHxs; lia.
 Qed.
@@ -68,11 +86,11 @@ Proof.
   revert x; induction xs; [simpl; split; [lia|easy]|intros x; split; [|intros [y] Hy]].
   - unfold gensyms; fold @gensyms.
     destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold fst.
-    specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
+    specialize (IHxs (x + 1)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
     destruct IHxs; lia.
   - unfold gensyms in *; fold @gensyms in *.
     destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold fst; unfold snd in Hy.
-    specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
+    specialize (IHxs (x + 1)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
     destruct IHxs as [IHxs IHxsy].
     destruct Hy as [Hy|Hy]; [inversion Hy; simpl; lia|].
     now specialize (IHxsy (mk_var y) Hy).
@@ -91,11 +109,11 @@ Proof.
   revert x; induction xs; intros; [now constructor|].
   unfold gensyms; fold @gensyms.
   destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold snd.
-  specialize (IHxs (1 + x)%positive); rewrite Hxs' in IHxs; unfold snd in IHxs.
+  specialize (IHxs (x + 1)%positive); rewrite Hxs' in IHxs; unfold snd in IHxs.
   constructor; [|auto].
-  pose (Hinc := gensyms_increasing' (1 + x)%positive xs); clearbody Hinc.
+  pose (Hinc := gensyms_increasing' (x + 1)%positive xs); clearbody Hinc.
   rewrite Hxs' in Hinc; unfold snd in Hinc.
-  remember (snd (gensyms (1 + x)%positive xs)) as ys; clear - Hinc.
+  remember (snd (gensyms (x + 1)%positive xs)) as ys; clear - Hinc.
   induction xs'; auto.
   specialize (Hinc x' (a :: xs')).
   intros [|Hin_ys]; [|apply IHxs'; auto; intros; apply Hinc; auto; now right].
@@ -117,9 +135,9 @@ Proof.
   - simpl; intros x y S x' xs' Hfresh Hyx Hgen; inversion Hgen; subst.
     simpl; normalize_sets; eauto with Ensembles_DB.
   - unfold gensyms; fold @gensyms; intros x y S x' xs' Hfresh Hyx Hgen.
-    destruct (gensyms (1 + y)%positive xs) as [x'' xs''] eqn:Hxs.
+    destruct (gensyms (y + 1)%positive xs) as [x'' xs''] eqn:Hxs.
     inversion Hgen; subst; simpl; normalize_sets.
-    apply Union_Disjoint_r; [|eapply (IHxs (1 + y)%positive); eauto; try lia].
+    apply Union_Disjoint_r; [|eapply (IHxs (y + 1)%positive); eauto; try lia].
     + unfold fresher_than in Hfresh.
       constructor; intros arb; intros HSx; unfold Ensembles.In in HSx.
       destruct HSx as [arb HS Hx]; inversion Hx; subst.
@@ -210,3 +228,13 @@ Definition run_rewriter (mr : R_misc) (ms : S_misc) (e : univD root)
   let '{| resTree := e' |} := run_rewriter' mr ms e r_C r_e st in e'.
 
 End RunRewriter.
+
+Definition trivial_R_C {A} (C : exp_c A exp_univ_exp) : Set := unit.
+Instance Preserves_R_C_trivial_R_C : Preserves_R_C _ exp_univ_exp (@trivial_R_C). Proof. constructor. Defined.
+
+Definition trivial_R_e {A} (e : univD A) : Set := unit.
+Instance Preserves_R_e_trivial_R_e : Preserves_R_e _ (@trivial_R_e). Proof. constructor. Defined.
+
+Definition trivial_delay_t {A} (e : univD A) : Set := unit.
+Instance Delayed_trivial_delay_t : Delayed (@trivial_delay_t).
+Proof. unshelve econstructor; [intros A e _; exact e|..]; reflexivity. Defined.

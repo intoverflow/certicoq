@@ -22,6 +22,47 @@ Fixpoint long_id n (x y z : nat) {struct n} :=
 CertiCoq Show IR -anf -ext "_anf" long_id.
 CertiCoq Show IR -ext "_cps" long_id.
 
+Fixpoint leb (n m : nat) :=
+  match n, m with
+  | 0, _ => true
+  | S _, 0 => false
+  | S n, S m => leb n m
+  end.
+
+Fixpoint insert x xs :=
+  match xs with
+  | [] => [x]
+  | x' :: xs => if leb x x' then x :: x' :: xs else x' :: insert x xs
+  end.
+
+Fixpoint insert' x xs :=
+  match xs with
+  | [] => [x]
+  | x' :: xs => x' :: insert x xs
+  end.
+
+Fixpoint isort (xs : list nat) : list nat :=
+  match xs with
+  | [] => []
+  | x :: xs => (*insert' x *)(isort xs)
+  end.
+Compute isort [1; 4; 3; 6; 2].
+
+Fixpoint slow_zero (n : nat) : nat :=
+  match n with
+  | 0 => 0
+  | S n => slow_zero n
+  end.
+
+Fixpoint slow_nil (xs : list nat) : list nat :=
+  match xs with
+  | [] => []
+  | x :: xs => slow_nil xs
+  end.
+
+CertiCoq Show IR -anf slow_nil.
+CertiCoq Show IR -ext "_cps" isort.
+
 Definition easy_demo1 := 1 + 1.
 
 (* CertiCoq Compile -ext "_cps" easy_demo1. *)
@@ -61,7 +102,8 @@ Definition vs_hard :=
   end.
 
 (* CertiCoq Compile -ext "_cps" -time vs_easy. *)
-CertiCoq Compile -anf  vs_easy.
+(* CertiCoq Compile -anf  vs_easy. *)
+(* CertiCoq Show IR -anf vs_easy. *)
 
 (* Zoe: Compiling with the CPS pipeline takes much longer for vs_easy.
    The overhead seems to come from the C translation: (maybe has to do with dbg/error messages?)
@@ -88,14 +130,15 @@ Debug: Time elapsed in L6 Pipeline:  0.148308
 Debug: Time elapsed in L7:  2.394216 *)
 
 (* CertiCoq Compile -ext "_cps" vs_hard. *)
-CertiCoq Compile -anf vs_hard.
+CertiCoq Show IR -anf vs_hard.
 
 Definition binom := Binom.main.
 
-CertiCoq Compile -ext "_cps" binom. (* returns nat *)
-CertiCoq Compile -anf binom.  (* returns nat *)
+(* CertiCoq Compile -ext "_cps" binom. (* returns nat *) *)
+CertiCoq Show IR -anf binom.  (* returns nat *)
 
 Definition color := Color.main.
+Definition color_run := Color.run.
 
 (* CertiCoq Compile -ext "_cps" color. *)
-CertiCoq Compile -anf color.
+CertiCoq Show IR -anf -time color_run.
