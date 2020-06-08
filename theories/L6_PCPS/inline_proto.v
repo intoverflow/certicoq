@@ -226,7 +226,7 @@ Definition update_next_var (next : cps.var) (cdata : comp_data) : comp_data :=
 (* The function definition f(xs) = e_body (with fun tag ft) is in scope at C⟦e⟧ if... *)
 Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body : exp)
           (C : exp_c A exp_univ_exp) (e : univD A) : Prop :=
-  (* ...f was defined in a bundle encountered earlier... *)
+  (* ...f was defined in an earlier bundle... *)
   (exists D fds E, C = D >:: Efun1 fds >++ E /\ List.In (Ffun f ft xs e_body) fds) \/
   (* ...or f is in a bundle and we are currently inside one of the bundle's definitions... *)
   (exists D fds1 fds2 E,
@@ -282,37 +282,21 @@ Definition S_fns {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := {
   forall f ft xs e_body, M.get f ρ = Some (ft, xs, e_body) ->
   known_function [f]! ft xs e_body C e }.
 
-(* If not entering or exiting a function bundle, the set of known functions remains the same *)
+Fixpoint add_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
+  match fds with
+  | Ffun f ft xs e :: fds => M.set ![f] (ft, xs, e) (add_fundefs fds ρ)
+  | [] => ρ
+  end.
 
-Lemma known_nonbundle_dn {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
-      (e : univD A) f ft xs e_body :
-  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
-  match fr with Efun1 _ => False | _ => True end ->
-  known_function f ft xs e_body C (frameD fr e) ->
-  known_function f ft xs e_body (C >:: fr) e.
+Fixpoint add_fundefs_Some f ft xs e ρ fds {struct fds} :
+  M.get f (add_fundefs fds ρ) = Some (ft, xs, e) ->
+  In (Ffun (mk_var f) ft xs e) fds \/ M.get f ρ = Some (ft, xs, e).
 Proof.
-  destruct fr; try congruence; intros _ _ Hfun Hknown;
-  solve [
-    destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
-    [left|right; left]; subst C; repeat eexists;
-    try match goal with |- _ /\ _ => split end; try match goal with
-    | |- context [?fs >++ ?gs >:: ?g] => change (fs >++ gs >:: g) with (fs >++ (gs >:: g))
-    end; try reflexivity; try assumption].
-Qed.
-
-Lemma known_nonbundle_up {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
-      (e : univD A) f ft xs e_body :
-  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
-  match fr with Efun1 _ => False | _ => True end ->
-  known_function f ft xs e_body (C >:: fr) e ->
-  known_function f ft xs e_body C (frameD fr e).
-Proof.
-  destruct fr; try congruence; intros _ _ Hfun Hknown; try solve [inversion Hfun];
-  (destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
-    [left|right; left];
-    (destruct (frames_split' E) as [[AB [Ef [E' HE]]] | [HEeq [HEnil HElen]]];
-     [subst E; inversion HC; subst; inv_ex; repeat eexists; eassumption
-     |try solve [inversion HEeq|inversion HEnil; subst; inv_ex; inversion HC]])).
+  destruct fds as [|[[g] gt ys e'] fds]; [now right|cbn; intros Hget].
+  destruct (Pos.eq_dec f g); [subst; rewrite M.gss in Hget; now inv Hget|].
+  rewrite M.gso in Hget by auto.
+  specialize (add_fundefs_Some _ _ _ _ ρ fds Hget).
+  now destruct add_fundefs_Some as [Hin|Hin].
 Qed.
 
 Fixpoint remove_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
@@ -351,12 +335,62 @@ Proof.
   now rewrite (remove_fundefs_In_None _ _ _ _ _ _ Hthere) in Hget.
 Defined.
 
+Corollary remove_fundefs_Some f fds ρ fd :
+  M.get f (remove_fundefs fds ρ) = Some fd ->
+  ~ (exists ft xs e, In (Ffun (mk_var f) ft xs e) fds) /\ M.get f ρ = Some fd.
+Proof.
+  intros Hget; split; [|rewrite remove_fundefs_not_In in Hget]; eauto;
+  eapply remove_fundefs_Some_not; eauto.
+Qed.
+
+Ltac inv' H := inversion H; subst; inv_ex.
+
+(* If not entering or exiting a function bundle, the set of known functions remains the same *)
+
+Lemma known_nonbundle_dn {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
+      (e : univD A) f ft xs e_body :
+  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
+  match fr with Efun1 _ => False | _ => True end ->
+  known_function f ft xs e_body C (frameD fr e) ->
+  known_function f ft xs e_body (C >:: fr) e.
+Proof.
+  destruct fr; try congruence; intros _ _ Hfun Hknown;
+  solve [
+    destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
+    [left|right; left]; subst C; repeat eexists;
+    try match goal with |- _ /\ _ => split end; try match goal with
+    | |- context [?fs >++ ?gs >:: ?g] => change (fs >++ gs >:: g) with (fs >++ (gs >:: g))
+    end; try reflexivity; try assumption].
+Qed.
+
+Lemma known_nonbundle_up {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
+      (e : univD A) f ft xs e_body :
+  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
+  match fr with Efun1 _ => False | _ => True end ->
+  known_function f ft xs e_body (C >:: fr) e ->
+  known_function f ft xs e_body C (frameD fr e).
+Proof.
+  destruct fr; try congruence; intros _ _ Hfun Hknown; try solve [inversion Hfun];
+  (destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
+    [left|right; left];
+    (destruct (frames_split' E) as [[AB [Ef [E' HE]]] | [HEeq [HEnil HElen]]];
+     [subst E; inv' HC; repeat eexists; eassumption
+     |try solve [inversion HEeq|inv' HEnil; inversion HC]])).
+Qed.
+
 Instance Preserves_S_S_fns : Preserves_S _ exp_univ_exp (@S_fns).
 Proof.
   constructor.
+  Local Ltac destruct_known' Hρ :=
+    destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[]]].
+  Local Ltac destruct_known Hρ :=
+    destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[D[fds1[HC Hin]]]]].
+  Local Ltac destruct_ctx' E AB fE E' HE :=
+    destruct (frames_split' E) as [[AB [fE [E' HE]]]|[?[? ?]]]; [|discriminate].
+  Local Ltac destruct_ctx E AB fE E' HE HEeq HEnil HElen :=
+    destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]].
   (* Moving upwards *)
-  - intros A B C f e [ρ Hρ].
-    destruct f; lazymatch goal with
+  - intros A B C f e [ρ Hρ]; destruct f; lazymatch goal with
     (* There are only a few cases that we care about: *)
     | |- S_fns C (frameD (Efun0 ?e') ?fds') => rename e' into e, fds' into fds
     | |- S_fns C (frameD (Efun1 ?fds') ?e') => rename e' into e, fds' into fds
@@ -364,122 +398,99 @@ Proof.
     | |- S_fns C (frameD (cons_fundef1 ?fd) ?fds') => destruct fd as [[f] ft xs e_body]; rename fds' into fds
     (* For all the others, the map should remain unchanged *)
     | _ =>
-      exists ρ; intros f' ft' xs' e' Hftxse';
-      specialize (Hρ f' ft' xs' e' Hftxse');
+      exists ρ; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
       apply known_nonbundle_up; [now inversion 1..|exact I|assumption]
     end.
     (* When leaving a function definition f(xs) = e, need to add f back into the map *)
-    Local Ltac leave_fundef ρ Hρ C f ft xs e_body :=
-      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget;
-      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
-      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]
-      |specialize (Hρ g gt ys e Hget);
-       destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|right; left];
-       (destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq]);
-       inversion HC; subst; inv_ex; repeat eexists; intuition eassumption].
-    + rename f into ft, l into xs, e0 into e_body, f0 into fds, e into f; destruct f as [f].
-      leave_fundef ρ Hρ C f ft xs e_body.
-    + rename v into f, l into xs, e0 into e_body, f into fds, e into ft; destruct f as [f].
-      leave_fundef ρ Hρ C f ft xs e_body.
-    + rename v into f, f into ft, e0 into e_body, f0 into fds, e into xs; destruct f as [f].
-      leave_fundef ρ Hρ C f ft xs e_body.
-    + rename v into f, f into ft, l into xs, f0 into fds, e into e_body; destruct f as [f].
-      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget.
-      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
-      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]|idtac].
-      specialize (Hρ g gt ys e Hget);
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|].
-      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
-        -- inversion HC; subst; inv_ex; repeat eexists; intuition eassumption.
-        -- inversion HEnil; inv_ex; subst; inversion HC.
-      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
-        -- inversion HC; subst; inv_ex; right; left.
-           exists D, fds1, h, ht, zs, fds2, E'; intuition assumption.
-        -- inversion HEnil; subst; inv_ex; inversion HC; subst; inv_ex; right; right.
-           exists D, fds1; split; [assumption|]; destruct Hin as [Hin|Hin]; [now left|right; cbn]; now right.
-    (* When moving up along a function bundle, the set of known functions doesn't change *)
-    + rename v into f, f into ft, l into xs, e0 into e_body, e into fds; destruct f as [f].
-      exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget).
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]];
-        [left|right; left|right; right];
-        [destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq];
-         inversion HC; subst; inv_ex; repeat eexists; eassumption..
-        |idtac].
-      destruct fds1 as [|[[[f1 ft1] xs1] e1] fds1]; cbn in HC.
-      * destruct (frames_split' D) as [[AB [fD [D' HD]]]|[HDeq [HDnil HDlen]]]; [subst D|inversion HDeq].
-        inversion HD; subst; inv_ex; subst; exists D', []; split; [reflexivity|right; right; now destruct Hin].
-      * inversion HC; subst; inv_ex; exists D, fds1; split; [assumption|].
-        destruct Hin as [[Hin|Hin]|Hin]; [cbn in Hin; inv Hin; right; now left|now left|right; right; assumption].
-    (* When leaving a function bundle, all functions must be removed *)
-    + rename e0 into e, e into fds; exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
-      pose (HgetSome := remove_fundefs_Some_not _ _ _ _ Hget); clearbody HgetSome.
-      rewrite remove_fundefs_not_In in Hget by assumption; specialize (Hρ _ _ _ _ Hget).
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]];
-        [left|right; left|];
-        [destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq];
-         inversion HC; subst; inv_ex; repeat eexists; eauto..|idtac].
-      destruct fds1 as [|[[[f1 ft1] xs1] e1] fds1]; [cbn in HC|inversion HC].
-      contradiction HgetSome; destruct Hin as [[]|Hin]; repeat eexists; eassumption.
-    + rename f into fds; exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
-      pose (HgetSome := remove_fundefs_Some_not _ _ _ _ Hget); clearbody HgetSome.
-      rewrite remove_fundefs_not_In in Hget by assumption; specialize (Hρ _ _ _ _ Hget).
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]].
-      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
-        -- inversion HC; subst; inv_ex; left; repeat eexists; eassumption.
-        -- inversion HEnil; subst; inv_ex; inversion HC; subst; inv_ex.
-           apply has_def_in in HIn; contradiction HgetSome; now repeat eexists.
-      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
-        -- inversion HC; subst; inv_ex; right; left; repeat eexists; eassumption.
-        -- inversion HEnil; subst; inv_ex; inversion HC.
+    + exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget.
+      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto].
+      * (* f is now a known function *) inv Hget; right; right; exists C, []; split; [reflexivity|now left].
+      * (* All other functions are still known *)
+        specialize (Hρ g gt ys e Hget); destruct_known' Hρ; [left|right].
+        -- destruct_ctx' E AB fE E' HE; subst E; inv' HC; now repeat eexists.
+        -- destruct_ctx E AB fE E' HE HEeq HEnil HElen; [subst E; left|right].
+           ++ inv' HC; now repeat eexists.
+           ++ inv' HEnil; inv' HC.
+              exists D, fds1; split; [auto|]; apply in_app_or in Hin; apply in_or_app.
+              now (destruct Hin; [left|right; right]).
+    (* When moving upwards along a function bundle, the set of known functions remains unchanged *)
+    + exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ.
+      (* If g was defined in an earlier bundle, g is still known *)
+      * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
+      (* If g was defined in a bundle and we are currently inside one of the bundle's definitions,
+         g is still known *)
+      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
+      (* If g was defined in the bundle we are currently traversing, g is still known (though it
+         may be to the right of us instead of to the left now as we are moving upwards through the
+         bundle) *)
+      * destruct fds1 as [|[f1 ft1 xs1 e1] fds1].
+        -- destruct_ctx' D AB fD D' HD; subst D.
+           inv' HC; right; right; exists D', []; split; [easy|now right].
+        -- inv' HC; right; right; exists D, fds1; split; [easy|].
+           apply in_app_or in Hin; apply in_or_app.
+           now destruct Hin as [[Hin|Hin]|Hin]; [inv Hin; right; left|left|right; right].
+    (* When moving upwards past a function bundle, the whole bundle must be deleted *)
+    + exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
+      apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
+      destruct_known Hρ.
+      (* If g was defined in an earlier bundle, it's still known *)
+      * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
+      (* If g was defined in a bundle and we're currently in one of its definitions, g is still known *)
+      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
+      (* If g was defined in the bundle we are leaving, then it can't have been in (remove_fundefs fds ρ)
+         in the first place *)
+      * destruct fds1 as [|fd fds1]; [|now inversion HC]; contradiction Hne; now repeat eexists.
+    (* Ditto, but this time moving upwards to (Efun fds e) from e instead of from fds *)
+    + exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
+      apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
+      destruct_known' Hρ.
+      * destruct_ctx E AB fE E' HE HEeq HEnil HElen.
+        -- subst E; inv' HC; left; now repeat eexists.
+        -- inv' HEnil; inv' HC; contradiction Hne; now repeat eexists.
+      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
   (* Moving downwards *)
-  - intros A B C f e [ρ Hρ].
-    destruct f; lazymatch goal with
+  - intros A B C f e [ρ Hρ]; destruct f; lazymatch goal with
     (* There are only a few cases that we care about: *)
-    | |- S_fns (C >:: Efun0 _) _ => idtac
-    | |- S_fns (C >:: Efun1 _) _ => idtac
-    | |- S_fns (C >:: Fcons0 _ _ _ _) _ => idtac
-    | |- S_fns (C >:: Fcons1 _ _ _ _) _ => idtac
-    | |- S_fns (C >:: Fcons2 _ _ _ _) _ => idtac
-    | |- S_fns (C >:: Fcons3 _ _ _ _) _ => idtac
-    | |- S_fns (C >:: Fcons4 _ _ _ _) _ => idtac
+    | |- S_fns (C >:: Efun0 ?e') ?fds' => rename e' into e, fds' into fds
+    | |- S_fns (C >:: Efun1 ?fds') ?e' => rename e' into e, fds' into fds
+    | |- S_fns (C >:: cons_fundef0 ?fds') ?fd => destruct fd as [[f] ft xs e_body]; rename fds' into fds
+    | |- S_fns (C >:: cons_fundef1 ?fd) ?fds' => destruct fd as [[f] ft xs e_body]; rename fds' into fds
     (* For all the others, the map should remain unchanged *)
     | _ =>
-      exists ρ; intros f' ft' xs' e' Hftxse';
-      specialize (Hρ f' ft' xs' e' Hftxse');
+      exists ρ; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
       apply known_nonbundle_dn; [now inversion 1..|exact I|assumption]
     end.
-    (* Before entering the body of a function f, need to delete ρ(f) *)
-    + rename f into ft, l into xs, e0 into e_body, f0 into fds, e into f; destruct f as [f].
-      exists (M.remove f ρ); intros g gt ys e Hget;
-      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; now rewrite M.grs in Hget|];
-      rewrite M.gro in Hget by auto; specialize (Hρ g gt ys e Hget).
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]].
-      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]. [left|right; left];
-    Local Ltac leave_fundef ρ Hρ C f ft xs e_body :=
-      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget;
-      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
-      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]
-      |specialize (Hρ g gt ys e Hget);
-       destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|right; left];
-       (destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq]);
-       inversion HC; subst; inv_ex; repeat eexists; intuition eassumption].
-    exists (M.remove f ρ); intros g gt ys e Hget.
-    destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst; now rewrite M.grs in Hget|].
-    rewrite M.gro in Hget by auto; now apply known_function_cons.
-  (* When moving on from one function f(xs) = e body, need to update ρ(f) *)
-  - rename v into f, f into ft, l into xs; destruct f as [f].
-    exists (M.set f (ft, xs, e) ρ); intros g gt ys eg Hget.
-    destruct (Pos.eq_dec g f) as [Hgf|Hgf];
-      [subst f|rewrite M.gso in Hget by auto; now apply known_function_cons].
-    rewrite M.gss in Hget; inv Hget.
-    unfold known_function.
-    + admit.
-    + rewrite M.gso in Hget by auto; now apply known_function_cons.
-  (* It only remains to show that the extended map satisfies the invariant *)
-  intros f' ft' xs' e' Hget.
-  destruct (Pos.eq_dec f0 f').
-  - subst; rewrite M.gss in Hget; inv Hget; right; left.
-Abort.
+    Local Ltac still_known :=
+      subst; change (?l >++ ?r >:: ?f) with (l >++ (r >:: f));
+      (left + (right; left)); now repeat eexists.
+    (* When entering a function body f(xs) = e_body, need to delete ρ(f) *)
+    + exists (M.remove f ρ); intros g gt ys e Hget; destruct (Pos.eq_dec g f) as [Hgf|Hgf];
+      [subst f; now rewrite M.grs in Hget|rewrite M.gro in Hget by auto]; specialize (Hρ g gt ys e Hget).
+      (* If g was defined in a bundle earlier, it's still there *)
+      destruct_known Hρ; [still_known..|].
+      (* If g was defined in the bundle that we were traversing and g <> f, then g is still known
+         but now as a function defined in an "earlier bundle" instead of as a function in the bundle
+         currently being traversed *)
+      right; left; exists D, fds1, fds, <[]>; split; [now subst C|].
+      apply in_app_or in Hin; apply in_or_app; now destruct Hin as [Hin|[Hin|Hin]]; [left|inv Hin|right].
+    (* When moving downwards along a function bundle, the set of known functions doesn't change *)
+    + exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ; [still_known..|].
+      subst C; change (?l >++ ctx_of_fds ?r >:: cons_fundef1 ?f) with (l >++ ctx_of_fds (f :: r)).
+      right; right; repeat eexists; apply in_app_or in Hin; apply in_or_app.
+      destruct Hin as [Hin|[Hin|Hin]]; [now (left; right)|left; left; now inv Hin|now right].
+    (* When entering a function bundle fds, need to add the whole bundle to ρ *)
+    + exists (add_fundefs fds ρ); intros g gt ys e_body Hget.
+      (* If g ∈ fds then g is clearly in the bundle we are currently traversing *)
+      apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [do 2 right; eexists; now exists []|].
+      (* Otherwise, g is still known *)
+      specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
+    (* Ditto when entering e in (Efun fds e) *)
+    + exists (add_fundefs fds ρ); intros g gt ys e_body Hget.
+      (* If g ∈ fds then g is clearly defined in an 'earlier' bundle *)
+      apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [left; now exists C, fds, <[]>|].
+      (* Otherwise, g is still known *)
+      specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
+Defined.
 
 (*
 Lemma known_function_cons {A B} f ft xs e_body C (fr : exp_frame_t A B) (e : univD A) :
