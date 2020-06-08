@@ -223,10 +223,10 @@ Definition update_next_var (next : cps.var) (cdata : comp_data) : comp_data :=
      next_ind_tag := i; next_fun_tag := f; cenv := e; fenv := fenv;
      nenv := names; log := log |}.
 
-Fixpoint find_def (f : var) (fds : fundefs) :=
+Fixpoint has_def f ft xs e fds {struct fds} :=
   match fds with
-  | Fcons f' ft xs e fds => if Pos.eqb ![f] ![f'] then Some (ft, xs, e) else find_def f fds
-  | Fnil => None
+  | Fcons f' ft' xs' e' fds => (f = f' /\ ft = ft' /\ xs = xs' /\ e = e') \/ has_def f ft xs e fds
+  | Fnil => False
   end.
 
 (* The function definition f(xs) = e_body (with fun tag ft) is in scope at C⟦e⟧ if... *)
@@ -237,12 +237,12 @@ Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body :
   (* ...or f is in a bundle and we are currently inside one of the bundle's definitions... *)
   (exists D fds1 g gt ys fds2 E,
     C = D >++ ctx_of_fds fds1 >:: Fcons3 g gt ys fds2 >++ E /\
-    (List.In (f, ft, xs, e_body) fds1 \/ find_def f fds2 = Some (ft, xs, e_body))) \/
+    (List.In (f, ft, xs, e_body) fds1 \/ has_def f ft xs e_body fds2)) \/
   (* ...or f is in a bundle that we are currently traversing *)
   (match A return exp_c A exp_univ_exp -> univD A -> Prop with
    | exp_univ_fundefs => fun C fds2 => exists D fds1,
      C = D >++ ctx_of_fds fds1 /\
-     (List.In (f, ft, xs, e_body) fds1 \/ find_def f fds2 = Some (ft, xs, e_body))
+     (List.In (f, ft, xs, e_body) fds1 \/ has_def f ft xs e_body fds2)
    | _ => fun _ _ => False
    end C e).
 
@@ -472,48 +472,7 @@ Qed.
 Corollary exp_ext_nil' {A B} (C : exp_c A B) : A = B -> (forall x, JMeq x (C ⟦ x ⟧)) -> JMeq C (<[]> : exp_c B B).
 Proof. intros; subst; now apply exp_ext_nil. Qed.
 
-Lemma exp_c_ext_eq' {A B A'} (C : exp_c A B) (D : exp_c A' B) :
-  A = A' -> (forall x x', JMeq x x' -> C ⟦ x ⟧ = D ⟦ x' ⟧) -> JMeq C D.
-Proof.
-  remember (frames_len C + frames_len D)%nat as n eqn:Heqn.
-  revert A B A' C D Heqn; induction n as [n IHn] using lt_wf_ind.
-  intros A B A' C D Heqn Heq Hext.
-  destruct (frames_split C) as [[AB [g [C' HC]]] | HClen0];
-  destruct (frames_split D) as [[AB' [g' [D' HD]]] | HDlen0].
-  - admit.
-  - admit.
-  - admit.
-  - destruct C, D; simpl in HClen0, HDlen0; try congruence; constructor.
-Admitted.
-(*
-  destruct C, D.
-  - constructor.
-  - intros Heq Hext; apply JMeq_sym; apply exp_ext_nil'; [congruence|].
-    subst; intros x; specialize (Hext x x JMeq_refl); simpl in *; rewrite <- Hext; constructor.
-  - intros Heq Hext; subst; apply exp_ext_nil; [congruence|].
-    intros x; specialize (Hext x x JMeq_refl); simpl in *; rewrite Hext; constructor.
-  - 
-    intros ? Hwat; subst; simpl in *.
-    clear - Hwat.
-  destruct f, g; try congruence; simpl; intros _ _ Hext;
-  pose (Hext1 := Hext inhabitant inhabitant JMeq_refl); clearbody Hext1;
-  pose (Hext2 := Hext inhabitant' inhabitant' JMeq_refl); clearbody Hext2;
-  inversion Hext1; inversion Hext2; inv_ex;
-  repeat match goal with H : _ = _ |- _ => inv H end; constructor.
-Qed. *)
-
-(*
-Lemma ctx_cons_inj U V1 V2 W
-      (f : exp_frame_t U V1) (C : exp_c V1 W)
-      (g : exp_frame_t U V2) (D : exp_c V2 W) :
-  JMeq (C >:: f) (D >:: g) -> V1 = V2 /\ JMeq f g /\ JMeq C D.
-Proof.
-  destruct f, g.
-  inversion 1; inv_ex;
-  try lazymatch goal with H : _ >:: _ = _ >:: _ |- _ => inversion H end;
-  inv_ex; subst; repeat split; try constructor.
-  inversion 1.
-  inv_ex. *)
+(* TODO: move these to Rewriting.v *)
 
 Definition uframe_t {U : Set} `{H : Frame U} := {A & {B & @frame_t U H A B}}.
 Definition uframes_t {U : Set} `{H : Frame U} := list (@uframe_t U H).
@@ -525,10 +484,23 @@ Proof.
   exact (A = A' /\ well_typed U H AB B fs).
 Defined.
 
+Fixpoint well_typed_comp {U : Set} `{H : Frame U} (A B C : U) (fs gs : @uframes_t U H) {struct fs} :
+  well_typed A B fs ->
+  well_typed B C gs ->
+  well_typed A C (fs ++ gs).
+Proof.
+  destruct fs as [|[A' [AB f]] fs].
+  - cbn; intros; subst; assumption.
+  - cbn; intros [HAB Hfs] Hgs; split; [assumption|now eapply well_typed_comp].
+Defined.
+
+Definition untype_frame {U : Set} `{H : Frame U} {A B : U} (f : @frame_t U H A B) : @uframe_t U H.
+Proof. exists A, B; exact f. Defined.
+
 Fixpoint untype {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) : @uframes_t U H.
 Proof.
   destruct fs as [|A AB B f fs]; [exact []|refine (_ :: _)].
-  - do 2 eexists; exact f.
+  - exact (untype_frame f).
   - eapply untype; exact fs.
 Defined.
 
@@ -558,6 +530,16 @@ Proof. exists (untype fs); now apply untype_well_typed. Defined.
 Definition ty_merge {U : Set} `{H : Frame U} {A B : U} : @frames_sig_t U H A B -> @frames_t U H A B.
 Proof. intros [fs Hfs]; now eapply retype. Defined.
 
+Fixpoint ty_u_ty {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B)
+         (Hfs : well_typed A B (untype fs)) {struct fs} :
+  retype A B (untype fs) Hfs = fs.
+Proof.
+  destruct fs as [|A AB B f fs]; cbn in Hfs.
+  - assert (Hfs = eq_refl) by apply UIP; subst; reflexivity.
+  - destruct Hfs as [Hfs1 Hfs2]; assert (Hfs1 = eq_refl) by apply UIP; subst; cbn.
+    now rewrite ty_u_ty.
+Defined.
+
 Fixpoint t_sig_t {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) :
   ty_merge (ty_split fs) = fs.
 Proof.
@@ -583,6 +565,33 @@ Definition sig_t_sig {U : Set} `{H : Frame U} {A B : U} (fs : @frames_sig_t U H 
   ty_split (ty_merge fs) = fs.
 Proof. destruct fs as [fs Hfs]; apply sig_t_sig'. Defined.
 
+Fixpoint untype_comp {U : Set} `{H : Frame U} {A B C : U}
+      (gs : @frames_t U H A B) (fs : @frames_t U H B C) {struct gs} :
+  untype (fs >++ gs) = untype gs ++ untype fs.
+Proof. destruct gs as [|A AB B g gs]; [reflexivity|simpl; congruence]. Defined.
+
+Lemma cong_untype {U : Set} `{H : Frame U} {A B : U} (fs gs : @frames_t U H A B) :
+  fs = gs -> untype fs = untype gs.
+Proof. intros; now f_equal. Defined.
+
+Fixpoint unique_typings {U : Set} `{H : Frame U} {A B : U} (fs : @uframes_t U H)
+      (Hfs Hgs : well_typed A B fs) {struct fs} :
+  Hfs = Hgs.
+Proof.
+  destruct fs as [|[A' [AB f]] fs].
+  - now apply UIP.
+  - simpl in Hfs, Hgs; destruct Hfs as [Hfs1 Hfs2], Hgs as [Hgs1 Hgs2].
+    assert (Hfs1 = Hgs1) by apply UIP; subst.
+    specialize (unique_typings U H _ _ fs Hfs2 Hgs2); now subst.
+Defined.
+
+Fixpoint cong_retype {U : Set} `{H : Frame U} (A B : U) (fs gs : @uframes_t U H)
+      (Hfs : well_typed A B fs) (Hgs : well_typed A B gs) {struct fs} :
+  fs = gs -> retype A B fs Hfs = retype A B gs Hgs.
+Proof. intros; subst gs; now assert (Hfs = Hgs) by apply unique_typings. Defined.
+
+(* TODO: move this and the definition if Iso to Rewriting.v *)
+
 Instance Iso_frames {U : Set} `{H : Frame U} {A B : U} : Iso (@frames_t U H A B) (@frames_sig_t U H A B) := {
   isoAofB := ty_merge;
   isoBofA := ty_split;
@@ -591,60 +600,20 @@ Instance Iso_frames {U : Set} `{H : Frame U} {A B : U} : Iso (@frames_t U H A B)
 
 (* If not entering or exiting a function bundle, the set of known functions remains the same *)
 
-(* Inductive frames_eq {U : Set} `{Frame U} : forall {A B A' B' : U}, frames_t A B -> frames_t A' B' -> Prop := *)
-(* | frames_eq_nil : forall A A', A = A' -> frames_eq (<[]> : frames_t A A) (<[]> : frames_t A' A'). *)
-(* | frames_eq_cons : forall A AB B A' AB' B', A = A' -> frames_eq (<[]> : frames_t A A) (<[]> : frames_t A' A'). *)
-
-Fixpoint frames_eq {U : Set} `{Frame U} {A B A' B' : U} (fs : frames_t A B) (gs : frames_t A' B') : Prop.
-Proof.
-  destruct fs as [|A AB B f fs]; destruct gs as [|A' AB' B' g gs].
-  - exact (A = A0).
-  - exact False.
-  - exact False.
-  - refine (exists (HA : A = A') (HAB : AB = AB'), _).
-    subst; refine (f = g /\ _).
-    eapply frames_eq; [exact fs|exact gs].
-Defined.
-
-(* Infix "~=" := Feq (at level 80, no associativity). *)
-
+(* TODO move this to Rewriting.v *)
 Definition frames_split' {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
-  (exists AB (g : F A AB) (gs : frames_t' F AB B), fs = gs >:: g) \/ (frames_len fs = O).
+  (exists AB (g : F A AB) (gs : frames_t' F AB B), fs = gs >:: g) \/
+  (A = B /\ JMeq fs (<[]> : frames_t' F A A) /\ frames_len fs = 0%nat).
 Proof. destruct fs as [| A' AB B' f fs]; [now right|left; now do 3 eexists]. Qed.
-
-Fixpoint eq_frames_eq {U : Set} `{Frame U} {A B : U}
-      (fs gs : frames_t A B) :
-  fs = gs -> frames_eq fs gs.
-Proof.
-  destruct fs; destruct (frames_split' gs) as [[AA [g [gs' Hgs]]]|Hglen].
-  - subst gs; now inversion 1.
-  - intros Hnil; subst; reflexivity.
-  - subst gs; inversion 1; subst; inv_ex; simpl; exists eq_refl, eq_refl; cbn.
-    split; [auto|now apply eq_frames_eq].
-  - destruct gs; [inversion 1|inversion Hglen].
-Qed.
-
-Fixpoint frames_eq_eq {U : Set} `{Frame U} {A B : U}
-      {fs gs : frames_t A B} :
-  frames_eq fs gs -> fs = gs.
-Proof.
-  destruct fs; destruct (frames_split' gs) as [[AB [g [gs' Hgs]]]|Hglen].
-  - subst gs; inversion 1.
-  - admit.
-  - subst gs; simpl.
-    unfold eq_rect_r, eq_rect, eq_sym.
-    intros [HA [HAB Heqs]].
-Admitted.
-
-Lemma eq_JMeq {A} {x y : A} (H : x = y) : JMeq x y. Proof. subst; constructor. Qed.
 
 Lemma known_nonbundle_dn {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
       (e : univD A) f ft xs e_body :
   A <> exp_univ_fundefs -> B <> exp_univ_fundefs ->
+  match fr with Efun1 _ => False | _ => True end ->
   known_function f ft xs e_body C (frameD fr e) ->
   known_function f ft xs e_body (C >:: fr) e.
 Proof.
-  destruct fr; try congruence; intros _ _ Hknown;
+  destruct fr; try congruence; intros _ _ Hfun Hknown;
   solve [
     destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
     [left|right; left]; subst C; repeat eexists;
@@ -656,68 +625,111 @@ Qed.
 Lemma known_nonbundle_up {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
       (e : univD A) f ft xs e_body :
   A <> exp_univ_fundefs -> B <> exp_univ_fundefs ->
+  match fr with Efun1 _ => False | _ => True end ->
   known_function f ft xs e_body (C >:: fr) e ->
   known_function f ft xs e_body C (frameD fr e).
 Proof.
-  destruct fr; try congruence; intros _ _ Hknown.
-    destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
-    [left|right; left].
-    apply eq_frames_eq in HC.
-    destruct (frames_split' E) as [[AB [Ef [E' HE]]] | HElen]; [subst E|].
-    simpl in HC.
-    apply frames_eq_eq in HC.
-    inversion HC; inv_ex.
-    inversion HC.
-    inversion HC.
-    apply inj_pairT2 in H0.
-    inversion H0.
-    apply inj_pairT2 in H2.
-    Check inj_pairT2.
-    SearchAbout existT.
-    subst E.
-    destruct E.
-
-    subst C; repeat eexists;
-    try match goal with |- _ /\ _ => split end; try match goal with
-    | |- context [?fs >++ ?gs >:: ?g] => change (fs >++ gs >:: g) with (fs >++ (gs >:: g))
-    end; try reflexivity; try assumption.
-Defined.
-
-
-(* The function definition f(xs) = e_body (with fun tag ft) is in scope at C⟦e⟧ if... *)
-Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body : exp)
-          (C : exp_c A exp_univ_exp) (e : univD A) : Prop :=
-  (* ...f was defined in a bundle encountered earlier... *)
-  (exists D fds E, C = D >:: Efun1 fds >++ E /\ List.In (f, ft, xs, e_body) [fds]!) \/
-  (* ...or f is in a bundle and we are currently inside one of the bundle's definitions... *)
-  (exists D fds1 g gt ys fds2 E,
-    C = D >++ ctx_of_fds fds1 >:: Fcons3 g gt ys fds2 >++ E /\
-    (List.In (f, ft, xs, e_body) fds1 \/ find_def f fds2 = Some (ft, xs, e_body))) \/
-  (* ...or f is in a bundle that we are currently traversing *)
-  (match A return exp_c A exp_univ_exp -> univD A -> Prop with
-   | exp_univ_fundefs => fun C fds2 => exists D fds1,
-     C = D >++ ctx_of_fds fds1 /\
-     (List.In (f, ft, xs, e_body) fds1 \/ find_def f fds2 = Some (ft, xs, e_body))
-   | _ => fun _ _ => False
-   end C e).
+  destruct fr; try congruence; intros _ _ Hfun Hknown; try solve
+    [destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
+    [left|right; left]; try solve
+    [destruct (frames_split' E) as [[AB [Ef [E' HE]]] | HElen]; [subst E|];
+    [apply cong_untype in HC; cbn in HC; inversion HC;
+     repeat progress (inv_ex; subst);
+     multimatch goal with H : ?lhs = ?rhs |- _ =>
+     lazymatch lhs with untype ?C => lazymatch rhs with untype _ =>
+     lazymatch type of C with _ ?A ?B =>
+       unshelve eapply (@cong_retype _ _ A B lhs rhs) in H;
+       lazymatch goal with
+       | |- well_typed _ _ (untype _) => apply untype_well_typed
+       | _ => idtac
+       end;
+       repeat rewrite ty_u_ty in H
+     end end end end;
+     repeat eexists; eassumption
+    |apply cong_untype in HC; rewrite untype_comp in HC;
+     destruct E; [now inversion HC|destruct HElen as [_ [_ HElen]]; inversion HElen]]]].
+Qed.
 
 Instance Preserves_S : Preserves_S _ exp_univ_exp (@S_fns).
 Proof.
   constructor.
   (* Moving upwards *)
-  - admit.
+  - intros A B C f e [ρ Hρ].
+    destruct f; lazymatch goal with
+    (* There are only a few cases that we care about: *)
+    | |- S_fns C (frameD (Efun0 _) _) => idtac
+    | |- S_fns C (frameD (Efun1 _) _) => idtac
+    | |- S_fns C (frameD (Fcons0 _ _ _ _) _) => idtac
+    | |- S_fns C (frameD (Fcons1 _ _ _ _) _) => idtac
+    | |- S_fns C (frameD (Fcons2 _ _ _ _) _) => idtac
+    | |- S_fns C (frameD (Fcons3 _ _ _ _) _) => idtac
+    | |- S_fns C (frameD (Fcons4 _ _ _ _) _) => idtac
+    (* For all the others, the map should remain unchanged *)
+    | _ =>
+      exists ρ; intros f' ft' xs' e' Hftxse';
+      specialize (Hρ f' ft' xs' e' Hftxse');
+      apply known_nonbundle_up; [now inversion 1..|exact I|assumption]
+    end.
+    (* When leaving a function definition f(xs) = e, need to add f back into the map *)
+    Local Ltac leave_fundef ρ Hρ C f ft xs e_body :=
+      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget;
+      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
+      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]
+      |specialize (Hρ g gt ys e Hget);
+       destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|right; left];
+       (destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq]);
+       inversion HC; subst; inv_ex; repeat eexists; intuition eassumption].
+    + rename f into ft, l into xs, e0 into e_body, f0 into fds, e into f; destruct f as [f].
+      leave_fundef ρ Hρ C f ft xs e_body.
+    + rename v into f, l into xs, e0 into e_body, f into fds, e into ft; destruct f as [f].
+      leave_fundef ρ Hρ C f ft xs e_body.
+    + rename v into f, f into ft, e0 into e_body, f0 into fds, e into xs; destruct f as [f].
+      leave_fundef ρ Hρ C f ft xs e_body.
+    + rename v into f, f into ft, l into xs, f0 into fds, e into e_body; destruct f as [f].
+      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget.
+      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
+      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]|idtac].
+      specialize (Hρ g gt ys e Hget);
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|].
+      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
+        -- inversion HC; subst; inv_ex; repeat eexists; intuition eassumption.
+        -- inversion HEnil; inv_ex; subst; inversion HC.
+      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
+        -- inversion HC; subst; inv_ex; right; left.
+           exists D, fds1, h, ht, zs, fds2, E'; intuition assumption.
+        -- inversion HEnil; subst; inv_ex; inversion HC; subst; inv_ex; right; right.
+           exists D, fds1; split; [assumption|]; destruct Hin as [Hin|Hin]; [now left|right; cbn]; now right.
+    (* When moving up along a function bundle, the set of known functions doesn't change *)
+    + rename v into f, f into ft, l into xs, e0 into e_body, e into fds; destruct f as [f].
+      exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget).
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]];
+        [left|right; left|right; right];
+        [destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq];
+         inversion HC; subst; inv_ex; repeat eexists; eassumption..
+        |idtac].
+      destruct fds1 as [|[[[f1 ft1] xs1] e1] fds1]; cbn in HC.
+      * destruct (frames_split' D) as [[AB [fD [D' HD]]]|[HDeq [HDnil HDlen]]]; [subst D|inversion HDeq].
+        inversion HD; subst; inv_ex; subst; exists D', []; split; [reflexivity|right; right; now destruct Hin].
+      * inversion HC; subst; inv_ex; exists D, fds1; split; [assumption|].
+        destruct Hin as [[Hin|Hin]|Hin]; [cbn in Hin; inv Hin; right; now left|now left|right; right; assumption].
+    +
+
   (* Moving downwards *)
   - intros A B C f e [ρ Hρ].
     destruct f; lazymatch goal with
     (* There are only a few cases that we care about: *)
-    | |- S_fns (C >:: Efun0 ?fds) ?e => idtac
-    | |- S_fns (C >:: Efun1 ?e) ?fds => idtac
-    | |- S_fns (C >:: Fcons3 ?f ?ft ?xs ?fds) ?e => idtac
-    | |- S_fns (C >:: Fcons4 ?f ?ft ?xs ?e) ?fds => idtac
+    | |- S_fns (C >:: Efun0 _) _ => idtac
+    | |- S_fns (C >:: Efun1 _) _ => idtac
+    | |- S_fns (C >:: Fcons0 _ _ _ _) _ => idtac
+    | |- S_fns (C >:: Fcons1 _ _ _ _) _ => idtac
+    | |- S_fns (C >:: Fcons2 _ _ _ _) _ => idtac
+    | |- S_fns (C >:: Fcons3 _ _ _ _) _ => idtac
+    | |- S_fns (C >:: Fcons4 _ _ _ _) _ => idtac
     (* For all the others, the map should remain unchanged *)
     | _ =>
       exists ρ; intros f' ft' xs' e' Hftxse';
-      specialize (Hρ f' ft' xs' e' Hftxse')
+      specialize (Hρ f' ft' xs' e' Hftxse');
+      apply known_nonbundle_dn; [now inversion 1..|exact I|assumption]
     end.
   (* Before entering the body of a function f, need to delete ρ(f) and add fds *)
   - rename v into f, f into ft, l into xs, f0 into fds; destruct f as [f].
