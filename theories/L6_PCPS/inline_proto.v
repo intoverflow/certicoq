@@ -100,7 +100,7 @@ Definition InlineSmallIH (bound : nat) : M.t bool -> InlineHeuristic :=
     update_funDef fds :=
       let fix upd fds s := 
         match fds with
-        | Fcons f ft xs e fdc' =>
+        | Ffun f ft xs e :: fdc' =>
           if (Init.Nat.ltb (term_size ![e]) bound)
           then upd fdc' (M.set ![f] true s)
           else upd fdc' s
@@ -127,7 +127,7 @@ Open Scope positive.
 
 Fixpoint find_uncurried (fds : fundefs) (s:M.t bool) : M.t bool :=
   match fds with
-  | Fcons f t (k::xs) (Efun (Fcons h _ _ _ Fnil) (Eapp k' _ [h'])) fds' =>
+  | Ffun f t (k::xs) (Efun [Ffun h _ _ _] (Eapp k' _ [h'])) :: fds' =>
     let s' := M.set ![f] true s in
         (* if andb (h =? h') (k =? k') then M.set f true s else s in *)
     find_uncurried fds' s'
@@ -149,13 +149,13 @@ Definition InlineUncurried : M.t bool -> InlineHeuristic :=
 
 Fixpoint find_uncurried_pats_anf (fds : fundefs) (s:M.t bool) : M.t bool :=
   match fds with
-  | Fcons f t xs (Efun (Fcons h ht ys e Fnil) (Ehalt h')) fds' =>
+  | Ffun f t xs (Efun [Ffun h ht ys e] (Ehalt h')) :: fds' =>
     let s' :=
-      if ((![h] =? ![h']) && negb (occurs_in_exp ![f] ![Efun (Fcons h ht ys e Fnil) (Ehalt h')]))%bool
+      if ((![h] =? ![h']) && negb (occurs_in_exp ![f] ![Efun [Ffun h ht ys e] (Ehalt h')]))%bool
       then M.set ![f] true s else s
     in
     find_uncurried fds' s'
-  | Fcons f t xs (Eapp f' t' xs') fds' =>
+  | Ffun f t xs (Eapp f' t' xs') :: fds' =>
     let s' := if (occurs_in_exp ![f] ![Eapp f' t' xs']) then s else M.set ![f] true s in
     find_uncurried fds' s'
   | _ => s
@@ -223,26 +223,20 @@ Definition update_next_var (next : cps.var) (cdata : comp_data) : comp_data :=
      next_ind_tag := i; next_fun_tag := f; cenv := e; fenv := fenv;
      nenv := names; log := log |}.
 
-Fixpoint has_def f ft xs e fds {struct fds} :=
-  match fds with
-  | Fcons f' ft' xs' e' fds => (f = f' /\ ft = ft' /\ xs = xs' /\ e = e') \/ has_def f ft xs e fds
-  | Fnil => False
-  end.
-
 (* The function definition f(xs) = e_body (with fun tag ft) is in scope at C⟦e⟧ if... *)
 Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body : exp)
           (C : exp_c A exp_univ_exp) (e : univD A) : Prop :=
   (* ...f was defined in a bundle encountered earlier... *)
-  (exists D fds E, C = D >:: Efun1 fds >++ E /\ List.In (f, ft, xs, e_body) [fds]!) \/
+  (exists D fds E, C = D >:: Efun1 fds >++ E /\ List.In (Ffun f ft xs e_body) fds) \/
   (* ...or f is in a bundle and we are currently inside one of the bundle's definitions... *)
-  (exists D fds1 g gt ys fds2 E,
-    C = D >++ ctx_of_fds fds1 >:: Fcons3 g gt ys fds2 >++ E /\
-    (List.In (f, ft, xs, e_body) fds1 \/ has_def f ft xs e_body fds2)) \/
+  (exists D fds1 fds2 E,
+    C = D >++ ctx_of_fds fds1 >:: cons_fundef0 fds2 >++ E /\
+    (List.In (Ffun f ft xs e_body) (fds1 ++ fds2))) \/
   (* ...or f is in a bundle that we are currently traversing *)
   (match A return exp_c A exp_univ_exp -> univD A -> Prop with
-   | exp_univ_fundefs => fun C fds2 => exists D fds1,
+   | exp_univ_list_fundef => fun C fds2 => exists D fds1,
      C = D >++ ctx_of_fds fds1 /\
-     (List.In (f, ft, xs, e_body) fds1 \/ has_def f ft xs e_body fds2)
+     List.In (Ffun f ft xs e_body) (fds1 ++ fds2)
    | _ => fun _ _ => False
    end C e).
 
@@ -257,11 +251,11 @@ Inductive inline_step : exp -> exp -> Prop :=
     (C ⟦ Efun (Local (fun _ => IH1) (Rec fds)) (Local (fun _ => IH2) (Rec e)) ⟧)
 (* Update heuristic at each Fcons node *)
 | inline_update_Fcons :
-  forall (C : frames_t exp_univ_fundefs exp_univ_exp) f ft xs e fds,
+  forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f ft xs e fds,
   When (fun (r : R_misc) (s : S_misc) => true) ->
   inline_step
-    (C ⟦ Fcons f ft xs e fds ⟧)
-    (C ⟦ Fcons f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) e) (Rec fds) ⟧)
+    (C ⟦ Ffun f ft xs e :: fds ⟧)
+    (C ⟦ Ffun f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) e) :: Rec fds ⟧)
 (* Inlining for CPS *)
 | inline_cps :
   forall (C : frames_t exp_univ_exp exp_univ_exp) f ft (xs : list var) e e' (ys : list var) lhs next_x,
@@ -311,17 +305,18 @@ Instance Inhabited_ctor_tag : Inhabited ctor_tag := mk_ctor_tag inhabitant.
 Instance Inhabited_prim : Inhabited prim := mk_prim inhabitant.
 Instance Inhabited_N : Inhabited N := N0.
 
-Instance Inhabited_exp : Inhabited exp := Ehalt inhabitant.
-Instance Inhabited_fundefs : Inhabited fundefs := Fnil.
-
 Instance Inhabited_list A : Inhabited (list A) := [].
 Instance Inhabited_prod A B `{Inhabited A} `{Inhabited B} : Inhabited (A * B) := (inhabitant, inhabitant).
+
+Instance Inhabited_exp : Inhabited exp := Ehalt inhabitant.
+Instance Inhabited_fundef : Inhabited fundef := Ffun inhabitant inhabitant inhabitant inhabitant.
 
 Definition univ_inhabitant {A} : univD A :=
   match A with
   | exp_univ_prod_ctor_tag_exp => inhabitant
   | exp_univ_list_prod_ctor_tag_exp => inhabitant
-  | exp_univ_fundefs => inhabitant
+  | exp_univ_fundef => inhabitant
+  | exp_univ_list_fundef => inhabitant
   | exp_univ_exp => inhabitant
   | exp_univ_var => inhabitant
   | exp_univ_fun_tag => inhabitant
@@ -346,7 +341,7 @@ Instance Inhabited'_list A `{Inhabited' A} : Inhabited' (list A) := [inhabitant'
 Instance Inhabited'_prod A B `{Inhabited' A} `{Inhabited' B} : Inhabited' (A * B) := (inhabitant', inhabitant').
 
 Instance Inhabited'_exp : Inhabited' exp := Ehalt inhabitant'.
-Instance Inhabited'_fundefs : Inhabited' fundefs := Fcons inhabitant' inhabitant' inhabitant' inhabitant' Fnil.
+Instance Inhabited'_fundef : Inhabited' fundef := Ffun inhabitant' inhabitant' inhabitant' inhabitant'.
 
 Lemma frame_ext_eq' {A B A' B'} (f : exp_frame_t A B) (g : exp_frame_t A' B') :
   A = A' -> B = B' ->
@@ -390,32 +385,33 @@ Definition size_prod {A B} (sizeA : A -> nat) (sizeB : B -> nat) : A * B -> nat 
 Instance Size_list A `{Sized A} : Sized (list A) := size_list size.
 Instance Size_prod A B `{Sized A} `{Sized B} : Sized (A * B) := size_prod size size.
 
-Fixpoint size_exp (e : exp) : nat with size_fundefs (fds : fundefs) : nat.
+Definition size_fundef' size_exp : fundef -> nat :=
+  fun '(Ffun f ft xs e) => S (size f + size ft + size xs + size_exp e).
+Definition size_fundefs' size_exp := size_list (size_fundef' size_exp).
+
+Fixpoint size_exp (e : exp) : nat.
 Proof.
 - refine (match e with
   | Econstr x c ys e => S (size x + size c + size ys + size_exp e)
   | Ecase x ces => S (size x + size_list (size_prod size size_exp) ces)
   | Eproj x c n y e => S (size x + size c + size n + size y + size_exp e)
   | Eletapp x f ft ys e => S (size x + size f + size ft + size ys + size_exp e)
-  | Efun fds e => S (size_fundefs fds + size_exp e)
+  | Efun fds e => S (size_fundefs' size_exp fds + size_exp e)
   | Eapp f ft xs => S (size f + size ft + size xs)
   | Eprim x p ys e => S (size x + size p + size ys + size_exp e)
   | Ehalt x => S (size x)
   end).
-- refine (match fds with
-  | Fcons f ft xs e fds => S (size f + size ft + size xs + size_exp e + size_fundefs fds)
-  | Fnil => 1%nat
-  end).
 Defined.
 
 Instance Sized_exp : Sized exp := size_exp.
-Instance Sized_fundefs : Sized fundefs := size_fundefs.
+Instance Sized_fundef : Sized fundef := size_fundef' size_exp.
 
 Definition univ_size {A} : univD A -> nat :=
   match A with
   | exp_univ_prod_ctor_tag_exp => size
   | exp_univ_list_prod_ctor_tag_exp => size
-  | exp_univ_fundefs => size
+  | exp_univ_fundef => size
+  | exp_univ_list_fundef => size
   | exp_univ_exp => size
   | exp_univ_var => size
   | exp_univ_fun_tag => size
@@ -430,9 +426,9 @@ Lemma frame_size_gt {A B} (f : exp_frame_t A B) (x : univD A) :
 Proof.
   destruct f; cbn;
   try change (size_exp x) with (size x); cbn;
-  try change (size_fundefs x) with (size x); cbn;
+  try change (size_fundefs' size x) with (size x); cbn;
   try change (size_list (size_prod size size) x) with (size x); cbn;
-  lia.
+  try lia.
 Qed.
 
 Fixpoint exp_c_size_ge {A B} (C : exp_c A B) (x : univD A) {struct C} :
@@ -610,14 +606,14 @@ Proof. destruct fs as [| A' AB B' f fs]; [now right|left; now do 3 eexists]. Qed
 
 Lemma known_nonbundle_dn {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
       (e : univD A) f ft xs e_body :
-  A <> exp_univ_fundefs -> B <> exp_univ_fundefs ->
+  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
   match fr with Efun1 _ => False | _ => True end ->
   known_function f ft xs e_body C (frameD fr e) ->
   known_function f ft xs e_body (C >:: fr) e.
 Proof.
   destruct fr; try congruence; intros _ _ Hfun Hknown;
   solve [
-    destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
+    destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
     [left|right; left]; subst C; repeat eexists;
     try match goal with |- _ /\ _ => split end; try match goal with
     | |- context [?fs >++ ?gs >:: ?g] => change (fs >++ gs >:: g) with (fs >++ (gs >:: g))
@@ -626,13 +622,13 @@ Qed.
 
 Lemma known_nonbundle_up {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
       (e : univD A) f ft xs e_body :
-  A <> exp_univ_fundefs -> B <> exp_univ_fundefs ->
+  A <> exp_univ_list_fundef -> B <> exp_univ_list_fundef ->
   match fr with Efun1 _ => False | _ => True end ->
   known_function f ft xs e_body (C >:: fr) e ->
   known_function f ft xs e_body C (frameD fr e).
 Proof.
   destruct fr; try congruence; intros _ _ Hfun Hknown; try solve [inversion Hfun];
-  (destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
+  (destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [fds2 [E [HC Hfxs]]]]] | []]];
     [left|right; left];
     (destruct (frames_split' E) as [[AB [Ef [E' HE]]] | [HEeq [HEnil HElen]]];
      [subst E; inversion HC; subst; inv_ex; repeat eexists; eassumption
@@ -641,15 +637,15 @@ Qed.
 
 Fixpoint remove_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
   match fds with
-  | Fcons f ft xs e fds => M.remove ![f] (remove_fundefs fds ρ)
-  | Fnil => ρ
+  | Ffun f ft xs e :: fds => M.remove ![f] (remove_fundefs fds ρ)
+  | [] => ρ
   end.
 
 Fixpoint remove_fundefs_not_In f fds ρ :
-  ~ (exists ft xs e, has_def (mk_var f) ft xs e fds) ->
+  ~ (exists ft xs e, In (Ffun (mk_var f) ft xs e) fds) ->
   M.get f (remove_fundefs fds ρ) = M.get f ρ.
 Proof.
-  destruct fds as [[g] gt ys e' fds|]; [cbn; intros Hne|reflexivity].
+  destruct fds as [|[[g] gt ys e'] fds]; [reflexivity|cbn; intros Hne].
   destruct (Pos.eq_dec f g); [subst; rewrite M.grs|rewrite M.gro by auto].
   - contradiction Hne; repeat eexists; intuition.
   - rewrite remove_fundefs_not_In; [reflexivity|].
@@ -657,31 +653,22 @@ Proof.
 Defined.
 
 Fixpoint remove_fundefs_In_None f ft xs e fds ρ :
-  has_def (mk_var f) ft xs e fds ->
-  M.get f (remove_fundefs fds ρ) = None.
+  In (Ffun (mk_var f) ft xs e) fds -> M.get f (remove_fundefs fds ρ) = None.
 Proof.
-  destruct fds as [[g] gt ys e' fds|]; [cbn|now cbn].
-  intros [[Hf [Hft [Hxys He]]]|Hthere]; [inv Hf; now rewrite M.grs|].
+  destruct fds as [|[[g] gt ys e'] fds]; [now cbn|cbn].
+  intros [Hhere|Hthere]; [inv Hhere; now rewrite M.grs|].
   destruct (Pos.eq_dec f g); [subst; now rewrite M.grs|rewrite M.gro by auto].
   eapply remove_fundefs_In_None; eauto.
 Defined.
 
 Fixpoint remove_fundefs_Some_not f fds ρ fd {struct fds} :
-  M.get f (remove_fundefs fds ρ) = Some fd -> ~ (exists ft xs e, has_def (mk_var f) ft xs e fds).
+  M.get f (remove_fundefs fds ρ) = Some fd -> ~ (exists ft xs e, In (Ffun (mk_var f) ft xs e) fds).
 Proof.
-  destruct fds as [[g] gt ys e' fds|]; [cbn; intros Hget|intros _ [?[?[?[]]]]].
+  destruct fds as [|[[g] gt ys e'] fds]; [intros _ [?[?[?[]]]]|cbn; intros Hget].
   destruct (Pos.eq_dec f g); [subst; now rewrite M.grs in Hget|rewrite M.gro in Hget by auto].
   specialize (remove_fundefs_Some_not f fds ρ fd Hget).
   intros [ft [xs [e [Hhere | Hthere]]]]; [intuition congruence|].
   now rewrite (remove_fundefs_In_None _ _ _ _ _ _ Hthere) in Hget.
-Defined.
-
-Fixpoint has_def_in f ft xs e fds {struct fds} :
-  In (f, ft, xs, e) [fds]! -> has_def f ft xs e fds.
-Proof.
-  destruct fds as [[g] gt ys e' fds|]; [cbn|now inversion 1].
-  intros Hin; apply in_app_or in Hin; destruct Hin as [Hin|Hin]; [right; now apply has_def_in|left].
-  inversion Hin; inv H; intuition.
 Defined.
 
 Instance Preserves_S_S_fns : Preserves_S _ exp_univ_exp (@S_fns).
@@ -693,11 +680,8 @@ Proof.
     (* There are only a few cases that we care about: *)
     | |- S_fns C (frameD (Efun0 _) _) => idtac
     | |- S_fns C (frameD (Efun1 _) _) => idtac
-    | |- S_fns C (frameD (Fcons0 _ _ _ _) _) => idtac
-    | |- S_fns C (frameD (Fcons1 _ _ _ _) _) => idtac
-    | |- S_fns C (frameD (Fcons2 _ _ _ _) _) => idtac
-    | |- S_fns C (frameD (Fcons3 _ _ _ _) _) => idtac
-    | |- S_fns C (frameD (Fcons4 _ _ _ _) _) => idtac
+    | |- S_fns C (frameD (cons_fundef0 _) _) => idtac
+    | |- S_fns C (frameD (cons_fundef1 _) _) => idtac
     (* For all the others, the map should remain unchanged *)
     | _ =>
       exists ρ; intros f' ft' xs' e' Hftxse';
@@ -784,8 +768,21 @@ Proof.
       specialize (Hρ f' ft' xs' e' Hftxse');
       apply known_nonbundle_dn; [now inversion 1..|exact I|assumption]
     end.
-  (* Before entering the body of a function f, need to delete ρ(f) and add fds *)
-  - rename v into f, f into ft, l into xs, f0 into fds; destruct f as [f].
+    (* Before entering the body of a function f, need to delete ρ(f) *)
+    + rename f into ft, l into xs, e0 into e_body, f0 into fds, e into f; destruct f as [f].
+      exists (M.remove f ρ); intros g gt ys e Hget;
+      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; now rewrite M.grs in Hget|];
+      rewrite M.gro in Hget by auto; specialize (Hρ g gt ys e Hget).
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]].
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]. [left|right; left];
+    Local Ltac leave_fundef ρ Hρ C f ft xs e_body :=
+      exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget;
+      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto];
+      [inv Hget; right; right; exists C, []; split; [reflexivity|right; cbn; now left]
+      |specialize (Hρ g gt ys e Hget);
+       destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]]; [left|right; left];
+       (destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq]);
+       inversion HC; subst; inv_ex; repeat eexists; intuition eassumption].
     exists (M.remove f ρ); intros g gt ys e Hget.
     destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst; now rewrite M.grs in Hget|].
     rewrite M.gro in Hget by auto; now apply known_function_cons.
@@ -939,7 +936,7 @@ Definition rename' {A} (σ : r_map) : univD A -> univD A :=
   match A with
   | exp_univ_prod_ctor_tag_exp => fun '(c, e) => (c, [rename_all σ ![e]]!)
   | exp_univ_list_prod_ctor_tag_exp => fun ces => map (fun '(c, e) => (c, [rename_all σ ![e]]!)) ces
-  | exp_univ_fundefs => fun fds => [rename_all_fun σ ![fds]]!
+  | exp_univ_list_fundef => fun fds => [rename_all_fun σ ![fds]]!
   | exp_univ_exp => fun e => [rename_all σ ![e]]!
   | exp_univ_var => fun x => [apply_r σ ![x]]!
   | exp_univ_fun_tag => fun ft => ft

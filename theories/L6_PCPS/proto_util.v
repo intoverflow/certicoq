@@ -238,3 +238,10 @@ Instance Preserves_R_e_trivial_R_e : Preserves_R_e _ (@trivial_R_e). Proof. cons
 Definition trivial_delay_t {A} (e : univD A) : Set := unit.
 Instance Delayed_trivial_delay_t : Delayed (@trivial_delay_t).
 Proof. unshelve econstructor; [intros A e _; exact e|..]; reflexivity. Defined.
+
+Definition S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+  {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
+
+(* We don't have to do anything to preserve a fresh variable as we move around *)
+Instance Preserves_S_S_fresh : Preserves_S _ exp_univ_exp (@S_fresh).
+Proof. constructor; intros; assumption. Defined.

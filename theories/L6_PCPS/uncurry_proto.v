@@ -60,10 +60,10 @@ Definition set_names_lst olds news suff cdata :=
 Inductive uncurry_step : exp -> exp -> Prop :=
 (* Uncurrying for CPS *)
 | uncurry_cps :
-  forall (C : frames_t exp_univ_fundefs exp_univ_exp)
+  forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (k k' : var) (kt : fun_tag) (fv fv1 : list var)
-    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : fundefs)
-    (lhs rhs : fundefs) (s : Ensemble cps.var) (next_x : cps.var)
+    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
+    (lhs rhs : list fundef) (s : Ensemble cps.var) (next_x : cps.var)
     (fp_numargs : nat) (ms : S_misc),
   (* Non-linear LHS constraints *)
   k = k' /\
@@ -73,9 +73,9 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   ~ ![g] \in used_vars ![ge] /\
   ~ ![k] \in used_vars ![ge] /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
-  lhs = Fcons f ft (k :: fv) (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds /\
-  rhs = Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
-        (Fcons f1 ft1 (gv ++ fv) ge (Rec fds)) /\
+  lhs = Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds /\
+  rhs = Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
+        :: Ffun f1 ft1 (gv ++ fv) ge :: fds /\
   s = used_vars (exp_of_proto (C ⟦ lhs ⟧)) /\
   fresh_copies s gv1 /\ length gv1 = length gv /\
   fresh_copies (s :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
@@ -95,7 +95,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
     end)%bool ->
   (* The rewrite *)
   uncurry_step
-    (C ⟦ Fcons f ft (k :: fv) (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds ⟧)
+    (C ⟦ Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds ⟧)
     (C ⟦ Put (
            let '(b, aenv, lm, s, cdata) := ms in
            (* Set flag to indicate that a rewrite was performed (used to iterate to fixed point) *)
@@ -112,14 +112,14 @@ Inductive uncurry_step : exp -> exp -> Prop :=
            in
            (b, aenv, lm, s, cdata) : S_misc)
          (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
-         (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
-         (Fcons f1 ft1 (gv ++ fv) ge (Rec fds))) ⟧)
+         (Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
+          :: Ffun f1 ft1 (gv ++ fv) ge :: Rec fds) ⟧)
 (* Uncurrying for ANF *)
 | uncurry_anf :
-  forall (C : frames_t exp_univ_fundefs exp_univ_exp)
+  forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (fv fv1 : list var)
-    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : fundefs)
-    (lhs rhs : fundefs) (s : Ensemble cps.var) (next_x : cps.var)
+    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
+    (lhs rhs : list fundef) (s : Ensemble cps.var) (next_x : cps.var)
     (fp_numargs : nat) (ms : S_misc),
   (* Non-linear LHS constraints *)
   g = g' /\
@@ -127,9 +127,9 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   (* (1) g can't be recursive *)
   ~ ![g] \in used_vars ![ge] /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
-  lhs = Fcons f ft fv (Efun (Fcons g gt gv ge Fnil) (Ehalt g')) fds /\
-  rhs = Fcons f ft fv1 (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Ehalt g))
-        (Fcons f1 ft1 (gv ++ fv) ge (Rec fds)) /\
+  lhs = Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds /\
+  rhs = Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
+        :: Ffun f1 ft1 (gv ++ fv) ge :: fds /\
   s = used_vars (exp_of_proto (C ⟦ lhs ⟧)) /\
   fresh_copies s gv1 /\ length gv1 = length gv /\
   fresh_copies (s :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
@@ -149,7 +149,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
     end)%bool ->
   (* The rewrite *)
   uncurry_step
-    (C ⟦ Fcons f ft fv (Efun (Fcons g gt gv ge Fnil) (Ehalt g')) fds ⟧)
+    (C ⟦ Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds ⟧)
     (C ⟦ Put (
            let '(b, aenv, lm, s, cdata) := ms in
            (* Set flag to indicate that a rewrite was performed (used to iterate to fixed point) *)
@@ -166,8 +166,8 @@ Inductive uncurry_step : exp -> exp -> Prop :=
            in
            (b, aenv, lm, s, cdata) : S_misc)
          (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
-         (Fcons f ft fv1 (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Ehalt g))
-         (Fcons f1 ft1 (gv ++ fv) ge (Rec fds))) ⟧).
+         (Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
+          :: Ffun f1 ft1 (gv ++ fv) ge :: Rec fds) ⟧).
 
 (** * Uncurrying as a recursive function *)
 

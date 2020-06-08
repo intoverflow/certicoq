@@ -22,13 +22,12 @@ Inductive exp : Type :=
 | Ecase (x : var) (ces : list (ctor_tag * exp))
 | Eproj (x : var) (c : ctor_tag) (n : N) (y : var) (e : exp)
 | Eletapp (x : var) (f : var) (ft : fun_tag) (ys : list var) (e : exp)
-| Efun (fds : fundefs) (e : exp)
+| Efun (fds : list fundef) (e : exp)
 | Eapp (f : var) (ft : fun_tag) (xs : list var)
 | Eprim (x : var) (p : prim) (ys : list var) (e : exp)
 | Ehalt (x : var)
-with fundefs : Type :=
-| Fcons (f : var) (ft : fun_tag) (xs : list var) (e : exp) (fds : fundefs)
-| Fnil.
+with fundef : Type :=
+| Ffun (f : var) (ft : fun_tag) (xs : list var) (e : exp).
 
 (* Takes a while to save aux_data *)
 Run TemplateProgram (mk_Frame_ops
