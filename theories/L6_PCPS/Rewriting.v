@@ -3,10 +3,21 @@ Require Import Coq.Setoids.Setoid.
 Require Import Coq.funind.Recdef.
 Require Import Coq.PArith.BinPos.
 Require Import Lia.
+From compcert.lib Require Import Maps.
+
+Require Import Coq.Lists.List.
+Import ListNotations.
 
 Require Import Ltac2.Ltac2.
 Import Ltac2.Notations.
 Set Default Proof Mode "Ltac2".
+
+Require Import Coq.Logic.JMeq.
+Require Import Coq.Logic.Eqdep.
+Ltac inv_ex :=
+  repeat progress match goal with
+  | H : existT ?P ?T _ = existT ?P ?T _ |- _ => apply inj_pairT2 in H
+  end.
 
 (* -------------------- 1-hole contexts -------------------- *)
 
@@ -188,6 +199,12 @@ Proof.
   now rewrite frames_len_compose.
 Qed.
 
+(* Useful in situations where [destruct] struggles with dependencies *)
+Definition frames_split' {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
+  (exists AB (g : F A AB) (gs : frames_t' F AB B), fs = gs >:: g) \/
+  (A = B /\ JMeq fs (<[]> : frames_t' F A A) /\ frames_len fs = 0%nat).
+Proof. destruct fs as [| A' AB B' f fs] > [now right|left; now do 3 eexists]. Qed.
+
 Fixpoint frames_split {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
   (exists AB (g : F AB B) (gs : frames_t' F A AB), fs = <[g]> >++ gs) \/ (frames_len fs = O).
 Proof.
@@ -209,12 +226,6 @@ Class UnivEq {U : Set} (F : U -> U -> Set) :=
   univ_eq : forall {A B C D : U} (f : F A B) (g : F C D), {f ~= g} + {~ (f ~= g)}.
 
 Class EqDec A := eq_dec' : forall x y : A, {x = y} + {x <> y}.
-
-Require Import Coq.Logic.Eqdep.
-Ltac inv_ex :=
-  repeat progress match goal with
-  | H : existT ?P ?T _ = existT ?P ?T _ |- _ => apply inj_pairT2 in H
-  end.
 
 (* Assumes there's proper EqDec instances hanging around for concrete subtrees *)
 Ltac derive_UnivEq :=
@@ -242,6 +253,124 @@ Ltac derive_UnivEq :=
   lazymatch goal with
   | |- {?lhs ~= ?rhs} + {~ (?lhs ~= ?rhs)} => gen_comparisons lhs rhs
   end.
+
+(* Untyping + retyping of frames *)
+
+Definition uframe_t {U : Set} `{H : Frame U} := {A & {B & @frame_t U H A B}}.
+Definition uframes_t {U : Set} `{H : Frame U} := list (@uframe_t U H).
+
+Fixpoint well_typed {U : Set} `{H : Frame U} (A B : U) (fs : @uframes_t U H) : Prop.
+Proof.
+  destruct fs as [|f fs] > [exact (A = B)|].
+  destruct f as [A' [AB f]].
+  exact (A = A' /\ well_typed U H AB B fs).
+Defined.
+
+Fixpoint well_typed_comp {U : Set} `{H : Frame U} (A B C : U) (fs gs : @uframes_t U H) {struct fs} :
+  well_typed A B fs ->
+  well_typed B C gs ->
+  well_typed A C (fs ++ gs).
+Proof.
+  destruct fs as [|[A' [AB f]] fs].
+  - cbn; intros; subst; assumption.
+  - cbn; intros [HAB Hfs] Hgs; split > [assumption|eapply well_typed_comp; eauto].
+Defined.
+
+Definition untype_frame {U : Set} `{H : Frame U} {A B : U} (f : @frame_t U H A B) : @uframe_t U H.
+Proof. exists A, B; exact f. Defined.
+
+Fixpoint untype {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) : @uframes_t U H.
+Proof.
+  destruct fs as [|A AB B f fs] > [exact []|ltac1:(refine (_ :: _))].
+  - exact (untype_frame f).
+  - eapply untype; exact fs.
+Defined.
+
+Fixpoint untype_well_typed {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) :
+  well_typed A B (untype fs).
+Proof.
+  destruct fs as [|A AB B f fs] > [reflexivity|simpl].
+  split > [reflexivity|now apply untype_well_typed].
+Defined.
+
+Fixpoint retype {U : Set} `{H : Frame U} (A B : U) (fs : @uframes_t U H)
+         (Hty : well_typed A B fs) {struct fs} : 
+  @frames_t U H A B.
+Proof.
+  destruct fs as [|[A' [AB f]] fs]; simpl in Hty.
+  - subst; exact <[]>.
+  - destruct Hty; subst.
+    ltac1:(refine (_ >:: f)).
+    eapply retype; eauto.
+Defined.
+
+Definition frames_sig_t {U : Set} `{H : Frame U} A B := {fs : @uframes_t U H | well_typed A B fs}.
+
+Definition ty_split {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) : @frames_sig_t U H A B.
+Proof. exists (untype fs); ltac1:(eapply untype_well_typed; eauto). Defined.
+
+Definition ty_merge {U : Set} `{H : Frame U} {A B : U} : @frames_sig_t U H A B -> @frames_t U H A B.
+Proof. intros [fs Hfs]; ltac1:(eapply retype; eauto). Defined.
+
+Fixpoint ty_u_ty {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B)
+         (Hfs : well_typed A B (untype fs)) {struct fs} :
+  retype A B (untype fs) Hfs = fs.
+Proof.
+  destruct fs as [|A AB B f fs]; cbn in Hfs.
+  - (assert (Hfs = eq_refl) by apply UIP); subst; reflexivity.
+  - destruct Hfs as [Hfs1 Hfs2]; (assert (Hfs1 = eq_refl) by apply UIP); subst; cbn.
+    now rewrite ty_u_ty.
+Defined.
+
+Fixpoint t_sig_t {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) :
+  ty_merge (ty_split fs) = fs.
+Proof.
+  destruct fs as [|A AB B f fs] > [reflexivity|simpl].
+  unfold eq_rec_r, eq_rec, eq_rect, eq_sym; f_equal.
+  rewrite <- t_sig_t; reflexivity.
+Qed.
+
+Fixpoint sig_t_sig' {U : Set} `{H : Frame U} {A B : U} (fs : @uframes_t U H)
+         (Hty : @well_typed U H A B fs) {struct fs} :
+  ty_split (ty_merge (exist _ fs Hty)) = (exist _ fs Hty).
+Proof.
+  destruct fs as [|[A' [AB' f]] fs]; simpl in Hty.
+  - subst; reflexivity.
+  - destruct Hty as [? Hwt]; subst; cbn; unfold ty_split; cbn.
+    apply ProofIrrelevance.ProofIrrelevanceTheory.subset_eq_compat.
+    specialize (sig_t_sig' U H _ _ fs Hwt).
+    ltac1:(apply (@f_equal _ _ (@proj1_sig _ _)) in sig_t_sig'; cbn in sig_t_sig').
+    now rewrite sig_t_sig'.
+Defined.
+
+Definition sig_t_sig {U : Set} `{H : Frame U} {A B : U} (fs : @frames_sig_t U H A B) :
+  ty_split (ty_merge fs) = fs.
+Proof. destruct fs as [fs Hfs]; ltac1:(apply sig_t_sig'). Defined.
+
+Fixpoint untype_comp {U : Set} `{H : Frame U} {A B C : U}
+      (gs : @frames_t U H A B) (fs : @frames_t U H B C) {struct gs} :
+  untype (fs >++ gs) = untype gs ++ untype fs.
+Proof. destruct gs as [|A AB B g gs] > [reflexivity|simpl; ltac1:(congruence)]. Defined.
+
+Lemma cong_untype {U : Set} `{H : Frame U} {A B : U} (fs gs : @frames_t U H A B) :
+  fs = gs -> untype fs = untype gs.
+Proof. intros; now f_equal. Defined.
+
+Fixpoint unique_typings {U : Set} `{H : Frame U} {A B : U} (fs : @uframes_t U H)
+      (Hfs Hgs : well_typed A B fs) {struct fs} :
+  Hfs = Hgs.
+Proof.
+  destruct fs as [|[A' [AB f]] fs].
+  - now apply UIP.
+  - simpl in Hfs, Hgs; destruct Hfs as [Hfs1 Hfs2], Hgs as [Hgs1 Hgs2].
+    assert (Hfs1 = Hgs1) by apply UIP; subst.
+    specialize (unique_typings U H _ _ fs Hfs2 Hgs2); now subst.
+Defined.
+
+Fixpoint cong_retype {U : Set} `{H : Frame U} (A B : U) (fs gs : @uframes_t U H)
+      (Hfs : well_typed A B fs) (Hgs : well_typed A B gs) {struct fs} :
+  fs = gs -> retype A B fs Hfs = retype A B gs Hgs.
+Proof. intros; subst gs; ltac1:(assert (Hfs = Hgs) by apply unique_typings); now subst. Defined.
 
 (* By defining a Preserves instance for some [P], the user explains:
    - How to preserve a value [P C x] which depends on the current context C + focused node x

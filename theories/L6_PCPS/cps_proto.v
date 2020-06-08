@@ -739,3 +739,198 @@ Proof.
 Defined.
 
 Definition decompose_fd_c := @decompose_fd_c' exp_univ_list_fundef exp_univ_exp.
+
+(* Misc. facts that may or may not be useful when dealing with dependently typed [exp_c]s *)
+
+Instance Iso_frames {U : Set} `{H : Frame U} {A B : U} : Iso (@frames_t U H A B) (@frames_sig_t U H A B) := {
+  isoAofB := ty_merge;
+  isoBofA := ty_split;
+  isoABA := t_sig_t;
+  isoBAB := sig_t_sig }.
+
+Instance exp_Frame_inj : Frame_inj exp_univ.
+Proof. intros A B f x y; destruct f; now inversion 1. Qed.
+
+Require Import Coq.Logic.JMeq.
+Require Import Coq.Logic.Eqdep.
+Ltac inv_ex :=
+  repeat progress match goal with
+  | H : existT ?P ?T _ = existT ?P ?T _ |- _ => apply inj_pairT2 in H
+  end.
+
+(* Inhabited types *)
+
+Class Inhabited A := inhabitant : A.
+
+Instance Inhabited_pos : Inhabited positive := xH.
+Instance Inhabited_var : Inhabited var := mk_var inhabitant.
+Instance Inhabited_fun_tag : Inhabited fun_tag := mk_fun_tag inhabitant.
+Instance Inhabited_ctor_tag : Inhabited ctor_tag := mk_ctor_tag inhabitant.
+Instance Inhabited_prim : Inhabited prim := mk_prim inhabitant.
+Instance Inhabited_N : Inhabited N := N0.
+
+Instance Inhabited_list A : Inhabited (list A) := [].
+Instance Inhabited_prod A B `{Inhabited A} `{Inhabited B} : Inhabited (A * B) := (inhabitant, inhabitant).
+
+Instance Inhabited_exp : Inhabited exp := Ehalt inhabitant.
+Instance Inhabited_fundef : Inhabited fundef := Ffun inhabitant inhabitant inhabitant inhabitant.
+
+Definition univ_inhabitant {A} : univD A :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => inhabitant
+  | exp_univ_list_prod_ctor_tag_exp => inhabitant
+  | exp_univ_fundef => inhabitant
+  | exp_univ_list_fundef => inhabitant
+  | exp_univ_exp => inhabitant
+  | exp_univ_var => inhabitant
+  | exp_univ_fun_tag => inhabitant
+  | exp_univ_ctor_tag => inhabitant
+  | exp_univ_prim => inhabitant
+  | exp_univ_N => inhabitant
+  | exp_univ_list_var => inhabitant
+  end.
+
+(* Inhabited types, with assumption that inhabited <> inhabited' *)
+
+Class Inhabited' A := inhabitant' : A.
+
+Instance Inhabited'_pos : Inhabited' positive := xO xH.
+Instance Inhabited'_var : Inhabited' var := mk_var inhabitant'.
+Instance Inhabited'_fun_tag : Inhabited' fun_tag := mk_fun_tag inhabitant'.
+Instance Inhabited'_ctor_tag : Inhabited' ctor_tag := mk_ctor_tag inhabitant'.
+Instance Inhabited'_prim : Inhabited' prim := mk_prim inhabitant'.
+Instance Inhabited'_N : Inhabited' N := Npos inhabitant'.
+
+Instance Inhabited'_list A `{Inhabited' A} : Inhabited' (list A) := [inhabitant'].
+Instance Inhabited'_prod A B `{Inhabited' A} `{Inhabited' B} : Inhabited' (A * B) := (inhabitant', inhabitant').
+
+Instance Inhabited'_exp : Inhabited' exp := Ehalt inhabitant'.
+Instance Inhabited'_fundef : Inhabited' fundef := Ffun inhabitant' inhabitant' inhabitant' inhabitant'.
+
+Lemma frame_ext_eq' {A B A' B'} (f : exp_frame_t A B) (g : exp_frame_t A' B') :
+  A = A' -> B = B' ->
+  (forall x x', JMeq x x' -> JMeq (frameD f x) (frameD g x')) -> JMeq f g.
+Proof.
+  destruct f, g; try congruence; simpl; intros _ _ Hext;
+  pose (Hext1 := Hext inhabitant inhabitant JMeq_refl); clearbody Hext1;
+  pose (Hext2 := Hext inhabitant' inhabitant' JMeq_refl); clearbody Hext2;
+  inversion Hext1; inversion Hext2; inv_ex;
+  repeat match goal with H : _ = _ |- _ => inv H end; constructor.
+Qed.
+
+Corollary frame_ext_eq {A B} (f g : exp_frame_t A B) :
+  (forall x, frameD f x = frameD g x) -> f = g.
+Proof.
+  intros Hext; enough (JMeq f g) by now apply JMeq_eq.
+  apply frame_ext_eq'; auto; intros x x' Hxx'.
+  inversion Hxx'; inv_ex; subst x'.
+  specialize (Hext x); rewrite Hext; now constructor.
+Qed.
+
+Class Sized A := size : A -> nat.
+
+Fixpoint size_pos (n : positive) :=
+  match n with
+  | xI x => S (size_pos x)
+  | xO x => S (size_pos x)
+  | xH => 1%nat
+  end.
+Instance Sized_pos : Sized positive := size_pos.
+
+Instance Sized_var : Sized var := fun '(mk_var x) => S (size x).
+Instance Sized_fun_tag : Sized fun_tag := fun '(mk_fun_tag x) => S (size x).
+Instance Sized_ctor_tag : Sized ctor_tag := fun '(mk_ctor_tag x) => S (size x).
+Instance Sized_prim : Sized prim := fun '(mk_prim x) => S (size x).
+Instance Sized_N : Sized N := fun n => match n with N0 => 1%nat | Npos x => S (size x) end.
+
+Definition size_list {A} (size : A -> nat) : list A -> nat := fold_right (fun x n => S (size x + n)) 1%nat.
+Definition size_prod {A B} (sizeA : A -> nat) (sizeB : B -> nat) : A * B -> nat := fun '(x, y) => S (sizeA x + sizeB y).
+
+Instance Size_list A `{Sized A} : Sized (list A) := size_list size.
+Instance Size_prod A B `{Sized A} `{Sized B} : Sized (A * B) := size_prod size size.
+
+Definition size_fundef' size_exp : fundef -> nat :=
+  fun '(Ffun f ft xs e) => S (size f + size ft + size xs + size_exp e).
+Definition size_fundefs' size_exp := size_list (size_fundef' size_exp).
+
+Fixpoint size_exp (e : exp) : nat.
+Proof.
+- refine (match e with
+  | Econstr x c ys e => S (size x + size c + size ys + size_exp e)
+  | Ecase x ces => S (size x + size_list (size_prod size size_exp) ces)
+  | Eproj x c n y e => S (size x + size c + size n + size y + size_exp e)
+  | Eletapp x f ft ys e => S (size x + size f + size ft + size ys + size_exp e)
+  | Efun fds e => S (size_fundefs' size_exp fds + size_exp e)
+  | Eapp f ft xs => S (size f + size ft + size xs)
+  | Eprim x p ys e => S (size x + size p + size ys + size_exp e)
+  | Ehalt x => S (size x)
+  end).
+Defined.
+
+Instance Sized_exp : Sized exp := size_exp.
+Instance Sized_fundef : Sized fundef := size_fundef' size_exp.
+
+Definition univ_size {A} : univD A -> nat :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => size
+  | exp_univ_list_prod_ctor_tag_exp => size
+  | exp_univ_fundef => size
+  | exp_univ_list_fundef => size
+  | exp_univ_exp => size
+  | exp_univ_var => size
+  | exp_univ_fun_tag => size
+  | exp_univ_ctor_tag => size
+  | exp_univ_prim => size
+  | exp_univ_N => size
+  | exp_univ_list_var => size
+  end.
+
+Lemma frame_size_gt {A B} (f : exp_frame_t A B) (x : univD A) :
+  (univ_size (frameD f x) > univ_size x)%nat.
+Proof.
+  destruct f; cbn;
+  try change (size_exp x) with (size x); cbn;
+  try change (size_fundefs' size x) with (size x); cbn;
+  try change (size_list (size_prod size size) x) with (size x); cbn;
+  try lia.
+Qed.
+
+Fixpoint exp_c_size_ge {A B} (C : exp_c A B) (x : univD A) {struct C} :
+  (univ_size (C ⟦ x ⟧) >= univ_size x)%nat.
+Proof.
+  destruct C as [|A AB B f C]; simpl; [lia|].
+  assert (univ_size (C ⟦ exp_frameD A AB f x ⟧) >= univ_size (frameD f x))%nat by apply exp_c_size_ge.
+  assert (univ_size (frameD f x) > univ_size x)%nat by apply frame_size_gt.
+  lia.
+Qed.
+
+Definition exp_c_size_eq {A B} (C : exp_c A B) (x : univD A) :
+  univ_size (C ⟦ x ⟧) = univ_size x -> JMeq C (<[]> : exp_c A A).
+Proof.
+  destruct C as [|A AB B f C]; simpl; [constructor|intros HC].
+  assert (univ_size (C ⟦ exp_frameD A AB f x ⟧) >= univ_size (exp_frameD A AB f x))%nat
+   by apply exp_c_size_ge.
+  assert (univ_size (exp_frameD A AB f x) > univ_size x)%nat by apply frame_size_gt.
+  lia.
+Qed.
+
+Lemma exp_ext_nil {A B} (C : exp_c A B) : A = B -> (forall x, JMeq x (C ⟦ x ⟧)) -> JMeq C (<[]> : exp_c A A).
+Proof.
+  destruct C as [|A AB B f C]; [constructor|simpl].
+  intros HeqB Hext; subst; specialize (Hext univ_inhabitant).
+  inversion Hext; inv_ex.
+  apply f_equal with (f := univ_size) in H.
+  match type of Hext with
+  | JMeq _ (?C ⟦ ?f ⟧) =>
+    match f with
+    | exp_frameD _ _ _ ?x =>
+      assert (univ_size (C ⟦ f ⟧) >= univ_size f)%nat by apply exp_c_size_ge;
+      assert (univ_size f > univ_size x)%nat by apply frame_size_gt;
+      lia
+    end
+  end.
+Qed.
+
+Corollary exp_ext_nil' {A B} (C : exp_c A B) : A = B -> (forall x, JMeq x (C ⟦ x ⟧)) -> JMeq C (<[]> : exp_c B B).
+Proof. intros; subst; now apply exp_ext_nil. Qed.
+
