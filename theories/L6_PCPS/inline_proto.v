@@ -280,9 +280,11 @@ Inductive inline_step : exp -> exp -> Prop :=
          (Modify (update_next_var next_x)
          (Rec e')) ⟧).
 
+Definition fun_map : Set := M.tree (fun_tag * list var * exp).
+
 (* Maintain map of known functions while traversing *)
 Definition S_fns {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := {
-  ρ : M.tree (fun_tag * list var * exp) | 
+  ρ : fun_map |
   forall f ft xs e_body, M.get f ρ = Some (ft, xs, e_body) ->
   known_function [f]! ft xs e_body C e }.
 
@@ -629,28 +631,60 @@ Lemma known_nonbundle_up {A B} (C : exp_c B exp_univ_exp) (fr : exp_frame_t A B)
   known_function f ft xs e_body (C >:: fr) e ->
   known_function f ft xs e_body C (frameD fr e).
 Proof.
-  destruct fr; try congruence; intros _ _ Hfun Hknown; try solve
-    [destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
-    [left|right; left]; try solve
-    [destruct (frames_split' E) as [[AB [Ef [E' HE]]] | HElen]; [subst E|];
-    [apply cong_untype in HC; cbn in HC; inversion HC;
-     repeat progress (inv_ex; subst);
-     multimatch goal with H : ?lhs = ?rhs |- _ =>
-     lazymatch lhs with untype ?C => lazymatch rhs with untype _ =>
-     lazymatch type of C with _ ?A ?B =>
-       unshelve eapply (@cong_retype _ _ A B lhs rhs) in H;
-       lazymatch goal with
-       | |- well_typed _ _ (untype _) => apply untype_well_typed
-       | _ => idtac
-       end;
-       repeat rewrite ty_u_ty in H
-     end end end end;
-     repeat eexists; eassumption
-    |apply cong_untype in HC; rewrite untype_comp in HC;
-     destruct E; [now inversion HC|destruct HElen as [_ [_ HElen]]; inversion HElen]]]].
+  destruct fr; try congruence; intros _ _ Hfun Hknown; try solve [inversion Hfun];
+  (destruct Hknown as [[D [fds [E [HC Hfxs]]]] | [[D [fds1 [g [gt [ys [fds2 [E [HC Hfxs]]]]]]]] | []]];
+    [left|right; left];
+    (destruct (frames_split' E) as [[AB [Ef [E' HE]]] | [HEeq [HEnil HElen]]];
+     [subst E; inversion HC; subst; inv_ex; repeat eexists; eassumption
+     |try solve [inversion HEeq|inversion HEnil; subst; inv_ex; inversion HC]])).
 Qed.
 
-Instance Preserves_S : Preserves_S _ exp_univ_exp (@S_fns).
+Fixpoint remove_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
+  match fds with
+  | Fcons f ft xs e fds => M.remove ![f] (remove_fundefs fds ρ)
+  | Fnil => ρ
+  end.
+
+Fixpoint remove_fundefs_not_In f fds ρ :
+  ~ (exists ft xs e, has_def (mk_var f) ft xs e fds) ->
+  M.get f (remove_fundefs fds ρ) = M.get f ρ.
+Proof.
+  destruct fds as [[g] gt ys e' fds|]; [cbn; intros Hne|reflexivity].
+  destruct (Pos.eq_dec f g); [subst; rewrite M.grs|rewrite M.gro by auto].
+  - contradiction Hne; repeat eexists; intuition.
+  - rewrite remove_fundefs_not_In; [reflexivity|].
+    intros [ft [xs [e Hhas]]]; apply Hne; repeat eexists; eauto.
+Defined.
+
+Fixpoint remove_fundefs_In_None f ft xs e fds ρ :
+  has_def (mk_var f) ft xs e fds ->
+  M.get f (remove_fundefs fds ρ) = None.
+Proof.
+  destruct fds as [[g] gt ys e' fds|]; [cbn|now cbn].
+  intros [[Hf [Hft [Hxys He]]]|Hthere]; [inv Hf; now rewrite M.grs|].
+  destruct (Pos.eq_dec f g); [subst; now rewrite M.grs|rewrite M.gro by auto].
+  eapply remove_fundefs_In_None; eauto.
+Defined.
+
+Fixpoint remove_fundefs_Some_not f fds ρ fd {struct fds} :
+  M.get f (remove_fundefs fds ρ) = Some fd -> ~ (exists ft xs e, has_def (mk_var f) ft xs e fds).
+Proof.
+  destruct fds as [[g] gt ys e' fds|]; [cbn; intros Hget|intros _ [?[?[?[]]]]].
+  destruct (Pos.eq_dec f g); [subst; now rewrite M.grs in Hget|rewrite M.gro in Hget by auto].
+  specialize (remove_fundefs_Some_not f fds ρ fd Hget).
+  intros [ft [xs [e [Hhere | Hthere]]]]; [intuition congruence|].
+  now rewrite (remove_fundefs_In_None _ _ _ _ _ _ Hthere) in Hget.
+Defined.
+
+Fixpoint has_def_in f ft xs e fds {struct fds} :
+  In (f, ft, xs, e) [fds]! -> has_def f ft xs e fds.
+Proof.
+  destruct fds as [[g] gt ys e' fds|]; [cbn|now inversion 1].
+  intros Hin; apply in_app_or in Hin; destruct Hin as [Hin|Hin]; [right; now apply has_def_in|left].
+  inversion Hin; inv H; intuition.
+Defined.
+
+Instance Preserves_S_S_fns : Preserves_S _ exp_univ_exp (@S_fns).
 Proof.
   constructor.
   (* Moving upwards *)
@@ -712,8 +746,27 @@ Proof.
         inversion HD; subst; inv_ex; subst; exists D', []; split; [reflexivity|right; right; now destruct Hin].
       * inversion HC; subst; inv_ex; exists D, fds1; split; [assumption|].
         destruct Hin as [[Hin|Hin]|Hin]; [cbn in Hin; inv Hin; right; now left|now left|right; right; assumption].
-    +
-
+    (* When leaving a function bundle, all functions must be removed *)
+    + rename e0 into e, e into fds; exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
+      pose (HgetSome := remove_fundefs_Some_not _ _ _ _ Hget); clearbody HgetSome.
+      rewrite remove_fundefs_not_In in Hget by assumption; specialize (Hρ _ _ _ _ Hget).
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[D[fds1[HC Hin]]]]];
+        [left|right; left|];
+        [destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|inversion HEeq];
+         inversion HC; subst; inv_ex; repeat eexists; eauto..|idtac].
+      destruct fds1 as [|[[[f1 ft1] xs1] e1] fds1]; [cbn in HC|inversion HC].
+      contradiction HgetSome; destruct Hin as [[]|Hin]; repeat eexists; eassumption.
+    + rename f into fds; exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
+      pose (HgetSome := remove_fundefs_Some_not _ _ _ _ Hget); clearbody HgetSome.
+      rewrite remove_fundefs_not_In in Hget by assumption; specialize (Hρ _ _ _ _ Hget).
+      destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[h[ht[zs[fds2[E[HC Hin]]]]]]]]|[]]].
+      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
+        -- inversion HC; subst; inv_ex; left; repeat eexists; eassumption.
+        -- inversion HEnil; subst; inv_ex; inversion HC; subst; inv_ex.
+           apply has_def_in in HIn; contradiction HgetSome; now repeat eexists.
+      * destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]]; [subst E|].
+        -- inversion HC; subst; inv_ex; right; left; repeat eexists; eassumption.
+        -- inversion HEnil; subst; inv_ex; inversion HC.
   (* Moving downwards *)
   - intros A B C f e [ρ Hρ].
     destruct f; lazymatch goal with
