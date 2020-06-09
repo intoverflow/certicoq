@@ -145,7 +145,7 @@ Proof.
     + eapply fresher_than_monotonic; eauto; lia.
 Qed.
 
-Local Ltac show_Disjoint arb Harbx Harby :=
+Ltac show_Disjoint arb Harbx Harby :=
   let Harb := fresh "Harb" in
   constructor; intros arb Harb; unfold Ensembles.In in Harb;
   destruct Harb as [arb Harbx Harby].
