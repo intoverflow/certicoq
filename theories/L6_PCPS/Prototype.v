@@ -2158,12 +2158,12 @@ Ltac mk_smart_constr_children root R_C R_e St mr ms s hasHrel Hrel :=
     let ms' := fresh "ms" in
     let Hrel' := fresh "Hrel" in
     edestruct H as [x s' ms' Hrel'];
-    [eapply (@preserve_R_C _ _ root R_C _); cbv; eassumption
+    [eapply (@preserve_R_C _ _ root R_C _); cbn; eassumption
     |apply (@preserve_R_e _ _ R_e _ _ _ frame hole); assumption
-    |eapply (@preserve_S_dn _ _ root St _); cbv; eassumption
+    |eapply (@preserve_S_dn _ _ root St _); cbn; eassumption
     |idtac];
     clear H; clear s ms;
-    apply (@preserve_S_up _ _ root St _) in s'; cbv in s';
+    apply (@preserve_S_up _ _ root St _) in s'; cbn in s';
     lazymatch hasHrel with
     | false => idtac
     | true => apply (rt_trans _ _ _ _ _ Hrel) in Hrel'; clear Hrel

@@ -26,6 +26,8 @@ Require Import Lia.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
+Unset Strict Unquote Universe Mode.
+
 (** * Inlining heuristics *)
 
 (* Rather than parameterizing by [St] as in inline.v, the heuristic is
@@ -1385,7 +1387,7 @@ Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body :
 Inductive inline_step : exp -> exp -> Prop :=
 (* Update heuristic at each Efun node *)
 | inline_update_Efun :
-  forall (C : frames_t exp_univ_exp exp_univ_exp) fds e IH IH1 IH2,
+  forall (C : frames_t exp_univ_exp exp_univ_exp) (fds : list fundef) e IH IH1 IH2,
   (IH1, IH2) = IH.(update_funDef) fds ->
   When (fun (r : R_misc) (s : S_misc) => true) ->
   inline_step
@@ -1393,28 +1395,32 @@ Inductive inline_step : exp -> exp -> Prop :=
     (C ⟦ Efun (Local (fun _ => IH1) (Rec fds)) (Local (fun _ => IH2) (Rec e)) ⟧)
 (* Update heuristic at each Fcons node *)
 | inline_update_Fcons :
-  forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f ft xs e fds,
+  forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f ft xs e (fds : list fundef),
   When (fun (r : R_misc) (s : S_misc) => true) ->
   inline_step
     (C ⟦ Ffun f ft xs e :: fds ⟧)
     (C ⟦ Ffun f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) e) :: Rec fds ⟧)
 (* Inlining for CPS *)
 | inline_cps :
-  forall (C : frames_t exp_univ_exp exp_univ_exp) f ft (xs : list var) e e' (ys : list var)
-    lhs next_x,
+  forall (C : frames_t exp_univ_exp exp_univ_exp) f ft ft' (xs : list var) e e' e'' (ys : list var)
+    lhs σ next_x,
   lhs = Eapp f ft ys /\
   known_function f ft xs e C lhs /\
-  Alpha_conv ![e] ![e'] (id <{ ![xs] ~> ![ys] }>) /\
-  fresher_than next_x (used_vars ![C ⟦ e' ⟧]) ->
+  Alpha_conv ![e] ![e'] id /\
+  unique_bindings ![e'] /\
+  Disjoint _ (used_vars ![C ⟦ e ⟧]) (bound_var ![e']) /\
+  set_lists ![xs] ![ys] (M.empty _) = Some σ /\
+  e'' = [rename_all σ ![e']]! /\
+  fresher_than next_x (used_vars ![C ⟦ e'' ⟧]) ->
   (* Only inline if the inlining heuristic decides to *)
   When (fun (IH : R_misc) (s : S_misc) => IH.(decide_App) f ft ys) ->
   inline_step
-    (C ⟦ Eapp f ft ys ⟧)
+    (C ⟦ Eapp f ft' ys ⟧)
     (C ⟦ (* Update inlining heuristic *)
          Local (fun IH => IH.(update_App) f ft ys)
          (* Hack: set fresh variable in cdata properly for future passes *)
          (Modify (update_next_var next_x)
-         (Rec e')) ⟧).
+         (Rec e'')) ⟧).
 
 Definition fun_map : Set := M.tree (fun_tag * list var * exp).
 
@@ -1634,177 +1640,147 @@ Proof.
       specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
 Defined.
 
-(*
-Definition rename' {A} (σ : r_map) : univD A -> univD A :=
-  match A with
-  | exp_univ_prod_ctor_tag_exp => fun '(c, e) => (c, [rename_all σ ![e]]!)
-  | exp_univ_list_prod_ctor_tag_exp => fun ces => map (fun '(c, e) => (c, [rename_all σ ![e]]!)) ces
-  | exp_univ_list_fundef => fun fds => [rename_all_fun σ ![fds]]!
-  | exp_univ_exp => fun e => [rename_all σ ![e]]!
-  | exp_univ_var => fun x => [apply_r σ ![x]]!
-  | exp_univ_fun_tag => fun ft => ft
-  | exp_univ_ctor_tag => fun c => c
-  | exp_univ_prim => fun p => p
-  | exp_univ_N => fun n => n
-  | exp_univ_list_var => fun xs => [apply_r_list σ ![xs]]!
-  end.
-*)
+(* TODO: move the following definitions to proto_util.v *)
 
-(*
-Definition delay_t {A} (e : univD A) : Set := {
-  σ : r_map |
-  Disjoint _ (range (fun x => M.get x σ)) (used e) /\
-  Disjoint _ (domain (fun x => M.get x σ)) (used e) }.
-Instance Delayed_delay_t : Delayed (@delay_t).
+(* Some passes assume unique bindings *)
+Definition S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+  unique_bindings ![C ⟦ e ⟧].
+Instance Preserves_S_S_uniq : Preserves_S _ exp_univ_exp (@S_uniq).
+Proof. constructor; intros; assumption. Defined.
+
+(* Composing two states *)
+
+Definition S_prod (S1 S2 : forall A, exp_c A exp_univ_exp -> univD A -> Set) 
+           A (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+  S1 _ C e * S2 _ C e.
+
+Instance Preserves_S_S_prod
+         (S1 S2 : forall A, exp_c A exp_univ_exp -> univD A -> Set)
+         `{H1 : @Preserves_S exp_univ Frame_exp exp_univ_exp S1} 
+         `{H2 : @Preserves_S exp_univ Frame_exp exp_univ_exp S2} :
+  Preserves_S _ exp_univ_exp (@S_prod S1 S2).
 Proof.
-  unshelve econstructor; [exact @run_delay_t|..].
-  - intros A e; exists (M.empty _).
-    assert (Hdom : domain (fun x => M.get x (M.empty cps.var)) <--> Empty_set _). {
-      split; unfold domain; [intros x Hx; unfold Ensembles.In in Hx|inversion 1].
-      destruct Hx as [y Hy]; now rewrite M.gempty in Hy. }
-    assert (Hran : range (fun x => M.get x (M.empty cps.var)) <--> Empty_set _). {
-      split; unfold codomain; [intros y Hy; unfold Ensembles.In in Hy|inversion 1].
-      destruct Hy as [x Hx]; unfold apply_r in Hx; now rewrite M.gempty in Hx. }
-    rewrite Hdom, Hran; eauto with Ensembles_DB.
-  - destruct A; intros e; simpl in *;
-      try match goal with |- (let '(_, _) := ?rhs in _) = _ => destruct rhs end;
-      try match goal with |- map _ _ = _ => apply MCList.map_id_f; intros [c' e'] end;
-      repeat (rewrite apply_r_empty || rewrite apply_r_list_empty);
-      try rewrite <- (proj1 rename_all_empty); try rewrite <- (proj2 rename_all_empty);
-      unbox_newtypes; normalize_roundtrips; try reflexivity.
+  constructor; unfold S_prod; intros; match goal with H : _ * _ |- _ => destruct H end; split;
+    (now eapply preserve_S_up || now eapply preserve_S_dn).
 Defined.
-Definition run_delay_t {A} (e : univD A) (d : delay_t e) : univD A := rename' (proj1_sig d) e.
 
-*)
+Definition S_inline := S_prod (@S_fresh) (S_prod (@S_fns) (@S_uniq)).
 
-Section Beta.
+Require Import Coq.Strings.String.
 
-  Variable St:Type.
-  Variable (pp_St : St -> name_env -> string).
-  Variable IH : InlineHeuristic St.
+(* TODO: move to prototype.v and make uncurry_proto use this *)
+Ltac mk_easy_delay :=
+  try lazymatch goal with
+  | |- ConstrDelay _ -> _ =>
+    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
+  | |- EditDelay _ -> _ =>
+    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
+  end.
 
-  (* Construct known-functions map *)
-  Fixpoint add_fundefs (fds:fundefs) (fm: fun_map) : fun_map :=
-    match fds with
-    | Fnil => fm
-    | Fcons f t xs e fds => M.set f (t, xs, e) (add_fundefs fds fm)
-    end.
+(** * Inlining as a recursive function *)
 
-  Instance OptMonad : Monad option.
-  Proof.
-    constructor.
-    - intros X x. exact (Some x).
-    - intros A B [ a | ] f.
-      now eauto.
-      exact None.
-  Defined.
+(* For now, to allow extraction *)
+Axiom seems_legit : forall {A}, A.
 
-  Definition debug_st (s : St) : freshM unit :=
-    nenv <- get_name_env () ;;
-    log_msg (pp_St s nenv);;
-    log_msg Pipeline_utils.newline.
+Definition rw_inline :
+  rewriter exp_univ_exp inline_step R_misc S_misc
+    (@trivial_delay_t) (@trivial_R_C) (@trivial_R_e) (@S_inline).
+Proof.
+  mk_rw; mk_easy_delay.
+  (* The heuristic updates are simple *)
+  - intros _ IH _ R _ fds e _ _ _ success _.
+    destruct (update_funDef IH fds) as [IH1 IH2] eqn:HIH.
+    eapply success; eauto.
+  - clear; intros. now apply H0.
+  (* To actually perform inlining, we need to check the heuristic, do the renaming, etc. *)
+  - clear; intros _ IH cdata R C f ft' ys _ _ [[fresh Hfresh] [[ρ Hρ] Huniq]] success failure.
+    (* Look up f in the map of known functions *)
+    destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|exact failure].
+    specialize (Hρ ![f] ft xs e Hget).
+    specialize (success ft xs e).
+    (* Check the heuristic *)
+    destruct (decide_App IH f ft ys); [|exact failure].
+    (* Do the freshening + renaming.
+       Ideally, we wouldn't actually call [rename_all], which makes an extra pass over the
+       function body. Instead, we could pass σ into freshen_exp as the initial renaming. This
+       works as long as FV(e) ∩ BV(e) = ∅ (so the mapping [xs ↦ ys] never overlaps with future
+       updates to σ). *)
+    replace [![f]]! with f in Hρ by now unbox_newtypes.
+    destruct (freshen_exp fresh (M.empty _) e) as [fresh' e'] eqn:Hfreshen; symmetry in Hfreshen.
+    destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|exact failure].
+    specialize success with (e' := e') (σ0 := σ) (next_x := fresh').
+    (* Prove that we did what we said we did *)
+    eapply success; repeat match goal with |- _ /\ _ => split end; eauto.
+    + assert (Hid : f_eq id (apply_r (M.empty _))). {
+        unfold f_eq, apply_r; intros x; now rewrite M.gempty. }
+      rewrite Hid; eapply freshen_exp_Alpha; eauto.
+      * (* for every known function (ft, xs, e), exists D s.t. C[f(ys)] = D[e].
+           then UB(D[e]) ==> UB e by ub_app_ctx_f *)
+        exact seems_legit.
+      * rewrite <- Hid, image_id, Union_idempotent.
+        (* fresh > C[f(ys)] = D[e] for some D and then vars(D[e]) ⊇ vars(e) *)
+        exact seems_legit.
+    + eapply freshen_exp_uniq; eauto.
+      (* UB(C[f(ys)] ==> UB(D[e]) ==> UB(e) by ub_app_ctx_f *)
+      exact seems_legit.
+    + (* BV(e') ⊆ [fresh, fresh') by freshen_exp_bounded and fresh > vars(C[e]) *)
+      exact seems_legit.
+    + (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ codomain σ. then have 
+           vars(C[rename_all σ e'])
+           = vars(C) ∪ vars(rename_all σ e')
+           ⊆ vars(C) ∪ used_vars e' ∪ codomain σ
+           = vars(C) ∪ used_vars e' ∪ ys
+           ⊆ vars(C) ∪ used_vars e' ∪ vars(C[f(ys)])
+           = used_vars e' ∪ vars(C[f(ys)])
+           < fresh' *)
+      exact seems_legit.
+  (* It's easy to preserve invariants across the rules that update the heuristic, since no change was made *)
+  - intros; now split.
+  - intros; now split.
+  (* We must explain how to maintain all the intermediate state variables across the edit *)
+  - intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hguard _ _ [[fresh Hfresh] [[ρ Hρ] Huniq]].
+    split; [easy|]; unfold Local, Modify, S_inline; split; [|split].
+    (* next_x is a sufficiently fresh variable *)
+    + decompose [and] Hguard. now exists next_x.
+    (* The set of known functions remains the same *)
+    + exists ρ.
+      (* For any known g:
+         - If g was in an earlier bundle, it's still there
+         - If g was in a bundle and we are in one of the bundle's definitions, we're still
+           in that definition *)
+      exact seems_legit.
+    + decompose [and] Hguard; unfold S_uniq.
+      rewrite app_exp_c_eq, isoBAB.
+      rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
+      * unfold S_uniq in Huniq.
+        rewrite app_exp_c_eq, isoBAB in Huniq.
+        rewrite (proj1 (ub_app_ctx_f _)) in Huniq.
+        decompose [and] Huniq; clear Huniq; auto.
+      * (* Follows from UB(e') because BV(e'') = BV(e') because xs ∩ BV(e') = ∅ *)
+        exact seems_legit.
+      * (* Follows from vars(C[e]) ∩ BV(e') = ∅.
+             BV(e'') = BV(e') because xs ∩ BV(e') = ∅
+             BV(C) ⊆ vars(C[e]) *)
+        exact seems_legit.
+Defined.
 
-  Fixpoint beta_contract (d : nat) {struct d} :=
-    let fix beta_contract_aux (e : exp) (sig : r_map) (fm:fun_map) (s:St) {struct e} : freshM exp :=
-        match e with
-        | Econstr x t ys e =>
-          let ys' := apply_r_list sig ys in
-          e' <- beta_contract_aux e sig fm s;;
-          ret (Econstr x t ys' e')
-        | Ecase v cl =>
-          let v' := apply_r sig v in
-          cl' <- (fix beta_list (br: list (ctor_tag*exp)) : freshM (list (ctor_tag*exp)) :=
-                   match br with
-                   | nil => ret ( nil)
-                   | (t, e)::br' =>
-                     e' <- beta_contract_aux e sig fm s;;
-                     br'' <- beta_list br';;
-                     ret ((t, e')::br'')
-                   end) cl;;
-          ret (Ecase v' cl')
-       | Eproj x t n y e =>
-         let y' := apply_r sig y in
-         e' <- beta_contract_aux e sig fm s;;
-         ret (Eproj x t n y' e')
-       | Eletapp x f t ys ec =>
-         let f' := apply_r sig f in
-         let ys' := apply_r_list sig ys in
-         let (s' , inl) := update_letApp _ IH f' t ys' s in
-         (match (inl, M.get f' fm, d) with
-          | (true, Some (t, xs, e), S d') =>
-            e' <- freshen_exp e;;
-            match inline_letapp e' x with
-            | Some (C, x') =>
-              let sig' := set_list (combine xs ys') sig  in
-              beta_contract d' (C |[ ec ]|) (M.set x (apply_r sig' x') sig') fm s'
-            | None =>
-              ec' <- beta_contract_aux ec sig fm s' ;;
-              ret (Eletapp x f' t ys' ec')
-            end
-          | _ =>
-            ec' <- beta_contract_aux ec sig fm s' ;;
-            ret (Eletapp x f' t ys' ec')
-          end)
-       | Efun fds e =>
-         let fm' := add_fundefs fds fm in
-         let (s1, s2) := update_funDef _ IH fds sig s in
-         (* debug_st s1;; *)
-         fds' <- (fix beta_contract_fds (fds:fundefs) (s:St) : freshM fundefs :=
-                   match fds with
-                   | Fcons f t xs e fds' =>
-                     let s' := update_inFun _ IH f t xs e sig s in
-                     e' <- beta_contract_aux e sig fm' s' ;;
-                     fds'' <- beta_contract_fds fds' s ;;
-                     ret (Fcons f t xs e' fds'')
-                   | Fnil => ret Fnil
-                   end) fds s2 ;;
-         e' <- beta_contract_aux e sig fm' s1;;
-         ret (Efun fds' e')
-       | Eapp f t ys =>
-         let f' := apply_r sig f in
-         let ys' := apply_r_list sig ys in
-         let (s', inl) := update_App _ IH f' t ys' s in
-         (* fstr <- get_pp_name f' ;; *)
-         (* log_msg ("Application of " ++ fstr ++ " is " ++ if inl then "" else "not " ++ "inlined") ;; *)
-         (match (inl, M.get f' fm, d) with
-          | (true, Some (t, xs, e), S d') =>
-            let sig' := set_list (combine xs ys') sig  in
-            e' <- freshen_exp e;;
-            beta_contract d' e' sig' fm  s'
-          | _ => ret (Eapp f' t ys')
-          end)
-       | Eprim x t ys e =>
-         let ys' := apply_r_list sig ys in
-         e' <- beta_contract_aux e sig fm s;;
-         ret (Eprim x t ys' e')
-       | Ehalt x =>
-         let x' := apply_r sig x in
-         ret (Ehalt x')
-        end
-    in beta_contract_aux.
+Recursive Extraction rw_inline.
 
+Lemma inline_top' (IH : R_misc) (c : comp_data) (e : exp) (s : S_inline _ <[]> e)
+  : result exp_univ_exp inline_step S_misc (@S_inline) <[]> e.
+Proof. exact (run_rewriter' rw_inline IH c e tt tt s). Defined.
 
-  (* Old fds for reference *)
-  (* Function beta_contract_fds (fds:fundefs) (fcon: St -> forall e:exp, (term_size e < funs_size fds)%nat -> freshM exp)  (fdc:fundefs) (sig:r_map) (s:St) (p:  cps_util.subfds_or_eq fdc fds): freshM fundefs := *)
-  (*   (match fdc as x return x = fdc -> _ with *)
-  (*    | Fcons f t xs e fdc' => *)
-  (*      fun Heq_fdc => *)
-  (*        let s' := update_inFun _ IH f t xs e sig s in *)
-  (*       e' <- fcon s' e (beta_contract_fds_1 (eq_ind_r (fun a => cps_util.subfds_or_eq a fds) p Heq_fdc));; *)
-  (*       fds' <- beta_contract_fds fds fcon fdc' sig s (beta_contract_fds_2 (eq_ind_r (fun a => cps_util.subfds_or_eq a fds) p Heq_fdc));; *)
-  (*        ret (Fcons f t xs e' fds') *)
-  (*   | Fnil => fun _ => ret Fnil *)
-  (*   end) (eq_refl fdc). *)
+Lemma inline_top (IH : R_misc) (c : comp_data) (e : exp) (s : S_inline _ <[]> e)
+  : exp * comp_data.
+Proof.
+  pose (res := run_rewriter' rw_inline IH c e tt tt s); destruct res eqn:Hres.
+  exact (resTree, resSMisc).
+Defined.
 
-  Definition beta_contract_top (e:exp) (d:nat) (s:St) (c:comp_data) : error exp * comp_data :=
-    let '(e', (st', _)) := run_compM (beta_contract d e (M.empty var) (M.empty _) s) c tt in
-    (e', st').
-
-End Beta.
-
+(*
 (* d should be max argument size, perhaps passed through by uncurry *)
 Definition postuncurry_contract (e:exp) (s:M.t nat) (d:nat) :=
-  beta_contract_top _ PostUncurryIH e d s.
+  inline_top (PostUncurryIH s) e.
 
 Definition inlinesmall_contract (e:exp) (bound:nat)  (d:nat) :=
   beta_contract_top _ (InlineSmallIH bound) e d (M.empty _).
@@ -1820,3 +1796,4 @@ Print inline_uncurry.
 
 Definition inline_uncurry_marked_anf (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
   beta_contract_top _ InlinedUncurriedMarkedAnf e d s.
+*)
