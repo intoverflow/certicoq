@@ -453,6 +453,12 @@ Instance Iso_exp : Iso exp cps.exp := {
   isoABA := proto_exp_proto;
   isoBAB := exp_proto_exp }.
 
+Instance Iso_ces : Iso (list (ctor_tag * exp)) (list (cps.ctor_tag * cps.exp)) := {
+  isoAofB := proto_of_ces;
+  isoBofA := ces_of_proto;
+  isoABA := proto_ces_proto;
+  isoBAB := ces_proto_ces }.
+
 Instance Iso_fundefs : Iso fundefs cps.fundefs := {
   isoAofB := proto_of_fundefs;
   isoBofA := fundefs_of_proto;

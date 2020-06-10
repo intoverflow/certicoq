@@ -355,13 +355,6 @@ Proof.
   now (intros; eapply fresher_than_monotonic;[|eapply fresher_than_antimon;[|eassumption]]; [lia|]).
 Qed.
 
-Lemma Alpha_conv_cons x1 x2 e1 e2 c1 c2 ces1 ces2 σ :
-  c1 = c2 ->
-  Alpha_conv e1 e2 σ ->
-  Alpha_conv (cps.Ecase x1 ces1) (cps.Ecase x2 ces2) σ ->
-  Alpha_conv (cps.Ecase x1 ((c1, e1) :: ces1)) (cps.Ecase x2 ((c2, e2) :: ces2)) σ.
-Proof. intros Hc He Hces; inv Hces; constructor; auto. Qed.
-
 Lemma set_lists_None_length {A} ρ xs (vs : list A) :
   set_lists xs vs ρ = None -> length xs <> length vs.
 Proof.
@@ -379,25 +372,56 @@ Lemma Disjoint_Union {A} S1 S2 S3 :
   Disjoint A S1 (S2 :|: S3) -> Disjoint A S1 S2 /\ Disjoint A S1 S3.
 Proof. eauto with Ensembles_DB. Qed.
 
+(* TODO: move to util *)
+
+Fixpoint used_vars_ces (ces : list (cps.ctor_tag * cps.exp)) :=
+  match ces with
+  | [] => Empty_set _
+  | (c, e) :: ces => used_vars e :|: used_vars_ces ces
+  end.
+
+Lemma used_vars_Ecase x ces : used_vars (cps.Ecase x ces) <--> x |: used_vars_ces ces.
+Proof.
+  induction ces as [|[c e] ces IHces].
+  - rewrite used_vars_Ecase_nil; cbn; now normalize_sets.
+  - rewrite used_vars_Ecase_cons; cbn; rewrite IHces; eauto with Ensembles_DB.
+Qed.
+
+Hint Rewrite used_vars_Econstr : UsedDB.
+Hint Rewrite used_vars_Eproj : UsedDB.
+Hint Rewrite used_vars_Ecase : UsedDB.
+Hint Rewrite used_vars_Ecase_app : UsedDB.
+Hint Rewrite used_vars_Efun : UsedDB.
+Hint Rewrite used_vars_Eletapp : UsedDB.
+Hint Rewrite used_vars_Eapp : UsedDB.
+Hint Rewrite used_vars_Eprim : UsedDB.
+Hint Rewrite used_vars_Ehalt : UsedDB.
+Hint Rewrite used_vars_Fcons : UsedDB.
+Hint Rewrite used_vars_Fnil : UsedDB.
+
+Hint Rewrite @image_Union : ImageDB.
+Hint Rewrite @image_Singleton : ImageDB.
+
+Lemma FromList_map_image_FromList' {A B} (l : list A) (f : A -> B) :
+  image f (FromList l) <--> FromList (map f l).
+Proof. now rewrite FromList_map_image_FromList. Qed.
+
+Hint Rewrite @FromList_map_image_FromList' : ImageDB.
+
+SearchAbout fresher_than Singleton.
+
+Lemma Singleton_fresher_than x y : fresher_than x [set y] -> x > y.
+Proof. intros H; apply H; constructor. Qed.
+
 Local Ltac normalize_images :=
-  repeat (repeat normalize_used_vars;
-    repeat rewrite used_vars_Eletapp in *;
-    repeat (rewrite image_Union || rewrite <- FromList_map_image_FromList);
-    repeat match goal with
-    | H : fresher_than _ (_ :|: _) |- _ =>
-      apply Union_fresher_than in H;
-      destruct H
-    end;
-    repeat match goal with
-    | H : context [image _ [set _]] |- _ => rewrite image_Singleton in H
-    | H : context [image _ (_ :|: _)] |- _ => rewrite image_Union in H
-    | H : context [image _ (FromList _)] |- _ => rewrite <- FromList_map_image_FromList in H
-    end;
-    repeat match goal with 
-    | H : Disjoint _ (_ :|: _) _ |- _ => apply Disjoint_commut in H
+  repeat (
+    autorewrite with ImageDB UsedDB in *;
+    try lazymatch goal with
+    | H : fresher_than _ [set _] |- _ => apply Singleton_fresher_than in H
+    | H : fresher_than _ (_ :|: _) |- _ => apply Union_fresher_than in H; destruct H
     | H : Disjoint _ _ (_ :|: _) |- _ => apply Disjoint_Union in H; destruct H
-    end;
-    repeat normalize_used_vars).
+    | H : Disjoint _ (_ :|: _) _ |- _ => apply Disjoint_commut in H
+    end).
 
 Fixpoint set_lists_In_corresp {A} x xs (ys : list A) ρ ρ' {struct xs} :
   set_lists xs ys ρ = Some ρ' ->
@@ -487,210 +511,6 @@ Proof.
   - cbn in *; normalize_sets; now rewrite IHfds.
 Qed.
 
-Fixpoint set_gensyms_inj_fds next next' xs xs' fds fds' σ σ' {struct xs} :
-  fresher_than next (used_vars_fundefs ![fds]) ->
-  (next', xs') = gensyms next xs ->
-  set_lists ![xs] ![xs'] σ = Some σ' ->
-  xs = map fun_name fds ->
-  xs' = map fun_name fds' ->
-  construct_fundefs_injection (apply_r σ) ![fds] ![fds'] (apply_r σ').
-Proof.
-  destruct xs as [|x xs], xs' as [|x' xs']; unbox_newtypes; cbn; try congruence.
-  - intros Hfresh Heq1 Heq2 Hxs Hxs'; inv Heq1; inv Heq2.
-    destruct fds, fds'; inv Hxs; inv Hxs'; constructor.
-  - destruct (gensyms (next + 1) xs) as [next0 xs0] eqn:Hgen; symmetry in Hgen.
-    assert (next0 >= next + 1) by now eapply gensyms_upper1.
-    intros Hfresh Heq; inv Heq.
-    destruct (set_lists _ _ _) as [σ0|] eqn:Hσ; [|congruence]; intros Heq; inv Heq.
-    assert (Heq : (apply_r (@map_util.M.set cps.M.elt x next σ0)) = (apply_r σ0) {x ~> next}). {
-      apply FunctionalExtensionality.functional_extensionality.
-      intros; now rewrite apply_r_set. }
-    intros Hxs Hxs0;destruct fds as[|[[lf][lft]lxs le]lfds],fds' as[|[[rf][rft]rxs re]rfds];
-      inversion Hxs; inversion Hxs0; subst lf rf; cbn in *; rewrite Heq; constructor.
-    + normalize_images.
-      specialize (set_gensyms_inj_fds (next + 1) next0 xs xs0 lfds rfds σ σ0).
-      eapply set_gensyms_inj_fds; auto; eapply fresher_than_monotonic; eauto; lia.
-    + unfold cps.var in *.
-      assert (HNoDup : NoDup xs0) by now eapply gensyms_NoDup'.
-      apply NoDup_var in HNoDup.
-      pose (Hinj := set_NoDup_inj ![xs] ![xs0] σ σ0 HNoDup Hσ); clearbody Hinj.
-      rewrite name_in_fundefs_FromList.
-      apply injective_subdomain_extend; [now subst|cbn].
-      intros [σnext [[Himage Hnot_x] Hσnext]].
-      assert (Hin : In next ![xs0]). {
-        unfold apply_r; unfold apply_r in Hσnext; subst xs xs0.
-        edestruct @set_lists_In_corresp as [σnext' [Hσnext' Hin]]; try exact Hσ; [apply Himage|].
-        rewrite Hσnext' in *; now subst σnext'. }
-      apply in_map with (f := mk_var) in Hin; normalize_roundtrips.
-      assert (![mk_var next] >= next + 1) by now eapply gensyms_increasing'.
-      cbn in *; normalize_roundtrips; lia.
-Qed.
-
-(* TODO: move this to proto_util.v *)
-Lemma fresher_than_Empty_set x : fresher_than x (Empty_set _).
-Proof. intros y []. Qed.
-
-Local Ltac set_lists_safe σ0 Hσ0 :=
-  match goal with
-  | Hlen : length _ = length _, Hset : context [match set_lists ?xs ?ys ?σ with _ => _ end] |- _ =>
-    destruct (set_lists xs ys σ) as [σ0|] eqn:Hσ0;
-    [|apply set_lists_None_length in Hσ0; unfold strip_vars in Hσ0; now repeat rewrite map_length in Hσ0]
-  end.
-  
-Fixpoint freshen_exp_increasing next next' σ e e' {struct e} :
-  (next', e') = freshen_exp next σ e -> next' >= next.
-Proof.
-  destruct e; unbox_newtypes; cbn in *;
-  repeat match goal with
-  | |- context [let '(_, _) := ?f ?e in _] =>
-    let next' := fresh "next" with e' := fresh "e" with He := fresh "He" in
-    destruct (f e) as [next' e'] eqn:He; symmetry in He
-  end; intros Heq; repeat match goal with H : (_, _) = (_, _) |- _ => inv H end;
-  cbn; normalize_roundtrips;
-  try solve [lia|match goal with
-  | H : (?next', ?e') = freshen_exp ?next ?σ ?e |- _ =>
-    assert (next' >= next) by now apply (freshen_exp_increasing next next' σ e e')
-  end; lia].
-  - revert next σ x next0 e He; induction ces as [|[c' e'] ces IHces];
-    intros next σ x next0 e He; [inv He; lia|cbn in He].
-    destruct (freshen_exp next σ e') as [next' e''] eqn:He''; symmetry in He''.
-    assert (next' >= next) by now apply (freshen_exp_increasing next next' σ e' e'').
-    destruct (freshen_ces' freshen_exp next' σ ces) as [next'' ces'] eqn:Hces'; symmetry in Hces'.
-    inv He; (assert (next'' >= next') by now apply (IHces next' σ xH next'' ces' Hces')); lia.
-  - rename e0 into xs; edestruct @gensyms_spec as [[Hdis Hdup] [Hfresh Hlen]];
-      try exact He; try apply fresher_than_Empty_set; rewrite map_length in Hlen.
-    set_lists_safe σ' Hσ.
-    assert (next0 >= next) by now eapply gensyms_upper1.
-    assert (IHfds : forall fds next next' fds' σ, (next', fds') = freshen_fds next σ fds -> next' >= next). {
-      clear - freshen_exp_increasing; induction fds as [|[f ft xs e] fds IHfds]; intros next next' fds' σ.
-      - inversion 1; lia.
-      - cbn; intros Heq; destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0.
-        edestruct @gensyms_spec as [[Hdis Hdup] [Hfresh Hlen]]; try exact Hxs0;
-          try apply fresher_than_Empty_set.
-        assert (next0 >= next) by now eapply gensyms_upper1.
-        set_lists_safe σ' Hσ.
-        destruct (freshen_exp next0 σ' e) as [next1 e0] eqn:He0; symmetry in He0.
-        assert (next1 >= next0) by now eapply freshen_exp_increasing.
-        destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
-        assert (next2 >= next1) by now eapply IHfds.
-        inv Heq; lia. }
-    destruct (freshen_fds' freshen_exp next0 σ' fds) as [next1 fds0] eqn:Hfds0; symmetry in Hfds0.
-    assert (next1 >= next0) by now eapply IHfds.
-    destruct (freshen_exp next1 σ' e) as [next2 e0] eqn:He0; symmetry in He0.
-    assert (next2 >= next1) by now eapply freshen_exp_increasing.
-    inv Heq; lia.
-Qed.
-
-Lemma freshen_ces_increasing next next' σ ces ces' :
-  (next', ces') = freshen_ces next σ ces -> next' >= next.
-Proof.
-  revert next next' ces' σ; induction ces as [|[c' e'] ces IHces];
-  intros next next' ces' σ Hces; [inv Hces; lia|cbn in Hces].
-  destruct (freshen_exp next σ e') as [next0 e0] eqn:He0; symmetry in He0.
-  assert (next0 >= next) by now eapply freshen_exp_increasing.
-  destruct (freshen_ces next0 σ ces) as [next1 ces0] eqn:Hces0; symmetry in Hces0.
-  assert (next1 >= next0) by now eapply IHces.
-  inv Hces; lia.
-Qed.
-
-Lemma freshen_fds_increasing next next' σ fds fds' :
-  (next', fds') = freshen_fds next σ fds -> next' >= next.
-Proof.
-  revert next next' fds' σ; induction fds as [|[f ft xs e] fds IHfds];
-  intros next next' ces' σ Hfds; [inv Hfds; lia|cbn in Hfds].
-  destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0.
-  assert (next0 >= next) by now eapply gensyms_upper1.
-  assert (length xs0 = length xs) by now eapply gensyms_len'.
-  set_lists_safe σ0 Hσ0.
-  destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
-  assert (next1 >= next0) by now eapply freshen_exp_increasing.
-  destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
-  assert (next2 >= next1) by now eapply IHfds.
-  inv Hfds; lia.
-Qed.
-
-Fixpoint freshen_fds_names next next' σ fds fds' :
-  (next', fds') = freshen_fds next σ fds ->
-  ![map fun_name fds'] = map (apply_r σ) ![map fun_name fds].
-Proof.
-  destruct fds as [|[f ft xs e] fds]; unbox_newtypes; [now inversion 1|].
-  cbn; destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0.
-  assert (length xs0 = length xs) by now eapply gensyms_len'.
-  destruct (set_lists (strip_vars xs) (strip_vars xs0) σ) as [σ0|] eqn:Hσ0;
-   [|apply set_lists_None_length in Hσ0; unfold strip_vars in Hσ0; now repeat rewrite map_length in Hσ0].
-  destruct (freshen_exp next0 σ0 e) as [next1 e0].
-  destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds; symmetry in Hfds.
-  intros Heq; inv Heq; cbn; now erewrite freshen_fds_names; [|exact Hfds].
-Qed.
-  
-Corollary freshen_fds_names' next next' σ fds fds' :
-  (next', fds') = freshen_fds next σ fds ->
-  name_in_fundefs ![fds'] <--> image (apply_r σ) (name_in_fundefs ![fds]).
-Proof.
-  intros Heq; apply freshen_fds_names in Heq.
-  do 2 rewrite name_in_fundefs_FromList; cbn in *.
-  now rewrite Heq, FromList_map_image_FromList.
-Qed.
-
-(*
-Fixpoint freshen_fds_names next next0 next_ next_fin fds fnames fds' σ σ' {struct fds} :
-  next_ >= next0 ->
-  (next0, fnames) = gensyms next (map fun_name fds) ->
-  set_lists ![map fun_name fds] ![fnames] σ = Some σ' ->
-  (next_fin, fds') = freshen_fds next_ σ' fds ->
-  name_in_fundefs ![fds'] <--> FromList ![fnames].
-Proof.
-  destruct fds as [|[f ft xs e] fds]; unbox_newtypes.
-  - intros Hge; inversion 1; subst; inversion 1; subst; inversion 1; now subst.
-  - intros Hge Hgens; cbn in Hgens.
-    destruct (gensyms (next + 1) (map fun_name fds)) as [next1 fnames0] eqn:Hfnames.
-    symmetry in Hfnames; inv Hgens; intros Hsets; cbn in Hsets.
-    match type of Hsets with match ?e with _ => _ end = _ => destruct e as [σ0|] eqn:Hσ end;
-      [inv Hsets; intros Hfds; cbn in Hfds|congruence].
-    edestruct @gensyms_spec as [Hcopies [Hfresh Hlen]];
-      try exact Hfnames; try apply fresher_than_Empty_set.
-    rewrite map_length in Hlen.
-    assert (next1 >= next + 1) by now eapply gensyms_upper1.
-    destruct (gensyms next_ xs) as [next2 xs0] eqn:Hxs0; symmetry in Hxs0.
-    edestruct @gensyms_spec as [Hcopies1 [Hfresh1 Hlen1]]; try exact Hxs0;
-     try eapply fresher_than_monotonic; [|exact Hfresh|]; [lia|].
-    assert (next2 >= next_) by now eapply gensyms_upper1.
-    assert (length (strip_vars xs) = length (strip_vars xs0)). {
-      unfold strip_vars; now repeat rewrite map_length. }
-    match type of Hfds with
-    | context [match ?e with _ => _ end] =>
-      destruct e as [σ1|] eqn:Hσ1;
-        [|apply set_lists_None_length in Hσ1; unfold strip_vars;
-          now repeat rewrite map_length]
-    end.
-    destruct (freshen_exp next2 σ1 e) as [next3 e0] eqn:He0; symmetry in He0.
-    assert (next3 >= next2) by now eapply freshen_exp_increasing.
-    match type of Hfds with
-    | context [let '(_, _) := ?e in _] =>
-      destruct e as [next4 fds0] eqn:Hfds0; symmetry in Hfds0
-    end; inv Hfds; cbn; unfold apply_r; rewrite M.gss, FromList_cons.
-    specialize (freshen_fds_names (next + 1) next1 next3  fds fnames0 fds0 σ σ0 Hfnames Hσ).
-    rewrite 
-*)
-
-Lemma map_ext_eq {A B} xs : forall (f g : A -> B) (Heq : forall x, In x xs -> f x = g x), map f xs = map g xs.
-Proof.
-  induction xs; auto; intros; cbn; (rewrite Heq by now left); f_equal; erewrite IHxs; eauto.
-  intros; eapply Heq; now right.
-Qed.
-
-Fixpoint set_lists_map_apply_r xs ys σ σ' {struct xs} :
-  NoDup xs ->
-  set_lists xs ys σ = Some σ' ->
-  map (apply_r σ') xs = ys.
-Proof.
-  destruct xs as [|x xs], ys as [|y ys]; unbox_newtypes; cbn; try congruence.
-  destruct (set_lists _ _ _) as [σ0|] eqn:Hσ; [|congruence]; intros Hdup Heq; inv Heq; inv Hdup.
-  unfold apply_r at 1; rewrite M.gss; f_equal.
-  rewrite map_ext_eq with (g := apply_r σ0); [now eapply set_lists_map_apply_r|].
-  intros x' Hin; assert (x <> x') by (intros Hoops; now subst); unfold apply_r; now rewrite M.gso by auto.
-Qed.
-
 Local Ltac solve_easy :=
   solve [match goal with
   | H : fresher_than _ ?S |- fresher_than _ ?S =>
@@ -715,237 +535,822 @@ Local Ltac solve_easy :=
   | |- fresher_than _ (image (apply_r (M.set _ _ _)) _) =>
     rewrite <- apply_r_set; eapply fresher_than_antimon; [apply image_extend_Included|];
     solve_easy
+  | H : _ -> ?P |- ?P => apply H; solve_easy
   end].
 
-Fixpoint freshen_exp_used next next' σ e e' {struct e} :
-  fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
-  (next', e') = freshen_exp next σ e ->
-  fresher_than next' (used_vars ![e] :|: used_vars ![e']).
+(* TODO: move this to proto_util.v *)
+Lemma fresher_than_Empty_set x : fresher_than x (Empty_set _).
+Proof. intros y []. Qed.
+
+Local Ltac set_lists_safe σ0 Hσ0 :=
+  match goal with
+  | Hlen : length _ = length _, Hset : context [match set_lists ?xs ?ys ?σ with _ => _ end] |- _ =>
+    destruct (set_lists xs ys σ) as [σ0|] eqn:Hσ0;
+    [|apply set_lists_None_length in Hσ0; unfold strip_vars in Hσ0; now repeat rewrite map_length in Hσ0]
+  | Hlen : length _ = length _ |- context [match set_lists ?xs ?ys ?σ with _ => _ end] =>
+    destruct (set_lists xs ys σ) as [σ0|] eqn:Hσ0;
+    [|apply set_lists_None_length in Hσ0; unfold strip_vars in Hσ0; now repeat rewrite map_length in Hσ0]
+  end.
+
+Local Ltac do_gensyms next xs next0 xs0 Hxs0 Hgt Hlen :=
+  destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0;
+  (assert (Hgt : next0 >= next) by now eapply gensyms_upper1);
+  (assert (Hlen : length xs0 = length xs) by now eapply gensyms_len').
+
+Section FreshenInd.
+
+Context
+  (P_exp : r_map -> positive -> exp -> positive -> exp -> Prop)
+  (P_ces : r_map -> positive -> list (ctor_tag * exp) -> positive -> list (ctor_tag * exp) -> Prop)
+  (P_fds : r_map -> positive -> list fundef -> positive -> list fundef -> Prop).
+
+Context
+  (Hconstr : forall x c ys e σ next next' e',
+    (next', e') = freshen_exp (next + 1) (M.set x next σ) e ->
+    P_exp (M.set x next σ) (next + 1) e next' e' ->
+    P_exp σ next (Econstr (mk_var x) c ys e)
+          next' (Econstr (mk_var next) c (map mk_var (map (apply_r σ) (strip_vars ys))) e'))
+  (Hces : forall σ next x ces next' ces', 
+    (next', ces') = freshen_ces next σ ces ->
+    P_ces σ next ces next' ces' ->
+    P_exp σ next (Ecase (mk_var x) ces) next' (Ecase (mk_var (apply_r σ x)) ces'))
+  (Hfds : forall next next' next'' next''' σ σ' fds fds' e e' fs',
+    (next', fs') = gensyms next (map fun_name fds) ->
+    set_lists (strip_vars (map fun_name fds)) (strip_vars fs') σ = Some σ' ->
+    (next'', fds') = freshen_fds next' σ' fds ->
+    P_fds σ' next' fds next'' fds' ->
+    (next''', e') = freshen_exp next'' σ' e ->
+    P_exp σ' next'' e next''' e' ->
+    P_exp σ next (Efun fds e) next''' (Efun fds' e'))
+  (Hproj : forall x c n y e σ next next' e',
+    (next', e') = freshen_exp (next + 1) (M.set x next σ) e ->
+    P_exp (M.set x next σ) (next + 1) e next' e' ->
+    P_exp σ next (Eproj (mk_var x) c n (mk_var y) e) next'
+          (Eproj (mk_var next) c n (mk_var (apply_r σ y)) e'))
+  (Hletapp : forall x f ft ys e σ next next' e',
+    (next', e') = freshen_exp (next + 1) (M.set x next σ) e ->
+    P_exp (M.set x next σ) (next + 1) e next' e' ->
+    P_exp σ next (Eletapp (mk_var x) (mk_var f) (mk_fun_tag ft) ys e) next'
+          (Eletapp (mk_var next) (mk_var (apply_r σ f)) (mk_fun_tag ft)
+                   (map mk_var (map (apply_r σ) (strip_vars ys))) e'))
+  (Happ : forall f ft xs next σ,
+    P_exp σ next (Eapp (mk_var f) (mk_fun_tag ft) xs) next
+          (Eapp (mk_var (apply_r σ f)) (mk_fun_tag ft)
+                (map mk_var (map (apply_r σ) (strip_vars xs)))))
+  (Hprim : forall x p ys e σ next next' e',
+    (next', e') = freshen_exp (next + 1) (M.set x next σ) e ->
+    P_exp (M.set x next σ) (next + 1) e next' e' ->
+    P_exp σ next (Eprim (mk_var x) (mk_prim p) ys e) next'
+          (Eprim (mk_var next) (mk_prim p)
+                 (map mk_var (map (apply_r σ) (strip_vars ys))) e'))
+  (Hhalt : forall x next σ, P_exp σ next (Ehalt (mk_var x)) next (Ehalt (mk_var (apply_r σ x)))).
+
+Context
+  (Hfds_nil : forall next σ, P_fds σ next [] next [])
+  (Hfds_cons : forall σ σ' next next' next'' next''' f ft xs xs' e e' fds fds',
+    (next', xs') = gensyms next xs ->
+    set_lists (strip_vars xs) (strip_vars xs') σ = Some σ' ->
+    (next'', e') = freshen_exp next' σ' e ->
+    P_exp σ' next' e next'' e' ->
+    (next''', fds') = freshen_fds next'' σ fds ->
+    P_fds σ next'' fds next''' fds' ->
+    P_fds σ next (Ffun (mk_var f) ft xs e :: fds)
+          next''' (Ffun (mk_var (apply_r σ f)) ft xs' e' :: fds')).
+
+Context
+  (Hces_nil : forall next σ, P_ces σ next [] next [])
+  (Hces_cons : forall σ next next' next'' c e e' ces ces',
+    (next', e') = freshen_exp next σ e ->
+    P_exp σ next e next' e' ->
+    (next'', ces') = freshen_ces next' σ ces ->
+    P_ces σ next' ces next'' ces' ->
+    P_ces σ next ((c, e) :: ces) next'' ((c, e') :: ces')).
+
+Fixpoint freshen_exp_ind σ next e next' e' {struct e} :
+  (next', e') = freshen_exp next σ e -> P_exp σ next e next' e'.
 Proof.
-  destruct e; unbox_newtypes; cbn; intros Hfresh Heq;
-  try solve
-    [inv Heq; cbn; normalize_roundtrips; normalize_images; solve_easy
-    |match type of Heq with
-     | context [let '(_, _) := ?e in _] =>
-       destruct e as [next0 e0] eqn:He0; symmetry in He0; inv Heq;
-       pose (He0' := He0); clearbody He0';
-       apply freshen_exp_used in He0'; [|cbn; normalize_roundtrips; normalize_images; solve_easy]
-     end;
-     (assert (next0 >= next + 1) by now eapply freshen_exp_increasing);
-     cbn; normalize_roundtrips; normalize_images; solve_easy].
-  - destruct (freshen_ces' freshen_exp next σ ces) as [next0 ces0] eqn:Hces0; symmetry in Hces0.
-    inv Heq.
-    revert next σ x Hfresh next0 ces0 Hces0; induction ces as [|[c0 e0] ces0 IHces0];
-    intros next σ x Hfresh next' ces' Hces'.
-    + cbn in *; inv Hces'; cbn; normalize_images; solve_easy.
-    + cbn in Hces'.
-      change (freshen_ces' freshen_exp) with freshen_ces in *.
-      change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
-      destruct (freshen_exp next σ e0) as [next1 e1] eqn:He1; symmetry in He1.
-      destruct (freshen_ces next1 σ ces0) as [next2 ces1] eqn:Hces1; symmetry in Hces1.
-      inv Hces'; unbox_newtypes; cbn in *.
-      pose (Hused := He1); clearbody Hused; apply freshen_exp_used in Hused; [|normalize_images; solve_easy].
-      assert (next1 >= next) by now eapply freshen_exp_increasing.
-      specialize (IHces0 next1 σ x); normalize_images.
-      pose (Hused2 := Hces1); clearbody Hused2; apply IHces0 in Hused2; [|solve_easy].
-      assert (next2 >= next1) by now eapply freshen_ces_increasing.
-      normalize_images; solve_easy.
-  - assert (freshen_fds_used: forall next next' σ fds fds',
-      fresher_than next (used_vars_fundefs ![fds] :|: image (apply_r σ) (used_vars_fundefs ![fds])) ->
-      (next', fds') = freshen_fds next σ fds ->
-      fresher_than next' (used_vars_fundefs ![fds] :|: used_vars_fundefs ![fds'])).
-    { clear - freshen_exp_used; intros next next' σ fds; revert next next' σ.
-      induction fds as [|[f ft xs e] fds IHfds]; intros next next' σ fds' Hfresh Heq.
-      - cbn in *; inv Heq; cbn in *.
-        intros x Hx; inv Hx; repeat match goal with H : Ensembles.In _ (_ cps.Fnil) _ |- _ => inv H end.
-      - destruct fds' as [|[f' ft' xs' e'] fds']; unbox_newtypes; cbn in *.
-        { now repeat match goal with H : context [let '(_, _) := ?e in _] |- _ => destruct e end. }
-        destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0.
-        assert (next0 >= next) by now eapply gensyms_upper1.
-        edestruct @gensyms_spec as [Hcopies [Hfresh_xs0 Hlen]]; [exact Hfresh|exact Hxs0|].
-        set_lists_safe σ' Hsets.
-        destruct (freshen_exp next0 σ' e) as [next1 e0] eqn:Hexp; symmetry in Hexp.
-        destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds; symmetry in Hfds.
-        inv Heq; cbn in *; normalize_images.
-        pose (He_fresh := Hexp); clearbody He_fresh; apply freshen_exp_used in He_fresh.
-        { assert (next1 >= next0) by now eapply freshen_exp_increasing.
-          pose (Hfds_fresh := Hfds); clearbody Hfds_fresh; apply IHfds in Hfds_fresh;
-            [|apply fresher_than_Union; solve_easy].
-          assert (next2 >= next1) by now eapply freshen_fds_increasing.
-          normalize_images; solve_easy. }
-        { apply fresher_than_Union; [solve_easy|].
-          rewrite <- apply_r_set_lists; [|exact Hsets].
-          eapply fresher_than_antimon;
-            [apply image_extend_lst_Included; unfold strip_vars; now repeat rewrite map_length|].
-          apply fresher_than_Union; [|solve_easy].
-          eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|]; solve_easy. } }
-    destruct (gensyms next (map fun_name fds)) as [next0 fnames] eqn:Hnames in Heq; symmetry in Hnames.
-    assert (next0 >= next) by now eapply gensyms_upper1.
-    edestruct @gensyms_spec as [[Hdis Hdup] [Hfresh_fds' Hlen]]; [exact Hfresh|exact Hnames|].
-    rewrite map_length in Hlen; set_lists_safe σ' Hsets.
-    change (freshen_fds' freshen_exp) with freshen_fds in *.
-    destruct (freshen_fds next0 σ' fds) as [next1 fds1] eqn:Hfds1; symmetry in Hfds1.
-    destruct (freshen_exp next1 σ' e) as [next2 e1] eqn:He1; symmetry in He1.
-    inv Heq; unbox_newtypes; cbn in *.
-    change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
-    normalize_images.
-    pose (Hfds_fresh := Hfds1); clearbody Hfds_fresh; apply freshen_fds_used in Hfds_fresh.
-    { assert (next1 >= next0) by now eapply freshen_fds_increasing.
-      normalize_images.
-      pose (He_fds := He1); clearbody He_fds; apply freshen_exp_used in He_fds.
-      { assert (next2 >= next1) by now eapply freshen_exp_increasing.
-        normalize_images; solve_easy. }
-      apply fresher_than_Union; [solve_easy|].
-      rewrite <- apply_r_set_lists; [|apply Hsets].
-      eapply fresher_than_antimon;
-        [apply image_extend_lst_Included; unfold strip_vars;
-         now repeat rewrite map_length|].
-      apply fresher_than_Union; [|solve_easy].
-      eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|solve_easy]. }
-    apply fresher_than_Union; [solve_easy|].
-    rewrite <- apply_r_set_lists; [|apply Hsets].
-    eapply fresher_than_antimon;
-      [apply image_extend_lst_Included; unfold strip_vars;
-       now repeat rewrite map_length|].
-    apply fresher_than_Union; [|solve_easy].
-    eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|solve_easy].
+  destruct e; unbox_newtypes; cbn in *; intros Heq;
+    try solve [inv Heq; clear freshen_exp_ind; auto
+              |destruct (freshen_exp (next + 1) _ e) as [next0 e0] eqn:He0;
+               symmetry in He0; inv Heq; pose (IH := He0); clearbody IH;
+               apply freshen_exp_ind in IH; clear freshen_exp_ind; auto].
+  - change (freshen_ces' freshen_exp) with freshen_ces in *.
+    destruct (freshen_ces next σ ces) as [next0 ces'] eqn:Hces'; symmetry in Hces'.
+    inv Heq; apply Hces; auto; rename next0 into next'; clear x.
+    revert next next' σ ces' Hces'; induction ces as [|[c e] ces IHces]; intros next next' σ ces' Heq.
+    + inv Heq; apply Hces_nil.
+    + cbn in Heq.
+      destruct (freshen_exp next σ e) as [next0 e0] eqn:He0; symmetry in He0.
+      pose (IH := He0); clearbody IH; apply freshen_exp_ind in IH; clear freshen_exp_ind. Guarded.
+      destruct (freshen_ces next0 σ ces) as [next1 ces0] eqn:Hces0; symmetry in Hces0.
+      inv Heq; eapply Hces_cons; eauto.
+  - change (freshen_fds' freshen_exp) with freshen_fds in *.
+    do_gensyms next (map fun_name fds) next0 xs0 Hxs0 Hge Hlen.
+    rewrite map_length in Hlen; set_lists_safe σ0 Hσ0.
+    destruct (freshen_fds next0 σ0 fds) as [next1 fds0] eqn:Hfds0; symmetry in Hfds0.
+    destruct (freshen_exp next1 σ0 e) as [next2 e0] eqn:He0; symmetry in He0.
+    pose (IH := He0); clearbody IH; apply freshen_exp_ind in IH.
+    inv Heq; eapply Hfds; eauto. Guarded.
+    clear - freshen_exp_ind Hfds_nil Hfds_cons Hfds0.
+    revert next0 σ0 next1 fds0 Hfds0; induction fds as [|[[f] ft xs e] fds IHfds];
+      intros next σ next' fds' Heq; [inv Heq; apply Hfds_nil|cbn in Heq].
+    do_gensyms next xs next0 xs0 Hxs0 Hge Hlen.
+    set_lists_safe σ0 Hσ0.
+    destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
+    pose (IH := He0); clearbody IH; apply freshen_exp_ind in IH; clear freshen_exp_ind. Guarded.
+    destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
+    pose (IH' := Hfds0); clearbody IH'; apply IHfds in IH'; inv Heq.
+    eapply Hfds_cons; eauto.
 Qed.
 
-Fixpoint freshen_exp_uniq next next' σ e e' {struct e} :
+Fixpoint freshen_ces_ind σ next ces next' ces' {struct ces} :
+  (next', ces') = freshen_ces next σ ces -> P_ces σ next ces next' ces'.
+Proof.
+  intros Heq; destruct ces as [|[c e] ces]; [inv Heq; apply Hces_nil|cbn in Heq].
+  destruct (freshen_exp next σ e) as [next0 e0] eqn:He0; symmetry in He0.
+  destruct (freshen_ces next0 σ ces) as [next1 ces0] eqn:Hces0; symmetry in Hces0.
+  pose (IH := He0); clearbody IH; apply freshen_exp_ind in IH.
+  pose (IH' := Hces0); clearbody IH'; apply freshen_ces_ind in IH'.
+  inv Heq; eapply Hces_cons; eauto.
+Qed.
+
+Fixpoint freshen_fds_ind σ next fds next' fds' {struct fds} :
+  (next', fds') = freshen_fds next σ fds -> P_fds σ next fds next' fds'.
+Proof.
+  intros Heq; destruct fds as [|[[f] ft xs e] fds]; [inv Heq; apply Hfds_nil|cbn in Heq].
+  do_gensyms next xs next0 xs0 Hxs0 Hge Hlen.
+  set_lists_safe σ0 Hσ0.
+  destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
+  destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
+  pose (IH := He0); clearbody IH; apply freshen_exp_ind in IH.
+  pose (IH' := Hfds0); clearbody IH'; apply freshen_fds_ind in IH'.
+  inv Heq; eapply Hfds_cons; eauto.
+Qed.
+
+Definition exp_stmt :=
+  (forall σ next e next' e', (next', e') = freshen_exp next σ e -> P_exp σ next e next' e').
+
+Definition ces_stmt :=
+  (forall σ next ces next' ces', (next', ces') = freshen_ces next σ ces -> P_ces σ next ces next' ces').
+
+Definition fds_stmt :=
+  (forall σ next fds next' fds', (next', fds') = freshen_fds next σ fds -> P_fds σ next fds next' fds').
+
+Definition freshen_stmt := exp_stmt /\ ces_stmt /\ fds_stmt.
+
+Lemma freshen_ind : freshen_stmt.
+Proof.
+  repeat split; unfold exp_stmt, ces_stmt, fds_stmt;
+    [apply freshen_exp_ind|apply freshen_ces_ind|apply freshen_fds_ind].
+Qed.
+
+End FreshenInd.
+
+Lemma freshen_increasing :
+  freshen_stmt
+    (fun σ next e next' e' => next' >= next)
+    (fun σ next ces next' ces' => next' >= next)
+    (fun σ next fds next' fds' => next' >= next).
+Proof.
+  apply freshen_ind; intros; try match goal with
+  | H : (?next', _) = gensyms ?next _ |- _ =>
+    assert (next' >= next) by now eapply gensyms_upper1
+  end; lia.
+Qed.
+
+Corollary freshen_exp_increasing : exp_stmt (fun σ next e next' e' => next' >= next).
+Proof. apply freshen_increasing. Qed.
+
+Corollary freshen_ces_increasing : ces_stmt (fun σ next e next' e' => next' >= next).
+Proof. apply freshen_increasing. Qed.
+
+Corollary freshen_fds_increasing : fds_stmt (fun σ next e next' e' => next' >= next).
+Proof. apply freshen_increasing. Qed.
+
+Lemma freshen_used :
+  freshen_stmt
+    (fun σ next e next' e' =>
+      fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
+      fresher_than next' (used_vars ![e']))
+    (fun σ next ces next' ces' =>
+      fresher_than next (used_vars_ces ![ces] :|: image (apply_r σ) (used_vars_ces ![ces])) ->
+      fresher_than next' (used_vars_ces ![ces']))
+    (fun σ next fds next' fds' =>
+      (fresher_than next (used_vars_fundefs ![fds] :|: image (apply_r σ) (used_vars_fundefs ![fds])) ->
+       fresher_than next' (used_vars_fundefs ![fds']))).
+Proof.
+  apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips;
+  try match goal with
+  | H : (?next', _) = freshen_exp ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_exp_increasing
+  end.
+  Local Ltac set_lists_included :=
+    match goal with
+    | Hsets : set_lists _ _ ?σ = Some ?σ' |- fresher_than _ (image (apply_r ?σ') _) =>
+      rewrite <- apply_r_set_lists; [|exact Hsets];
+      eapply fresher_than_antimon;
+        [apply image_extend_lst_Included; unfold strip_vars;
+         now repeat rewrite map_length|];
+      apply fresher_than_Union; [|solve_easy];
+      eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|];
+      solve_easy
+    end.
+  - normalize_images; solve_easy.
+  - normalize_images.
+    assert (next' >= next) by now eapply freshen_ces_increasing.
+    solve_easy.
+  - edestruct @gensyms_spec as [Hcopies [Hfresh Hlen]]; try exact H; [eassumption|].
+    rewrite map_length in Hlen.
+    assert (next'' >= next') by now eapply freshen_fds_increasing.
+    assert (next''' >= next'') by now eapply freshen_exp_increasing.
+    normalize_images.
+    assert (fresher_than next'' (used_vars_fundefs (fundefs_of_proto fds'))). {
+      apply H2; apply fresher_than_Union; [solve_easy|]; set_lists_included. }
+    assert (fresher_than next''' (used_vars (exp_of_proto e'))). {
+      apply H4; apply fresher_than_Union; [solve_easy|]; set_lists_included. }
+    solve_easy.
+  - normalize_images; solve_easy.
+  - normalize_images; solve_easy.
+  - normalize_images; solve_easy.
+  - normalize_images; solve_easy.
+  - normalize_images; solve_easy.
+  - normalize_images; solve_easy.
+  - edestruct @gensyms_spec as [Hcopies [Hfresh Hlen]]; try exact H; [eassumption|].
+    assert (next'' >= next') by now eapply freshen_exp_increasing.
+    assert (next''' >= next'') by now eapply freshen_fds_increasing.
+    normalize_images.
+    assert (fresher_than next''' (used_vars_fundefs (fundefs_of_proto fds'))) by solve_easy.
+    assert (fresher_than next'' (used_vars (exp_of_proto e'))). {
+      apply H2; apply fresher_than_Union; [solve_easy|]; set_lists_included. }
+    solve_easy.
+  - normalize_images; solve_easy.
+  - assert (next' >= next) by now eapply freshen_exp_increasing.
+    assert (next'' >=  next') by now eapply freshen_ces_increasing.
+    change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
+    normalize_images; cbn in *; normalize_images.
+    assert (fresher_than next' (used_vars (exp_of_proto e'))) by solve_easy.
+    solve_easy.
+Qed.
+
+Corollary freshen_exp_used : exp_stmt (fun σ next e next' e' =>
+  fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
+  fresher_than next' (used_vars ![e'])).
+Proof. apply freshen_used. Qed.
+
+Corollary freshen_ces_used : ces_stmt (fun σ next ces next' ces' =>
+  fresher_than next (used_vars_ces ![ces] :|: image (apply_r σ) (used_vars_ces ![ces])) ->
+  fresher_than next' (used_vars_ces ![ces'])).
+Proof. apply freshen_used. Qed.
+
+Corollary freshen_fds_used : fds_stmt (fun σ next fds next' fds' =>
+  (fresher_than next (used_vars_fundefs ![fds] :|: image (apply_r σ) (used_vars_fundefs ![fds])) ->
+   fresher_than next' (used_vars_fundefs ![fds']))).
+Proof. apply freshen_used. Qed.
+
+Fixpoint bound_var_ces (ces : list (cps.ctor_tag * cps.exp)) :=
+  match ces with
+  | [] => Empty_set _
+  | (c, e) :: ces => bound_var e :|: bound_var_ces ces
+  end.
+
+Lemma bound_var_Ecase x ces : bound_var (cps.Ecase x ces) <--> bound_var_ces ces.
+Proof.
+  induction ces as [|[c e] ces IHces].
+  - rewrite bound_var_Ecase_nil; now cbn.
+  - rewrite bound_var_Ecase_cons; cbn; rewrite IHces; eauto with Ensembles_DB.
+Qed.
+
+Local Ltac freshen_used_facts :=
+  try match goal with
+  | H : (?next', _) = gensyms ?next _ |- _ =>
+    assert (next' >= next) by now eapply gensyms_upper1
+  end;
+  try match goal with
+  | H : (?next', _) = freshen_exp ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_exp_increasing
+  end; try match goal with
+  | H : (?next', _) = freshen_ces ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_ces_increasing
+  end; try match goal with
+  | H : (?next', _) = freshen_fds ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_fds_increasing
+  end.
+
+(* The interval [x, z) *)
+Definition interval x z : Ensemble positive := fun y => x <= y < z.
+
+Fixpoint bound_var_no_names fds :=
+  match fds with
+  | cps.Fnil => Empty_set _
+  | cps.Fcons _ _ xs e fds => FromList xs :|: bound_var e :|: bound_var_no_names fds
+  end.
+
+Lemma bound_var_no_names_Union fds :
+  bound_var_fundefs fds <--> bound_var_no_names fds :|: name_in_fundefs fds.
+Proof.
+  induction fds as [f ft xs e|]; [|cbn; normalize_bound_var; now normalize_sets].
+  cbn; normalize_bound_var; rewrite IHfds.
+  rewrite Ensemble_iff_In_iff; intros arb; repeat rewrite In_or_Iff_Union; tauto.
+Qed.
+
+Fixpoint freshen_bounded_names next next' next'' next''' fds_base fds fds' fs σ σ' {struct fds} :
+   (next', fs) = gensyms next (map fun_name fds_base) ->
+   set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+   name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+   next'' >= next' ->
+   (next''', fds') = freshen_fds next'' σ' fds ->
+   name_in_fundefs ![fds'] \subset FromList ![fs].
+Proof.
+  intros Hgen Hset Hsub Hge Heq; destruct fds as [|[[f] [ft] xs e] fds]; cbn in *; [now inv Heq|].
+  do_gensyms next'' xs next0 xs0 Hxs0 Hge_xs Hlen.
+  set_lists_safe σ0 Hσ0.
+  destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
+  destruct (freshen_fds next1 σ' fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
+  inv Heq; cbn in *.
+  apply Union_Included.
+  - (* f ∈ fds_base ⟹ σ'(f) ∈ strip_vars fs *) admit.
+  - specialize (freshen_bounded_names next next' next1 next2 fds_base fds fds0 fs σ σ' Hgen Hset).
+    freshen_used_facts.
+    assert (next1 >= next') by lia.
+    apply freshen_bounded_names; auto.
+    now apply Union_Included_r in Hsub.
+Admitted.
+
+Lemma freshen_bounded :
+  freshen_stmt
+    (fun σ next e next' e' => bound_var ![e'] \subset interval next next')
+    (fun σ next ces next' ces' => bound_var_ces (ces_of_proto ces') \subset interval next next')
+    (fun σ next fds next' fds' => bound_var_no_names ![fds'] \subset interval next next').
+Proof.
+  apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips;
+    intros; freshen_used_facts; repeat normalize_bound_var;
+    try rewrite bound_var_Ecase in *.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - apply H0.
+  - rewrite bound_var_no_names_Union.
+    (* BV(fds') \ names(fds') ⊆ [next', next'')
+       names(fds') ⊆ fs' ⊆ [next, next') (by freshen_bounded_names)
+       BV(e') ⊆ [next'', next''') *)
+    admit.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - inversion 1.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - inversion 1.
+  - inversion 1.
+  - (* xs' ⊆ [next, next')
+       BV(e') ⊆ [next', next'') 
+       BV(fds') \ names(fds') ⊆ [next'', next''') *)
+    admit.
+  - inversion 1.
+  - (* From IHs *) admit.
+Admitted.
+
+Corollary freshen_exp_bounded : forall σ next e next' e',
+  (next', e') = freshen_exp next σ e -> bound_var ![e'] \subset interval next next'.
+Proof. apply freshen_bounded. Qed.
+
+Corollary freshen_ces_bounded : forall σ next ces next' ces',
+  (next', ces') = freshen_ces next σ ces -> bound_var_ces ![ces'] \subset interval next next'.
+Proof. apply freshen_bounded. Qed.
+
+Corollary freshen_fds_bounded : forall σ next fds next' fds',
+  (next', fds') = freshen_fds next σ fds -> bound_var_no_names ![fds'] \subset interval next next'.
+Proof. apply freshen_bounded. Qed.
+
+Fixpoint unique_bindings_ces ces :=
+  match ces with
+  | [] => True
+  | (c, e) :: ces =>
+    unique_bindings e /\ Disjoint _ (bound_var e) (bound_var_ces ces)
+    /\ unique_bindings_ces ces
+  end.
+
+Lemma unique_bindings_Ecase x ces : unique_bindings (cps.Ecase x ces) <-> unique_bindings_ces ces.
+Proof.
+  induction ces as [|[c e] ces]; [split; constructor|split; cbn; intros H].
+  - inv H; rewrite <- IHces; now rewrite bound_var_Ecase in H6.
+  - destruct H as [H1 [H2 H3]].
+    rewrite <- IHces in H3.
+    rewrite <- (bound_var_Ecase x) in H2.
+    now constructor.
+Qed.
+
+Fixpoint unique_bindings_no_names fds :=
+  match fds with
+  | cps.Fnil => True
+  | cps.Fcons f ft xs e fds =>
+    NoDup xs /\ unique_bindings e /\
+    Disjoint _ (bound_var e) (FromList xs) /\
+    Disjoint _ (bound_var_no_names fds) (FromList xs) /\
+    Disjoint _ (bound_var e) (bound_var_no_names fds) /\
+    unique_bindings_no_names fds
+  end.
+
+Fixpoint unique_names fds :=
+  match fds with
+  | cps.Fnil => True
+  | cps.Fcons f ft xs e fds => ~ f \in name_in_fundefs fds /\ unique_names fds
+  end.
+
+Lemma Decidable_bound_var_no_names fds : Decidable (bound_var_no_names fds).
+Proof. induction fds as [f ft xs e fds IHfds|]; cbn; eauto with Decidable_DB. Qed.
+
+Hint Resolve Decidable_bound_var_no_names : Decidable_DB.
+
+Lemma unique_bindings_fundefs_decomp fds :
+  unique_bindings_fundefs fds <->
+  unique_bindings_no_names fds /\
+  unique_names fds /\
+  Disjoint _ (name_in_fundefs fds) (bound_var_no_names fds).
+Proof.
+  induction fds as [f ft xs e fds IHfds|]; cbn in *.
+  - split; intros H.
+    + inv H.
+      rewrite IHfds in H13; decompose [and] H13; clear H13.
+      repeat match goal with |- _ /\ _ => split end; auto.
+      * eapply Disjoint_Included_l; [|eassumption].
+        rewrite bound_var_no_names_Union; eauto with Ensembles_DB.
+      * eapply Disjoint_Included_r; [|eassumption].
+        rewrite bound_var_no_names_Union; eauto with Ensembles_DB.
+      * intros Hin; apply H6; now apply name_in_fundefs_bound_var_fundefs.
+      * apply Union_Disjoint_l; repeat apply Union_Disjoint_r; eauto with Ensembles_DB.
+        -- apply Disjoint_Singleton_l; intros oops; contradiction H6.
+           change (f \in bound_var_fundefs fds). now rewrite bound_var_no_names_Union.
+        -- eapply Disjoint_Included_l; [|eassumption].
+           rewrite bound_var_no_names_Union; eauto with Ensembles_DB.
+        -- apply Disjoint_commut; eapply Disjoint_Included_r; [|eassumption].
+           rewrite bound_var_no_names_Union; eauto with Ensembles_DB.
+    + decompose [and] H; clear H.
+      repeat match goal with
+      | H : context [Ensembles.In] |- _ => unfold Ensembles.In in H
+      | H : Disjoint _ _ (_ :|: _) |- _ => apply Disjoint_Union in H
+      | H : _ /\ _ |- _ => destruct H
+      | H : Disjoint _ _ [set _] |- _ => apply Disjoint_Singleton_In in H; [|now auto with Decidable_DB]
+      | H : Disjoint _ (_ :|: _) _ |- _ => apply Disjoint_commut in H
+      end.
+      constructor; auto; try rewrite bound_var_no_names_Union; eauto with Ensembles_DB.
+      * change (~ f \in bound_var_fundefs fds).
+        rewrite bound_var_no_names_Union.
+        rewrite Union_demorgan; split; auto.
+      * rewrite IHfds; split; [|split]; auto.
+        now apply Disjoint_commut.
+  - split; [intros H|constructor]; split; auto; split; eauto with Ensembles_DB.
+Qed.
+
+Fixpoint freshen_fds_names next next' next'' next''' fds_base fds fds' fs σ σ' {struct fds} :
+   (next', fs) = gensyms next (map fun_name fds_base) ->
+   set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+   name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+   next'' >= next' ->
+   (next''', fds') = freshen_fds next'' σ' fds ->
+   map fun_name fds' = [map (apply_r σ') ![map fun_name fds]]!.
+Proof.
+  intros Hgen Hset Hsub Hge Heq; destruct fds as [|[[f] [ft] xs e] fds]; cbn in *; [now inv Heq|].
+  do_gensyms next'' xs next0 xs0 Hxs0 Hge_xs Hlen.
+  set_lists_safe σ0 Hσ0.
+  destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
+  destruct (freshen_fds next1 σ' fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
+  inv Heq; cbn in *; f_equal.
+  specialize (freshen_fds_names next next' next1 next2 fds_base fds fds0 fs σ σ' Hgen Hset).
+  freshen_used_facts.
+  apply freshen_fds_names; auto; try lia.
+  now apply Union_Included_r in Hsub.
+Qed.
+
+Lemma name_in_fundefs_map fds : name_in_fundefs ![fds] <--> FromList ![map fun_name fds].
+Proof.
+  induction fds as [|[[f] [ft] xs e] fds IHfds]; cbn in *; [now normalize_sets|].
+  rewrite IHfds; now normalize_sets.
+Qed.
+
+Lemma unique_names_NoDup fds : unique_names ![fds] <-> NoDup (map fun_name fds).
+Proof.
+  induction fds as [|[[f] [ft] xs e] fds IHfds]; cbn in *; [split; auto; try constructor|].
+  rewrite IHfds; split.
+  - intros [Hin Hdup]; constructor; auto.
+    rewrite name_in_fundefs_map in Hin; intros oops; contradiction Hin.
+    unfold Ensembles.In, FromList.
+    now apply (in_map un_var) in oops.
+  - intros Hdup; inv Hdup; split; [|auto].
+    rewrite name_in_fundefs_map; intros oops; contradiction H1.
+    unfold Ensembles.In, FromList in oops.
+    apply (in_map mk_var) in oops; now normalize_roundtrips.
+Qed.
+
+Definition freshen_uniq_names next next' next'' next''' fds_base fds fds' fs σ σ' :
+   (next', fs) = gensyms next (map fun_name fds_base) ->
+   set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+   name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+   next'' >= next' ->
+   unique_names ![fds] ->
+   (next''', fds') = freshen_fds next'' σ' fds ->
+   unique_names ![fds'].
+Proof.
+  intros Hgen Hset Hsub Hge Huniq Heq.
+  rewrite unique_names_NoDup; rewrite unique_names_NoDup in Huniq.
+  erewrite freshen_fds_names; eauto; cbn.
+  (* σ sends f ∈ fds to f' in fs.
+     NoDup fds (assumption) and NoDup fs (because fs were gensym'd), so NoDup σ(fds). *)
+  admit.
+Admitted.
+
+Lemma freshen_uniq :
+  freshen_stmt
+    (fun σ next e next' e' => unique_bindings ![e] -> unique_bindings ![e'])
+    (fun σ next ces next' ces' => unique_bindings_ces ![ces] -> unique_bindings_ces ![ces'])
+    (fun σ next fds next' fds' =>
+      unique_bindings_no_names ![fds] -> unique_bindings_no_names ![fds']).
+Proof.
+  apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips.
+  - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
+    constructor; auto.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+  - rewrite unique_bindings_Ecase in *; auto.
+  - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
+    constructor; auto.
+    + change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+      rewrite unique_bindings_fundefs_decomp; split; [|split].
+      * rewrite unique_bindings_fundefs_decomp in H9; intuition.
+      * eapply freshen_uniq_names; eauto with Ensembles_DB; try lia.
+        rewrite unique_bindings_fundefs_decomp in H9; intuition.
+      * (* names(fds') ⊆ fs' ⊆ [next, next') by freshen_bounded_names 
+           (BV(fds') \ names(fds')) ⊆ [next', next'') by freshen_fds_bounded *)
+        admit.
+    + clear H2. (* BV(fds') ⊆ [next, next'') and BV(e') ⊆ [next'', next''') *) admit.
+  - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
+    constructor; auto.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+  - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
+    constructor; auto.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+  - constructor.
+  - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
+    constructor; auto.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+  - constructor.
+  - constructor.
+  - repeat lazymatch goal with H : unique_bindings_fundefs (_ _ _) |- _ => inv H end.
+    decompose [and] H5.
+    repeat match goal with |- _ /\ _ => split; auto end.
+    + (* xs' was gensym'd *) admit.
+    + (* BV(e') ⊆ [next', next'') and xs' ⊆ [next, next') *) admit.
+    + (* (BV(fds') \ names(fds')) ⊆ [next'', next''') and xs' ⊆ [next, next') *) admit.
+    + (* BV(e') ⊆ [next', next'') and (BV(fds') \ names(fds')) ⊆ [next'', next''') *) admit.
+  - constructor.
+  - repeat lazymatch goal with H : _ /\ _ |- _ => inv H end.
+    repeat lazymatch goal with |- _ /\ _ => split end; auto.
+    (* BV(e') ⊆ [next, next') and BV(ces') ⊆ [next', next'') *) admit.
+Admitted.
+
+Corollary freshen_exp_uniq : forall σ next e next' e',
+  (next', e') = freshen_exp next σ e -> unique_bindings ![e] -> unique_bindings ![e'].
+Proof. apply freshen_uniq. Qed.
+
+Corollary freshen_ces_uniq : forall σ next ces next' ces',
+  (next', ces') = freshen_ces next σ ces ->
+  unique_bindings_ces ![ces] -> unique_bindings_ces ![ces'].
+Proof. apply freshen_uniq. Qed.
+
+Corollary freshen_fds_uniq : forall σ next fds next' fds',
+  (next', fds') = freshen_fds next σ fds ->
+  unique_bindings_no_names ![fds] -> unique_bindings_no_names ![fds'].
+Proof. apply freshen_uniq. Qed.
+
+(*
+Fixpoint set_gensyms_inj_fds next next' fnames fnames' fds fds' σ σ' {struct fnames} :
+  fresher_than next (used_vars_fundefs ![fds]) ->
+  (next', fnames') = gensyms next fnames ->
+  set_lists ![fnames] ![fnames'] σ = Some σ' -> forall xs,
+  xs = map fun_name fds ->
+  (forall x, In x xs -> In x fnames) ->
+  [map (apply_r σ') ![xs]]! = map fun_name fds' ->
+  construct_fundefs_injection (apply_r σ) ![fds] ![fds'] (apply_r σ').
+Proof.
+  destruct fnames as [|fname fnames], fnames' as [|fname' fnames']; unbox_newtypes; cbn; try congruence.
+  - intros Hfresh Heq1 Heq2 xs Hfnames Hsubset Hfnames'; inv Heq1; inv Heq2.
+    destruct fds as [|[[f] [ft] xs e] fds], fds' as [|[[f'][ft']xs' e']fds']; inv Hfnames'; [constructor|].
+    contradiction (Hsubset [f]!); now left.
+  - destruct (gensyms (next + 1) fnames) as [next0 fnames0] eqn:Hgen; symmetry in Hgen.
+    assert (next0 >= next + 1) by now eapply gensyms_upper1.
+    intros Hfresh Heq; inv Heq.
+    destruct (set_lists _ _ _) as [σ0|] eqn:Hσ; [|congruence]; intros Heq; inv Heq.
+    assert (Heq : (apply_r (@map_util.M.set cps.M.elt fname next σ0)) = (apply_r σ0) {fname ~> next}). {
+      apply FunctionalExtensionality.functional_extensionality; intros; now rewrite apply_r_set. }
+    intros xs Hxs Hsubset Hxs0;destruct fds as[|[[lf][lft]lxs le]lfds],fds' as[|[[rf][rft]rxs re]rfds].
+    rewrite Heq; inv Hxs; unfold apply_r at 1 in Hxs0; rewrite M.gss in Hxs0; inv Hxs0; constructor.
+    + eapply set_gensyms_inj_fds; eauto.
+      * normalize_images; solve_easy.
+      * 
+    Print construct_fundefs_injection.
+    apply construct_fundefs_injection_cons.
+      inversion Hxs; inversion Hxs0; subst lf rf; cbn in *; rewrite Heq; constructor.
+    + normalize_images.
+      specialize (set_gensyms_inj_fds (next + 1) next0 xs xs0 lfds rfds σ σ0).
+      eapply set_gensyms_inj_fds; auto; eapply fresher_than_monotonic; eauto; lia.
+    + unfold cps.var in *.
+      assert (HNoDup : NoDup xs0) by now eapply gensyms_NoDup'.
+      apply NoDup_var in HNoDup.
+      pose (Hinj := set_NoDup_inj ![xs] ![xs0] σ σ0 HNoDup Hσ); clearbody Hinj.
+      rewrite name_in_fundefs_FromList.
+      apply injective_subdomain_extend; [now subst|cbn].
+      intros [σnext [[Himage Hnot_x] Hσnext]].
+      assert (Hin : In next ![xs0]). {
+        unfold apply_r; unfold apply_r in Hσnext; subst xs xs0.
+        edestruct @set_lists_In_corresp as [σnext' [Hσnext' Hin]]; try exact Hσ; [apply Himage|].
+        rewrite Hσnext' in *; now subst σnext'. }
+      apply in_map with (f := mk_var) in Hin; normalize_roundtrips.
+      assert (![mk_var next] >= next + 1) by now eapply gensyms_increasing'.
+      cbn in *; normalize_roundtrips; lia.
+Qed. *)
+
+(* TODO
+Local Ltac freshen_facts :=
+  try match goal with
+  | H : (?next', _) = gensyms ?next _ |- _ =>
+    assert (next' >= next) by now eapply gensyms_upper1
+  end;
+  try match goal with
+  | H : (?next', _) = freshen_exp ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_exp_increasing
+  end; try match goal with
+  | H : (?next', _) = freshen_ces ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_ces_increasing
+  end; try match goal with
+  | H : (?next', _) = freshen_fds ?next _ _ |- _ =>
+    assert (next' >= next) by now eapply freshen_fds_increasing
+  end.
+*)
+
+Lemma map_ext_eq {A B} xs : forall (f g : A -> B) (Heq : forall x, In x xs -> f x = g x), map f xs = map g xs.
+Proof.
+  induction xs; auto; intros; cbn; (rewrite Heq by now left); f_equal; erewrite IHxs; eauto.
+  intros; eapply Heq; now right.
+Qed.
+
+Fixpoint set_lists_map_apply_r xs ys σ σ' {struct xs} :
+  NoDup xs ->
+  set_lists xs ys σ = Some σ' ->
+  map (apply_r σ') xs = ys.
+Proof.
+  destruct xs as [|x xs], ys as [|y ys]; unbox_newtypes; cbn; try congruence.
+  destruct (set_lists _ _ _) as [σ0|] eqn:Hσ; [|congruence]; intros Hdup Heq; inv Heq; inv Hdup.
+  unfold apply_r at 1; rewrite M.gss; f_equal.
+  rewrite map_ext_eq with (g := apply_r σ0); [now eapply set_lists_map_apply_r|].
+  intros x' Hin; assert (x <> x') by (intros Hoops; now subst); unfold apply_r; now rewrite M.gso by auto.
+Qed.
+
+Lemma Alpha_conv_cons x1 x2 e1 e2 c1 c2 ces1 ces2 σ :
+  c1 = c2 ->
+  Alpha_conv e1 e2 σ ->
+  Alpha_conv (cps.Ecase x1 ces1) (cps.Ecase x2 ces2) σ ->
+  Alpha_conv (cps.Ecase x1 ((c1, e1) :: ces1)) (cps.Ecase x2 ((c2, e2) :: ces2)) σ.
+Proof. intros Hc He Hces; inv Hces; constructor; auto. Qed.
+
+Definition Alpha_conv_ces (ces1 ces2 : list (cps.ctor_tag * cps.exp)) σ :=
+  Forall2 (fun ce1 ce2 => fst ce1 = fst ce2 /\ Alpha_conv (snd ce1) (snd ce2) σ) ces1 ces2.
+
+Fixpoint Alpha_conv_names fds1 fds2 σ :=
+  match fds1, fds2 with
+  | cps.Fnil, cps.Fnil => True
+  | cps.Fcons f1 ft1 xs1 e1 fds1, cps.Fcons f2 ft2 xs2 e2 fds2 =>
+    f2 = σ f1 /\ Alpha_conv_names fds1 fds2 σ
+  | _, _ => False
+  end.
+
+Fixpoint Alpha_conv_no_names fds1 fds2 σ :=
+  match fds1, fds2 with
+  | cps.Fnil, cps.Fnil => True
+  | cps.Fcons f1 ft1 xs1 e1 fds1, cps.Fcons f2 ft2 xs2 e2 fds2 => exists σ',
+    ft1 = ft2 /\ 
+    Alpha_conv_no_names fds1 fds2 σ /\
+    Disjoint _ (FromList xs2) (image σ (occurs_free e1) :|: bound_var e1) /\
+    construct_lst_injection σ xs1 xs2 σ' /\
+    Alpha_conv e1 e2 σ'
+  | _, _ => False
+  end.
+
+Fixpoint Alpha_conv_fundefs_decomp fds1 fds2 σ {struct fds1} :
+  Alpha_conv_fundefs fds1 fds2 σ <->
+  Alpha_conv_names fds1 fds2 σ /\ Alpha_conv_no_names fds1 fds2 σ.
+Proof.
+  destruct fds1 as [f1 ft1 xs1 e1 fds1|], fds2 as [f2 ft2 xs2 e2 fds2|]; cbn.
+  - split; intros H.
+    + inv H.
+      rewrite Alpha_conv_fundefs_decomp in H12; destruct H12.
+      repeat match goal with |- _ /\ _ => split; auto | |- exists _, _ => eexists; eauto end.
+    + decompose [and] H; clear H; destruct H1 as [? Hex]; decompose [and] Hex; clear Hex; subst.
+      econstructor; eauto.
+      rewrite Alpha_conv_fundefs_decomp; split; auto.
+  - split; try inversion 1; easy.
+  - split; try inversion 1; easy.
+  - split; try constructor; easy.
+Qed.
+
+Fixpoint freshen_Alpha_names next next' next'' next''' fds_base fds fds' fs σ σ' {struct fds} :
+  (next', fs) = gensyms next (map fun_name fds_base) ->
+  set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+  name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+  next'' >= next' ->
+  (next''', fds') = freshen_fds next'' σ' fds ->
+  Alpha_conv_names ![fds] ![fds'] (apply_r σ').
+Proof.
+  intros Hgen Hset Hsub Hge Heq.
+  destruct fds as [|[[f] [ft] xs e] fds]; cbn in *; [now inv Heq|].
+  do_gensyms next'' xs next0 xs0 Hxs0 Hge_xs Hlen.
+  set_lists_safe σ0 Hσ0.
+  destruct (freshen_exp next0 σ0 e) as [next1 e0] eqn:He0; symmetry in He0.
+  destruct (freshen_fds next1 σ' fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
+  inv Heq; cbn in *; split; [auto|].
+  freshen_used_facts.
+  specialize (freshen_Alpha_names next next' next1 next2 fds_base fds fds0 fs σ σ' Hgen Hset).
+  apply freshen_Alpha_names; auto; try lia.
+  now apply Union_Included_r in Hsub.
+Qed.
+
+Lemma freshen_Alpha :
+  freshen_stmt
+    (fun σ next e next' e' =>
+      unique_bindings ![e] ->
+      fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
+      Alpha_conv ![e] ![e'] (apply_r σ))
+    (fun σ next ces next' ces' =>
+      unique_bindings_ces ![ces] ->
+      fresher_than next (used_vars_ces ![ces] :|: image (apply_r σ) (used_vars_ces ![ces])) ->
+      Alpha_conv_ces ![ces] ![ces'] (apply_r σ))
+    (fun σ next fds next' fds' =>
+      unique_bindings_no_names ![fds] ->
+      fresher_than next (used_vars_fundefs ![fds] :|: image (apply_r σ) (used_vars_fundefs ![fds])) ->
+      Alpha_conv_no_names ![fds] ![fds'] (apply_r σ)).
+Proof.
+  apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips.
+  Local Ltac easy_case H0 H1 :=
+    normalize_images; constructor; auto; try solve_easy;
+    rewrite apply_r_set; apply H0; try solve_easy; now inv H1.
+  - easy_case H0 H1.
+  - normalize_images; constructor; auto; try solve_easy.
+    apply H0; try solve_easy.
+    change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
+    inv H1; try constructor; auto.
+    rewrite bound_var_Ecase in H10.
+    rewrite unique_bindings_Ecase in H8.
+    now split.
+  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+    apply Alpha_Efun with (f' := apply_r σ'); try solve_easy.
+    + (* names(fds') = fs' ⊆ [next, next')
+         next is fresher than σ(FV(Efun fds e)) ∪ BV(Efun fds e) *)
+      admit.
+    + inv H5.
+      rewrite unique_bindings_fundefs_decomp in H10.
+      decompose [and] H10; clear H10.
+      rewrite unique_names_NoDup in H8.
+      (* NoDup fds and NoDup fs' ==> σ' is a bijection ==> can construct fundefs injection.
+         NB: just an injection is not enough because construct_fundefs_injection starts with
+         σ and builds bindings up as it goes along. This means that if fds contains duplicates
+         then fds' <> map (apply_r σ) fds. *)
+      admit.
+    + rewrite Alpha_conv_fundefs_decomp; split.
+      * eapply freshen_Alpha_names; eauto with Ensembles_DB; lia.
+      * apply H2. { inv H5. now rewrite unique_bindings_fundefs_decomp in H10. }
+        (* σ'(x) is either in fs' or in σ. 
+           If in fs', next' fresher than fs'.
+           If in σ, next' ≥ next and next fresher than σ(vars(fds)). *)
+        admit.
+    + apply H4; [now inv H5|]; auto.
+      (* Same argument as in previous case + the fact that next'' ≥ next'. *)
+      admit.
+  - easy_case H0 H1.
+  - easy_case H0 H1. 
+  - constructor; auto; try solve_easy.
+  - easy_case H0 H1.
+  - constructor; auto; try solve_easy.
+  - constructor; auto; try solve_easy.
+  - decompose [and] H5; clear H5.
+    normalize_images; freshen_used_facts.
+    exists (apply_r σ'); repeat match goal with |- _ /\ _ => split end; auto.
+    + apply H4; auto. solve_easy.
+    + apply Union_Disjoint_r.
+      * (* xs' ⊆ [next, next') and next fresher than σ(FV(e)) *)
+        admit.
+      * (* xs' ⊆ [next, next') and next fresher than BV(e) *)
+        admit.
+    + eapply set_gensyms_inj; eauto.
+    + apply H2; auto.
+      apply fresher_than_Union; [solve_easy|].
+      (* σ'(x) is either in xs' or in σ.
+         If in xs', next' fresher than xs'
+         If in σ, next' fresher than σ(vars(e)). *)
+      admit.
+  - constructor; auto; try solve_easy.
+  - admit.
+Admitted.
+
+Corollary freshen_exp_Alpha : forall σ next e next' e',
+  (next', e') = freshen_exp next σ e ->
   unique_bindings ![e] ->
   fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
-  (next', e') = freshen_exp next σ e ->
-  unique_bindings ![e'].
-Proof.
-  destruct e; unbox_newtypes; cbn; intros Huniq Hfresh Heq.
-  destruct (freshen_exp (next + 1) (M.set x next σ) e) as [next0 e0] eqn:He0; symmetry in He0;
-  inv Heq; cbn; constructor; normalize_images;
-  assert (next0 >= next + 1) by now eapply freshen_exp_increasing.
-  pose (He0_used := He0); clearbody He0_used; apply freshen_exp_used in He0_used; [|solve_easy].
-  cbn in *; normalize_images.
-  match goal with
-  | H : fresher_than _ (used_vars ?e) |- ~ bound_var ?e _ =>
-    apply fresher_than_not_In; eapply fresher_than_tonics; try exact H(*; [lia|]; eauto with Ensembles_DB*)
-  end.
-  intros Hoops.
-  solve_easy.
-
-Fixpoint freshen_exp_spec next next' σ e e' {struct e} :
-  unique_bindings ![e] -> 
-  fresher_than next (used_vars ![e] :|: image (apply_r σ) (used_vars ![e])) ->
-  (next', e') = freshen_exp next σ e ->
-  Alpha_conv ![e] ![e'] (apply_r σ) /\
-  fresher_than next' (used_vars ![e] :|: used_vars ![e']).
-Proof.
-  destruct e; unbox_newtypes; cbn in *;
-  repeat match goal with
-  | |- context [let '(_, _) := ?f ?e in _] =>
-    let next' := fresh "next" with e' := fresh "e" with He := fresh "He" in
-    destruct (f e) as [next' e'] eqn:He; symmetry in He
-  end; intros Huniq Hfresh Heq; repeat match goal with H : (_, _) = (_, _) |- _ => inv H end;
-  cbn; normalize_roundtrips.
-  Ltac easy_case IH Huniq He :=
-    match goal with
-    | H : (?next', _) = freshen_exp ?next _ _ |- _ =>
-      assert (next' >= next) by now eapply freshen_exp_increasing
-    end;
-    edestruct IH as [Hα Hused]; try exact He; [now inv Huniq|normalize_images; solve_easy|];
-    split; [constructor; auto; try solve_easy; normalize_images; solve_easy|normalize_images; solve_easy].
-  - easy_case freshen_exp_spec Huniq He.
-  - revert ces next next0 e He Huniq Hfresh; induction ces as [|[c' e'] ces IHces];
-      intros next next0 e He Huniq Hfresh.
-    + cbn in *; inv He; cbn; split; [now constructor|normalize_images; solve_easy].
-    + cbn in He.
-      change (freshen_ces' freshen_exp) with freshen_ces in *.
-      change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
-      destruct (freshen_exp next σ e') as [next1 e1] eqn:He1; symmetry in He1.
-      destruct (freshen_ces next1 σ ces) as [next2 ces1] eqn:Hces1; symmetry in Hces1.
-      inv He; unbox_newtypes; cbn in *.
-      edestruct freshen_exp_spec as [Hα1 Hused1]; try exact He1; [now inv Huniq|normalize_images; solve_easy|].
-      assert (next1 >= next) by now eapply freshen_exp_increasing.
-      specialize (IHces _ _ _ Hces1); destruct IHces as [Hα2 Hused2]; [now inv Huniq|normalize_images; solve_easy|].
-      assert (next2 >= next1) by now eapply freshen_ces_increasing.
-      split; [|normalize_images; solve_easy].
-      apply Alpha_conv_cons; auto.
-  - easy_case freshen_exp_spec Huniq He.
-  - easy_case freshen_exp_spec Huniq He.
-  - assert (freshen_fds_spec : forall next next' σ fds fds',
-      unique_bindings_fundefs fds ->
-      fresher_than next (used_vars_fundefs ![fds] :|: image (apply_r σ) (used_vars_fundefs ![fds])) ->
-      (next', fds') = freshen_fds next σ fds ->
-      Alpha_conv_fundefs ![fds] ![fds'] (apply_r σ) /\
-      fresher_than next' (used_vars_fundefs ![fds] :|: used_vars_fundefs ![fds'])).
-    { clear - freshen_exp_spec; intros next next' σ fds; revert next next' σ.
-      induction fds as [|[f ft xs e] fds IHfds]; intros next next' σ fds' Hfresh Heq.
-      - cbn in *; inv Heq; cbn in *; split; [constructor|].
-        intros x Hx; inv Hx; repeat match goal with H : Ensembles.In _ (_ cps.Fnil) _ |- _ => inv H end.
-      - destruct fds' as [|[f' ft' xs' e'] fds']; unbox_newtypes; cbn in *.
-        { now repeat match goal with H : context [let '(_, _) := ?e in _] |- _ => destruct e end. }
-        destruct (gensyms next xs) as [next0 xs0] eqn:Hxs0; symmetry in Hxs0.
-        assert (next0 >= next) by now eapply gensyms_upper1.
-        edestruct @gensyms_spec as [Hcopies [Hfresh_xs0 Hlen]]; [exact Hfresh|exact Hxs0|].
-        set_lists_safe σ' Hsets.
-        destruct (freshen_exp next0 σ' e) as [next1 e0] eqn:Hexp; symmetry in Hexp.
-        destruct (freshen_fds next1 σ fds) as [next2 fds0] eqn:Hfds; symmetry in Hfds.
-        inv Heq; cbn in *.
-        edestruct freshen_exp_spec as [He_α He_fresh]; try exact Hexp.
-        { normalize_images; apply fresher_than_Union; [solve_easy|].
-          rewrite <- apply_r_set_lists; [|exact Hsets].
-          eapply fresher_than_antimon;
-            [apply image_extend_lst_Included; unfold strip_vars; now repeat rewrite map_length|].
-          apply fresher_than_Union; [|solve_easy].
-          eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|]; solve_easy. }
-        assert (next1 >= next0) by now eapply freshen_exp_increasing.
-        edestruct IHfds as [Hfds_α Hfds_fresh]; try exact Hfds.
-        { normalize_images; apply fresher_than_Union; solve_easy. }
-        assert (next2 >= next1) by now eapply freshen_fds_increasing.
-        normalize_images; split; [|solve_easy].
-        assert (Hinj : construct_lst_injection (apply_r σ) ![xs] ![xs0] (apply_r σ')). {
-          eapply set_gensyms_inj; try exact Hxs0; try exact Hsets; solve_easy. }
-        apply Alpha_Fcons with (f' := apply_r σ'); auto.
-        destruct Hcopies as [Hdis Hdup].
-        normalize_images; solve_easy. }
-    rename He into Hfds, e0 into fds'.
-    assert (next0 >= next) by now eapply gensyms_upper1.
-    edestruct @gensyms_spec as [[Hdis Hdup] [Hfresh_fds' Hlen]]; [exact Hfresh|exact Hfds|].
-    rewrite map_length in Hlen.
-    set_lists_safe σ' Hsets.
-    change (freshen_fds' freshen_exp) with freshen_fds in *.
-    destruct (freshen_fds next0 σ' fds) as [next1 fds1] eqn:Hfds1; symmetry in Hfds1.
-    destruct (freshen_exp next1 σ' e) as [next2 e1] eqn:He1; symmetry in He1.
-    inv Heq; unbox_newtypes; cbn in *.
-    change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
-    normalize_images.
-    edestruct freshen_fds_spec as [Hfds_α Hfds_fresh]; try exact Hfds1. {
-      apply fresher_than_Union; [solve_easy|].
-      rewrite <- apply_r_set_lists; [|apply Hsets].
-      eapply fresher_than_antimon;
-        [apply image_extend_lst_Included; unfold strip_vars;
-         now repeat rewrite map_length|].
-      apply fresher_than_Union; [|solve_easy].
-      eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|solve_easy]. }
-    assert (next1 >= next0) by now eapply freshen_fds_increasing.
-    normalize_images.
-    edestruct freshen_exp_spec as [He_α He_fds]; try exact He1. {
-      apply fresher_than_Union; [solve_easy|].
-      rewrite <- apply_r_set_lists; [|apply Hsets].
-      eapply fresher_than_antimon;
-        [apply image_extend_lst_Included; unfold strip_vars;
-         now repeat rewrite map_length|].
-      apply fresher_than_Union; [|solve_easy].
-      eapply fresher_than_antimon; [apply image_monotonic, Setminus_Included|solve_easy]. }
-    assert (next2 >= next1) by now eapply freshen_exp_increasing.
-    split; [|normalize_images; solve_easy].
-    eapply Alpha_Efun; eauto.
-    + rewrite freshen_fds_names'; [|exact Hfds1]. admit.
-    + pose (Hfnames := Hfds1); clearbody Hfnames; apply freshen_fds_names in Hfnames.
-      eapply set_gensyms_inj_fds; try exact Hfds; auto.
-      set_lists 
-  Ltac base_case := normalize_images; split; [constructor; auto|]; solve_easy.
-  - base_case.
-  - easy_case freshen_exp_spec He.
-  - base_case.
-Qed.
+  Alpha_conv ![e] ![e'] (apply_r σ).
+Proof. apply freshen_Alpha. Qed.
 
 (** * Inlining as a relation *)
 
@@ -996,11 +1401,11 @@ Inductive inline_step : exp -> exp -> Prop :=
 (* Inlining for CPS *)
 | inline_cps :
   forall (C : frames_t exp_univ_exp exp_univ_exp) f ft (xs : list var) e e' (ys : list var)
-    lhs next_x next_x',
-  lhs = Eapp f ft ys ->
-  known_function f ft xs e C lhs ->
-  fresher_than next_x (used_vars ![C ⟦ lhs ⟧]) ->
-  (next_x', e') = fresh_subst_exp next_x (set_list (combine ![xs] ![ys]) (M.empty _)) e ->
+    lhs next_x,
+  lhs = Eapp f ft ys /\
+  known_function f ft xs e C lhs /\
+  Alpha_conv ![e] ![e'] (id <{ ![xs] ~> ![ys] }>) /\
+  fresher_than next_x (used_vars ![C ⟦ e' ⟧]) ->
   (* Only inline if the inlining heuristic decides to *)
   When (fun (IH : R_misc) (s : S_misc) => IH.(decide_App) f ft ys) ->
   inline_step
@@ -1228,7 +1633,6 @@ Proof.
       (* Otherwise, g is still known *)
       specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
 Defined.
-
 
 (*
 Definition rename' {A} (σ : r_map) : univD A -> univD A :=
