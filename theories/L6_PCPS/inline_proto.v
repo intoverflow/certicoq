@@ -1,20 +1,3 @@
-(*
-Require Import Common.compM Common.Pipeline_utils L6.cps.
-Require Import Coq.ZArith.ZArith Coq.Lists.List Coq.Strings.String.
-Import ListNotations.
-Require Import identifiers.
-Require Import L6.state L6.freshen L6.cps_util L6.cps_show L6.ctx L6.uncurry L6.shrink_cps.
-Require Import ExtLib.Structures.Monad.
-Require Import ExtLib.Structures.MonadState.
-Require Import ExtLib.Data.Monads.StateMonad.
-Require Coq.Program.Wf.
-Require Import Program.
-(* Require Import Template.monad_utils. *)
-Require Import Coq.Structures.OrdersEx.
-
-Import MonadNotation.
-Open Scope monad_scope. *)
-
 Require Import Coq.Sets.Ensembles Coq.ZArith.ZArith.
 Require Import L6.Ensembles_util L6.map_util.
 Require Import L6.state L6.alpha_conv L6.identifiers L6.functions L6.shrink_cps.
@@ -409,8 +392,6 @@ Lemma FromList_map_image_FromList' {A B} (l : list A) (f : A -> B) :
 Proof. now rewrite FromList_map_image_FromList. Qed.
 
 Hint Rewrite @FromList_map_image_FromList' : ImageDB.
-
-SearchAbout fresher_than Singleton.
 
 Lemma Singleton_fresher_than x y : fresher_than x [set y] -> x > y.
 Proof. intros H; apply H; constructor. Qed.
@@ -1384,6 +1365,33 @@ Definition known_function {A} (f : var) (ft : fun_tag) (xs : list var) (e_body :
    | _ => fun _ _ => False
    end C e).
 
+(* TODO: move to proto_util and prove correspondence with shrink_cps.rename_all *)
+Definition apply_r' (σ : r_map) (x : var) : var := [apply_r σ ![x]]!.
+Definition apply_r_list' σ (xs : list var) := map (apply_r' σ) xs.
+
+Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
+  match e with
+  | Econstr x t ys e' => Econstr x t (apply_r_list' σ ys) (rename_all' (M.remove ![x] σ) e')
+  | Eprim x f ys e' => Eprim x f (apply_r_list' σ ys) (rename_all' (M.remove ![x] σ) e')
+  | Eletapp x f ft ys e' => Eletapp x (apply_r' σ f) ft (apply_r_list' σ ys)
+                                    (rename_all' (M.remove ![x] σ) e')
+  | Eproj v t n y e' => Eproj v t n (apply_r' σ y) (rename_all' (M.remove ![v] σ) e')
+  | Ecase v cl =>
+    Ecase (apply_r' σ v) (List.map (fun (p:ctor_tag*exp) => let (k, e) := p in
+                                                          (k, rename_all' σ e)) cl)
+  | Efun fl e' =>
+    let fs := all_fun_name ![fl] in
+    let rename_all_fun' σ fd :=
+      let 'Ffun v' t ys e := fd in
+      Ffun v' t ys (rename_all' (remove_all σ ![ys]) e)
+    in
+    let fl' := map (rename_all_fun' (remove_all σ fs)) fl in
+    Efun fl' (rename_all' (remove_all σ fs) e')
+  | Eapp f t ys =>
+    Eapp (apply_r' σ f) t (apply_r_list' σ ys)
+  | Ehalt v => Ehalt (apply_r' σ v)
+  end.
+
 Inductive inline_step : exp -> exp -> Prop :=
 (* Update heuristic at each Efun node *)
 | inline_update_Efun :
@@ -1399,7 +1407,7 @@ Inductive inline_step : exp -> exp -> Prop :=
   When (fun (r : R_misc) (s : S_misc) => true) ->
   inline_step
     (C ⟦ Ffun f ft xs e :: fds ⟧)
-    (C ⟦ Ffun f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) e) :: Rec fds ⟧)
+    (C ⟦ Ffun f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) (Rec e)) :: Rec fds ⟧)
 (* Inlining for CPS *)
 | inline_cps :
   forall (C : frames_t exp_univ_exp exp_univ_exp) f ft ft' (xs : list var) e e' e'' (ys : list var)
@@ -1410,9 +1418,9 @@ Inductive inline_step : exp -> exp -> Prop :=
   unique_bindings ![e'] /\
   Disjoint _ (used_vars ![C ⟦ e ⟧]) (bound_var ![e']) /\
   set_lists ![xs] ![ys] (M.empty _) = Some σ /\
-  e'' = [rename_all σ ![e']]! /\
+  e'' = rename_all' σ e' /\
   fresher_than next_x (used_vars ![C ⟦ e'' ⟧]) ->
-  (* Only inline if the inlining heuristic decides to *)
+  (* Onle inline if the inlining heuristic decides to *)
   When (fun (IH : R_misc) (s : S_misc) => IH.(decide_App) f ft ys) ->
   inline_step
     (C ⟦ Eapp f ft' ys ⟧)
@@ -1766,34 +1774,52 @@ Defined.
 
 Recursive Extraction rw_inline.
 
+(* TODO: move to proto_util.v and make uncurry_proto use this too *)
+Definition initial_fresh (e : exp) : S_fresh <[]> e.
+Proof.
+  exists (1 + max_var ![e] 1)%positive.
+  change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
+  intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
+  destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
+Defined.
+
+Definition initial_fns (e : exp) : S_fns <[]> e.
+Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
+
 Lemma inline_top' (IH : R_misc) (c : comp_data) (e : exp) (s : S_inline _ <[]> e)
   : result exp_univ_exp inline_step S_misc (@S_inline) <[]> e.
 Proof. exact (run_rewriter' rw_inline IH c e tt tt s). Defined.
 
-Lemma inline_top (IH : R_misc) (c : comp_data) (e : exp) (s : S_inline _ <[]> e)
+Lemma inline_top (IH : R_misc) (c : comp_data) (e : exp) (H : unique_bindings ![e])
   : exp * comp_data.
 Proof.
-  pose (res := run_rewriter' rw_inline IH c e tt tt s); destruct res eqn:Hres.
+  pose (res := run_rewriter' rw_inline IH c e tt tt (initial_fresh e, (initial_fns e, H))).
+  destruct res eqn:Hres.
   exact (resTree, resSMisc).
 Defined.
 
-(*
+Lemma inline_unsafe (IH : R_misc) (e : exp) (c : comp_data) : exp * comp_data.
+Proof.
+  pose (res := run_rewriter' rw_inline IH c e tt tt
+                            (initial_fresh e, (initial_fns e, seems_legit))).
+  destruct res eqn:Hres.
+  exact (resTree, resSMisc).
+Defined.
+
+Recursive Extraction inline_unsafe.
+
 (* d should be max argument size, perhaps passed through by uncurry *)
 Definition postuncurry_contract (e:exp) (s:M.t nat) (d:nat) :=
-  inline_top (PostUncurryIH s) e.
+  inline_unsafe (PostUncurryIH s) e.
 
 Definition inlinesmall_contract (e:exp) (bound:nat)  (d:nat) :=
-  beta_contract_top _ (InlineSmallIH bound) e d (M.empty _).
+  inline_unsafe (InlineSmallIH bound (M.empty _)) e.
 
 Definition inline_uncurry_contract (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
-  beta_contract_top _ (InlineSmallOrUncurried bound) e d (M.empty bool, s).
+  inline_unsafe (InlineSmallOrUncurried bound (M.empty _) s) e.
 
 Definition inline_uncurry (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
-  beta_contract_top _ InineUncurried e d (M.empty bool).
-
-Set Printing All.
-Print inline_uncurry.
+  inline_unsafe (InlineUncurried (M.empty bool)) e.
 
 Definition inline_uncurry_marked_anf (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
-  beta_contract_top _ InlinedUncurriedMarkedAnf e d s.
-*)
+  inline_unsafe (InlinedUncurriedMarkedAnf s) e.

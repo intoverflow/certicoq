@@ -124,6 +124,8 @@ extraction/init.ml
 extraction/init.mli
 extraction/inline.ml
 extraction/inline.mli
+extraction/inline_proto.ml
+extraction/inline_proto.mli
 extraction/integers.ml
 extraction/integers.mli
 extraction/l3_to_L3_eta.ml
@@ -302,8 +304,8 @@ extraction/cps_proto.ml
 extraction/cps_proto.mli
 extraction/proto_util.ml
 extraction/proto_util.mli
-extraction/uncurry_proto.ml
-extraction/uncurry_proto.mli
+#extraction/uncurry_proto.ml
+#extraction/uncurry_proto.mli
 extraction/universes0.ml
 extraction/universes0.mli
 extraction/usefulTypes.ml

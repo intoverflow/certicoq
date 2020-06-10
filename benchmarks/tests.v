@@ -19,7 +19,7 @@ Fixpoint long_id n (x y z : nat) {struct n} :=
   | S n => S (long_id n x y z)
   end.
 
-CertiCoq Show IR -anf -ext "_anf" long_id.
+(* CertiCoq Show IR -anf -ext "_anf" long_id. *)
 CertiCoq Show IR -ext "_cps" long_id.
 
 Fixpoint leb (n m : nat) :=
@@ -60,8 +60,9 @@ Fixpoint slow_nil (xs : list nat) : list nat :=
   | x :: xs => slow_nil xs
   end.
 
-CertiCoq Show IR -anf slow_nil.
+(* CertiCoq Show IR -anf slow_nil. *)
 CertiCoq Show IR -ext "_cps" isort.
+CertiCoq Show IR -ext "_cps" slow_nil.
 
 Definition easy_demo1 := 1 + 1.
 
@@ -72,21 +73,21 @@ Definition demo1 := List.app (List.repeat true 5) (List.repeat false 3).
 Definition demo2 := List.map negb [true; false; true].
 Definition demo3 := andb. 
   
-CertiCoq Compile -ext "_cps" demo1.
+(* CertiCoq Compile -ext "_cps" demo1. *)
 CertiCoq Show IR -ext "_cps" demo1.
-CertiCoq Compile -anf demo1.
+(* CertiCoq Compile -anf demo1. *)
 
-CertiCoq Compile -ext "_cps" demo2.
-CertiCoq Compile -anf demo2.
+CertiCoq Show IR -ext "_cps" demo2.
+(* CertiCoq Compile -anf demo2. *)
 
 (* Also works for CPS, when choosing another number of arguments, e.g. -args 1 *)
-CertiCoq Compile -ext "_cps" demo3.
-CertiCoq Compile -anf demo3.
+CertiCoq Show IR -ext "_cps" demo3.
+(* CertiCoq Compile -anf demo3. *)
 
 Definition list_sum := List.fold_left plus (List.repeat 1 100) 0.
 
-CertiCoq Compile -ext "_cps" list_sum.
-CertiCoq Compile -anf list_sum.
+CertiCoq Show IR -ext "_cps" list_sum.
+(* CertiCoq Compile -anf list_sum. *)
 
 
 Definition vs_easy :=

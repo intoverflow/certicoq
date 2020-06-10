@@ -2,7 +2,9 @@ Require Import ZArith.
 Require Import Common.compM.
 From CertiCoq Require Import L6.cps_proto L6.proto_util.
 From CertiCoq Require Import
-     L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps L6.inline.
+     L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps.
+(* From CertiCoq Require Import L6.inline. *)
+From CertiCoq Require Import L6.inline_proto.
 From CertiCoq Require Import L6.uncurry.
 (* From CertiCoq Require Import L6.uncurry_proto. *)
 From CertiCoq Require Import L6.L4_to_L6_anf.
@@ -123,15 +125,17 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
       (* uncurring *)
       (* let '(e_pure, s, c_data) := uncurry_top cps 100 c_data [shrink_cps.shrink_top e0]! in *)
       (* let e_err1 := compM.Ret ![e_pure] in *)
-      let f x := x in
-      let x := f false in
-      if negb (negb x) then (
-        let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in
-        (* inlining *)
-        e1 <- e_err1 ;;
-        let (e_err2, c_data) := if cps then inline_uncurry e1 s 10 10 c_data
-                               else inline_uncurry_marked_anf e1 s 10 10 c_data in
-        e2 <- e_err2 ;;
+      let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in
+      (* inlining *)
+      e1 <- e_err1 ;;
+      let (e2, c_data) := inline_uncurry [e1]! s 10 10 c_data in
+      let e2 := ![e2] in
+      (* let (e_err2, c_data) := if cps then inline_uncurry e1 s 10 10 c_data *)
+      (*                        else inline_uncurry_marked_anf e1 s 10 10 c_data in *)
+      (* e2 <- e_err2 ;; *)
+      let x := false in
+      let x := negb (negb x) in
+      if x then (
         (* Shrink reduction *)
         let e3 := shrink_cps.shrink_top e2 in
         (* lambda lifting *)
@@ -157,7 +161,7 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
         let e8 := shrink_cps.shrink_top e7 in
         ret (e8, c_data)
       ) else (
-        ret ((* shrink_cps.shrink_top *)e0, c_data)
+        ret (e2, c_data)
       )
   in
   match res with
