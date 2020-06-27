@@ -115,7 +115,9 @@ L4_deBruijn/toplevel.v
 #L5_CPS/cpseval.v
 
 # L6
+L6_PCPS/Frame.v
 L6_PCPS/Rewriting.v
+L6_PCPS/PrototypeGenFrame.v
 L6_PCPS/Prototype.v
 L6_PCPS/MockExpr.v
 L6_PCPS/PrototypeTests.v

@@ -89,7 +89,7 @@ Definition list_sum := List.fold_left plus (List.repeat 1 100) 0.
 CertiCoq Show IR -ext "_cps" list_sum.
 (* CertiCoq Compile -anf list_sum. *)
 
-
+(*
 Definition vs_easy :=
   match vs.main with
   | Valid => true
@@ -143,3 +143,4 @@ Definition color_run := Color.run.
 
 (* CertiCoq Compile -ext "_cps" color. *)
 CertiCoq Show IR -anf -time color_run.
+*)

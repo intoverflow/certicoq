@@ -1,4 +1,4 @@
-From CertiCoq.L6 Require Import Prototype.
+From CertiCoq.L6 Require Import PrototypeGenFrame.
 
 Require Import Coq.Strings.String.
 

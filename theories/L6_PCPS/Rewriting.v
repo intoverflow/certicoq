@@ -19,16 +19,9 @@ Ltac inv_ex :=
   | H : existT ?P ?T _ = existT ?P ?T _ |- _ => apply inj_pairT2 in H
   end.
 
-(* -------------------- 1-hole contexts -------------------- *)
+Require Export CertiCoq.L6.Frame.
 
-(* One layer of a 1-hole context *)
-Class Frame (U : Set) := {
-  (* The type to poke holes in + all its transitive dependencies *)
-  univD : U -> Set;
-  (* Frames, indexed by hole type + root type *)
-  frame_t : U -> U -> Set;
-  (* Frame application *)
-  frameD : forall {A B : U}, frame_t A B -> univD A -> univD B }.
+(* -------------------- 1-hole contexts built from frames -------------------- *)
 
 Class Frame_inj (U : Set) `{Frame U} :=
   frame_inj :
@@ -377,6 +370,13 @@ Proof. intros; subst gs; ltac1:(assert (Hfs = Hgs) by apply unique_typings); now
      through each step of a (mutually) recursive traversal of a [univD Root].
    - How to preserve the same value across edits to the focused node. *)
 
+(* The environment can only depend on context *)
+Class Preserves_R (U : Set) `{Frame U} (Root : U)
+      (P : forall {A : U}, frames_t A Root -> Set) : Set :=
+  preserve_R :
+    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B),
+    P fs -> P (fs >:: f).
+
 (* State can depend on both context and value on focus, and needs to be preserved while moving
    upwards and downwards *)
 Class Preserves_S (U : Set) `{Frame U} (Root : U)
@@ -388,18 +388,40 @@ Class Preserves_S (U : Set) `{Frame U} (Root : U)
     forall {A B : U} (fs : frames_t B Root) (f : frame_t A B) (x : univD A),
     P fs (frameD f x) -> P (fs >:: f) x }.
 
-(* One half of environment can only depend on context *)
-Class Preserves_R_C (U : Set) `{Frame U} (Root : U)
-      (P : forall {A : U}, frames_t A Root -> Set) : Set :=
-  preserve_R_C :
-    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B),
-    P fs -> P (fs >:: f).
+(* Parameters and state variables with no invariants *)
 
-(* The other half of environment can only depend on focus *)
-Class Preserves_R_e (U : Set) `{Frame U}
-      (P : forall {A : U}, univD A -> Set) : Set :=
-  preserve_R_e : forall {A B : U} (f : frame_t A B) (x : univD A),
-    P (frameD f x) -> P x.
+Definition R_plain {U : Set} `{Frame U} {Root : U}
+           (R : Set) A (C : frames_t A Root) : Set :=
+  R.
+
+Instance Preserves_R_R_plain (U : Set) `{Frame U} (Root : U) (R : Set) :
+  Preserves_R _ Root (R_plain R).
+Proof. intros A B fs x s; exact s. Defined.
+
+Definition S_plain {U : Set} `{Frame U} {Root : U}
+           (S : Set) A (C : frames_t A Root) (e : univD A) : Set :=
+  S.
+
+Instance Preserves_S_S_plain (U : Set) `{Frame U} (Root : U) (S : Set) :
+  Preserves_S _ Root (S_plain S).
+Proof. constructor; intros A B fs f x s; exact s. Defined.
+
+(* Composing two states: TODO: generalize and move to Rewriting.v *)
+
+Definition S_prod {U : Set} `{Frame U} {Root : U}
+           (S1 S2 : forall {A}, frames_t A Root -> univD A -> Set) 
+           A (C : frames_t A Root) (e : univD A) : Set :=
+  S1 C e * S2 C e.
+
+Instance Preserves_S_S_prod {U : Set} `{H : Frame U} {Root : U}
+         (S1 S2 : forall A, frames_t A Root -> univD A -> Set)
+         `{H1 : @Preserves_S U H Root S1} 
+         `{H2 : @Preserves_S U H Root S2} :
+  Preserves_S _ Root (S_prod S1 S2).
+Proof.
+  constructor; unfold S_prod; intros A B fs f x [s1 s2]; split;
+  try (now eapply @preserve_S_up); (now eapply @preserve_S_dn).
+Defined.
 
 (* -------------------- Delayed computation -------------------- *)
 
@@ -409,12 +431,8 @@ Class Delayed {U : Set} `{Frame U} (D : forall {A}, univD A -> Set) := {
   delay_id : forall {A} (e : univD A), D e;
   delay_id_law : forall {A} (e : univD A), delayD e (delay_id e) = e }.
 
-(* -------------------- Monadic operators -------------------- *)
+(* -------------------- Annotations -------------------- *)
 
-Definition When {R S} (_ : R -> S -> bool) : Prop := True.
-Definition Put {S A} (_ : S) (rhs : A) : A := rhs.
-Definition Modify {S A} (_ : S -> S) (rhs : A) : A := rhs.
-Definition Local {R A} (_ : R -> R) (rhs : A) : A := rhs.
 Definition Rec {A} (rhs : A) : A := rhs.
 Definition BottomUp {A} (rhs : A) : A := rhs.
 
@@ -429,14 +447,10 @@ Context
   (root : U) 
   (* One rewriting step *)
   (R : relation (univD root)) 
-  (* Env and state that aren't relevant to R *)
-  (R_misc : Set) (S_misc : Set) 
   (* Delayed computation *)
   (D : forall A, univD A -> Set) `{@Delayed U HFrame (@D)} 
   (* Env relevant to R; depends on current context C *)
   (R_C : forall A, frames_t A root -> Set) 
-  (* Env relevant to R; depends on current focus e *)
-  (R_e : forall A, univD A -> Set) 
   (* State relevant to R *)
   (St : forall A, frames_t A root -> univD A -> Set).
 
@@ -449,83 +463,31 @@ Context {A} (C : frames_t A root) (e : univD A).
 Record result : Set := mk_result {
   resTree : univD A;
   resState : St _ C resTree;
-  resSMisc : S_misc;
   resProof : clos_refl_trans _ R (C ⟦ e ⟧) (C ⟦ resTree ⟧) }.
 
-Definition rw_for : Set := R_C _ C -> R_e _ e -> St _ C e -> result.
-
-Definition rw_for' : Set := R_C _ C -> St _ C e -> result.
+Definition rw_for : Set := R_C _ C -> St _ C e -> result.
 
 End Rewriters1.
 
 (* The identity rewriter *)
-Definition rw_id (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) : rw_for C e.
-Proof. intros r_C r_e s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
-
-Definition rw_id' (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) : rw_for' C e.
-Proof. intros r_C s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
+Definition rw_id A (C : frames_t A root) (e : univD A) : rw_for C e.
+Proof. intros r s; econstructor > [exact s|apply rt_refl]. Defined.
 
 (* The simplest rewriter *)
-Definition rw_base (mr : R_misc) (ms : S_misc) A (C : frames_t A root) (e : univD A) (d : D _ e) :
+Definition rw_base A (C : frames_t A root) (e : univD A) (d : D _ e) :
   rw_for C (delayD e d).
-Proof. intros r_C r_e s; econstructor > [exact s|exact ms|apply rt_refl]. Defined.
+Proof. intros r s; econstructor > [exact s|apply rt_refl]. Defined.
 
 (* Extend rw1 with rw2 *)
 Definition rw_chain
   A (C : frames_t A root) (e : univD A) (d : D _ e)
-  (rw1 : R_misc -> S_misc -> rw_for C (delayD e d))
-  (rw2 : forall e, R_misc -> S_misc -> rw_for' C e)
-  : R_misc -> S_misc -> rw_for C (delayD e d).
+  (rw1 : rw_for C (delayD e d)) (rw2 : forall e, rw_for C e)
+  : rw_for C (delayD e d).
 Proof.
-  intros mr ms r_C r_e s.
-  destruct (rw1 mr ms r_C r_e s) as [e' s' ms' Hrel]; clear s ms.
-  destruct (rw2 e' mr ms' r_C s') as [e'' s'' ms'' Hrel']; clear s' ms'.
-  econstructor > [exact s''|exact ms''|eapply rt_trans; eauto].
-Defined.
-
-End Rewriters.
-
-Section Rewriters.
-
-(* Here the arguments are slightly different (this matters to the MetaCoq): each combinator
-   takes in two extra parameters R_misc and S_misc. *)
-Context
-  {U}
-  `{HFrame : Frame U}
-  (root : U)
-  (R : relation (univD root))
-  (R_misc : Set)
-  (S_misc : Set)
-  (mr : R_misc) (ms : S_misc)
-  (R_C : forall A, frames_t A root -> Set)
-  (R_e : forall A, univD A -> Set)
-  (St : forall A, frames_t A root -> univD A -> Set)
-  A (C : frames_t A root)
-.
-
-Definition rw_Put (new_state : S_misc) (rhs : univD A)
-  (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C (Put new_state rhs).
-Proof.
-  unfold Put; intros r_C r_e s.
-  (* Hack: the extra redex is to force Coq's section mechanism to include ms as a parameter. *)
-  exact (rw mr ((fun _ => new_state) ms) r_C r_e s).
-Defined.
-
-Definition rw_Modify (f : S_misc -> S_misc) (rhs : univD A)
-  (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C (Modify f rhs).
-Proof.
-  unfold Modify; intros r_C r_e s.
-  exact (rw mr (f ms) r_C r_e s).
-Defined.
-
-Definition rw_Local (f : R_misc -> R_misc) (rhs : univD A)
-  (rw : R_misc -> S_misc -> rw_for root R S_misc (@R_C) (@R_e) (@St) C rhs) :
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C (Local f rhs).
-Proof.
-  unfold Local; intros r_C r_e s.
-  exact (rw (f mr) ms r_C r_e s).
+  intros r s.
+  destruct (rw1 r s) as [e' s' Hrel]; clear s.
+  destruct (rw2 e' r s') as [e'' s'' Hrel']; clear s'.
+  econstructor > [exact s''|eapply rt_trans; eauto].
 Defined.
 
 End Rewriters.
@@ -536,6 +498,7 @@ Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positi
 
 Section FuelFix.
 
+(* TODO: may have to tweak this a bit to get fixpoints to compile to simple recursive functions *)
 Fixpoint Fuel_Fix {A} (d : A) (f : A -> A) (n : Fuel) : A :=
   match n with
   | xH => d

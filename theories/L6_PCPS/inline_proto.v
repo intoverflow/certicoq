@@ -19,9 +19,10 @@ Unset Strict Unquote Universe Mode.
 
    We also don't pass in the renaming [r_map]. *)
 CoInductive InlineHeuristic : Set := {
-  (* Update inlining decision and functions declaration.
-     First state is used for the body of the program, second for the function definitions *)
-  update_funDef : fundefs -> InlineHeuristic * InlineHeuristic;
+  (* Update inlining decision before entering fds in Efun fds e. *)
+  update_funDef1 : fundefs -> exp -> InlineHeuristic;
+  (* Update inlining decision before entering e in Efun fds e. *)
+  update_funDef2 : fundefs -> exp -> InlineHeuristic;
   (* Update inlining decisions when converting a function within a bundle *)
   update_inFun : var -> fun_tag -> list var -> exp -> InlineHeuristic;
   (* Return inlining decision on function application *)
@@ -34,10 +35,14 @@ CoInductive InlineHeuristic : Set := {
   update_letApp : var -> fun_tag -> list var -> InlineHeuristic }.
 
 CoFixpoint CombineInlineHeuristic (deci: bool -> bool -> bool) (IH1 IH2 : InlineHeuristic) : InlineHeuristic := {| 
-  update_funDef fds :=
-    let (IH11, IH12) := IH1.(update_funDef) fds in
-    let (IH21, IH22) := IH2.(update_funDef) fds in
-    (CombineInlineHeuristic deci IH11 IH21, CombineInlineHeuristic deci IH12 IH22);
+  update_funDef1 fds e :=
+    let IH1 := IH1.(update_funDef1) fds e in
+    let IH2 := IH2.(update_funDef1) fds e in
+    (CombineInlineHeuristic deci IH1 IH2);
+  update_funDef2 fds e :=
+    let IH1 := IH1.(update_funDef2) fds e in
+    let IH2 := IH2.(update_funDef2) fds e in
+    (CombineInlineHeuristic deci IH1 IH2);
   update_inFun f ft xs e :=
     let IH1' := IH1.(update_inFun) f ft xs e in
     let IH2' := IH2.(update_inFun) f ft xs e in
@@ -63,7 +68,8 @@ Definition PostUncurryIH : M.t nat -> InlineHeuristic :=
   cofix IH s := {|
     (* at the start, uncurry shell (i.e. not the outermost) all maps to 1 *)
     (* 0 -> Do not inline, 1 -> uncurried function, 2 -> continuation of uncurried function *)
-    update_funDef fds := let IH' := IH s in (IH', IH');
+    update_funDef1 fds e := IH s;
+    update_funDef2 fds e := IH s;
     update_inFun f ft xs e := IH s;
     decide_App f ft ys :=
       match (M.get ![f] s, ys) with
@@ -80,20 +86,19 @@ Definition PostUncurryIH : M.t nat -> InlineHeuristic :=
     update_letApp f t ys := IH s |}.
 
 Definition InlineSmallIH (bound : nat) : M.t bool -> InlineHeuristic :=
+  let fix upd fds s := 
+    match fds with
+    | Ffun f ft xs e :: fdc' =>
+      if (Init.Nat.ltb (term_size ![e]) bound)
+      then upd fdc' (M.set ![f] true s)
+      else upd fdc' s
+    | Fnil => s
+    end
+  in
   cofix IH s := {|
     (* Add small, [todo: non-recursive] functions to s *)
-    update_funDef fds :=
-      let fix upd fds s := 
-        match fds with
-        | Ffun f ft xs e :: fdc' =>
-          if (Init.Nat.ltb (term_size ![e]) bound)
-          then upd fdc' (M.set ![f] true s)
-          else upd fdc' s
-        | Fnil => s
-        end
-      in
-      let IH' := IH (upd fds s) in
-      (IH', IH');
+    update_funDef1 fds e := IH (upd fds s);
+    update_funDef2 fds e := IH (upd fds s);
     update_inFun f ft xs e := IH (M.remove ![f] s);
     decide_App f ft ys :=
       match M.get ![f] s with
@@ -121,8 +126,9 @@ Fixpoint find_uncurried (fds : fundefs) (s:M.t bool) : M.t bool :=
 
 Definition InlineUncurried : M.t bool -> InlineHeuristic :=
   cofix IH s := {|
-    update_funDef fds := let IH' := IH (find_uncurried fds s) in (IH', IH');
-    update_inFun f ft xs e := IH (M.remove ![f] s);
+    update_funDef1 fds e := IH (find_uncurried fds s);
+    update_funDef2 fds e := IH (find_uncurried fds s);
+    update_inFun f ft xs e := IH s;
     decide_App f ft ys :=
       match M.get ![f] s with
       | Some true => true
@@ -149,9 +155,8 @@ Fixpoint find_uncurried_pats_anf (fds : fundefs) (s:M.t bool) : M.t bool :=
 (* Inlines functions based on patterns found in the code *)
 Definition InineUncurriedPatsAnf : M.t bool -> InlineHeuristic :=
   cofix IH s := {|
-    update_funDef fds :=
-      let IH' := IH (find_uncurried fds s) in
-      (IH', IH');
+    update_funDef1 fds e := IH (find_uncurried fds s);
+    update_funDef2 fds e := IH (find_uncurried fds s);
     update_inFun f ft xs e := IH (M.remove ![f] s);
     decide_App f ft ys :=
       match M.get ![f] s with
@@ -170,7 +175,8 @@ Definition InlinedUncurriedMarkedAnf : M.t nat -> InlineHeuristic :=
   cofix IH s := {|
     (* at the start, uncurry shell (i.e. not the outermost) all maps to 1 *)
     (* 0 -> Do not inline, 1 -> uncurried function, 2 -> continuation of uncurried function *)
-    update_funDef fds := let IH' := IH s in (IH', IH');
+    update_funDef1 fds e := IH s;
+    update_funDef2 fds e := IH s;
     update_inFun f ft xs e := IH s;
     decide_App f ft ys :=
       match M.get ![f] s with
@@ -1337,9 +1343,6 @@ Proof. apply freshen_Alpha. Qed.
 
 (** * Inlining as a relation *)
 
-Definition R_misc : Set := InlineHeuristic.
-Definition S_misc : Set := comp_data.
-
 Definition update_next_var (next : cps.var) (cdata : comp_data) : comp_data := 
   let '{| next_var := _; nect_ctor_tag := c; next_ind_tag := i; next_fun_tag := f;
           cenv := e; fenv := fenv; nenv := names; log := log |} := cdata
@@ -1393,21 +1396,6 @@ Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
   end.
 
 Inductive inline_step : exp -> exp -> Prop :=
-(* Update heuristic at each Efun node *)
-| inline_update_Efun :
-  forall (C : frames_t exp_univ_exp exp_univ_exp) (fds : list fundef) e IH IH1 IH2,
-  (IH1, IH2) = IH.(update_funDef) fds ->
-  When (fun (r : R_misc) (s : S_misc) => true) ->
-  inline_step
-    (C ⟦ Efun fds e ⟧)
-    (C ⟦ Efun (Local (fun _ => IH1) (Rec fds)) (Local (fun _ => IH2) (Rec e)) ⟧)
-(* Update heuristic at each Fcons node *)
-| inline_update_Fcons :
-  forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f ft xs e (fds : list fundef),
-  When (fun (r : R_misc) (s : S_misc) => true) ->
-  inline_step
-    (C ⟦ Ffun f ft xs e :: fds ⟧)
-    (C ⟦ Ffun f ft xs (Local (fun IH => IH.(update_inFun) f ft xs e) (Rec e)) :: Rec fds ⟧)
 (* Inlining for CPS *)
 | inline_cps :
   forall (C : frames_t exp_univ_exp exp_univ_exp) f ft ft' (xs : list var) e e' e'' (ys : list var)
@@ -1420,15 +1408,9 @@ Inductive inline_step : exp -> exp -> Prop :=
   set_lists ![xs] ![ys] (M.empty _) = Some σ /\
   e'' = rename_all' σ e' /\
   fresher_than next_x (used_vars ![C ⟦ e'' ⟧]) ->
-  (* Onle inline if the inlining heuristic decides to *)
-  When (fun (IH : R_misc) (s : S_misc) => IH.(decide_App) f ft ys) ->
   inline_step
     (C ⟦ Eapp f ft' ys ⟧)
-    (C ⟦ (* Update inlining heuristic *)
-         Local (fun IH => IH.(update_App) f ft ys)
-         (* Hack: set fresh variable in cdata properly for future passes *)
-         (Modify (update_next_var next_x)
-         (Rec e'')) ⟧).
+    (C ⟦ Rec e'' ⟧).
 
 Definition fun_map : Set := M.tree (fun_tag * list var * exp).
 
@@ -1648,77 +1630,63 @@ Proof.
       specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
 Defined.
 
-(* TODO: move the following definitions to proto_util.v *)
+(* Inlining heuristic is a piece of state *)
+Record S_IH {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := mk_IH {un_IH : InlineHeuristic}.
 
-(* Some passes assume unique bindings *)
-Definition S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
-  unique_bindings ![C ⟦ e ⟧].
-Instance Preserves_S_S_uniq : Preserves_S _ exp_univ_exp (@S_uniq).
-Proof. constructor; intros; assumption. Defined.
-
-(* Composing two states *)
-
-Definition S_prod (S1 S2 : forall A, exp_c A exp_univ_exp -> univD A -> Set) 
-           A (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
-  S1 _ C e * S2 _ C e.
-
-Instance Preserves_S_S_prod
-         (S1 S2 : forall A, exp_c A exp_univ_exp -> univD A -> Set)
-         `{H1 : @Preserves_S exp_univ Frame_exp exp_univ_exp S1} 
-         `{H2 : @Preserves_S exp_univ Frame_exp exp_univ_exp S2} :
-  Preserves_S _ exp_univ_exp (@S_prod S1 S2).
+(* Though inlining heuristics don't have any nontrivial invariants, the Preserves_R
+    instance must make calls to update_* methods in the proper places. *)
+Instance Preserves_S_S_IH : Preserves_S _ exp_univ_exp (@S_IH).
 Proof.
-  constructor; unfold S_prod; intros; match goal with H : _ * _ |- _ => destruct H end; split;
-    (now eapply preserve_S_up || now eapply preserve_S_dn).
+  constructor; intros A B C f x [IH].
+  - (* No change on the way back up *) constructor; exact IH.
+  - (* Update the heuristic on the way down *)
+    destruct f;
+    match goal with
+    | |- S_IH (C >:: Efun0 ?e) ?fds => constructor; exact (IH.(update_funDef1) fds e)
+    | |- S_IH (C >:: Efun1 ?fds) ?e => constructor; exact (IH.(update_funDef2) fds e)
+    | |- S_IH (C >:: Ffun3 ?f ?ft ?xs) ?e => constructor; exact (IH.(update_inFun) f ft xs e)
+    | |- _ => constructor; exact IH
+    end.
 Defined.
 
-Definition S_inline := S_prod (@S_fresh) (S_prod (@S_fns) (@S_uniq)).
+Definition S_inline : forall {A}, exp_c A exp_univ_exp -> univD A -> Set :=
+  S_prod (S_prod (S_prod (S_prod (S_plain comp_data) (@S_IH)) (@S_fresh)) (@S_fns)) (@S_uniq).
 
 Require Import Coq.Strings.String.
-
-(* TODO: move to prototype.v and make uncurry_proto use this *)
-Ltac mk_easy_delay :=
-  try lazymatch goal with
-  | |- ConstrDelay _ -> _ =>
-    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
-  | |- EditDelay _ -> _ =>
-    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
-  end.
 
 (** * Inlining as a recursive function *)
 
 (* For now, to allow extraction *)
 Axiom seems_legit : forall {A}, A.
 
-Definition rw_inline :
-  rewriter exp_univ_exp inline_step R_misc S_misc
-    (@trivial_delay_t) (@trivial_R_C) (@trivial_R_e) (@S_inline).
+Definition log_msg s cdata :=
+  let '{| next_var := x; nect_ctor_tag := c; next_ind_tag := t; next_fun_tag := ft;
+          cenv := cenv; fenv := fenv; nenv := nenv; log := log |} := cdata in
+  mkCompData x c t ft cenv fenv nenv (s :: log).
+
+Definition rw_inline : rewriter exp_univ_exp inline_step
+  (@trivial_delay_t) (@trivial_R_C) (@S_inline).
 Proof.
   mk_rw; mk_easy_delay.
-  (* The heuristic updates are simple *)
-  - intros _ IH _ R _ fds e _ _ _ success _.
-    destruct (update_funDef IH fds) as [IH1 IH2] eqn:HIH.
-    eapply success; eauto.
-  - clear; intros. now apply H0.
   (* To actually perform inlining, we need to check the heuristic, do the renaming, etc. *)
-  - clear; intros _ IH cdata R C f ft' ys _ _ [[fresh Hfresh] [[ρ Hρ] Huniq]] success failure.
+  - clear; intros _ R C f ft' ys _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq] success failure.
     (* Look up f in the map of known functions *)
-    destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|exact failure].
+    destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|cond_failure].
     specialize (Hρ ![f] ft xs e Hget).
-    specialize (success ft xs e).
+    specialize success with (ft := ft) (xs := xs) (e := e).
     (* Check the heuristic *)
-    destruct (decide_App IH f ft ys); [|exact failure].
+    destruct (decide_App IH f ft ys) eqn:Hdec; [|cond_failure].
     (* Do the freshening + renaming.
        Ideally, we wouldn't actually call [rename_all], which makes an extra pass over the
        function body. Instead, we could pass σ into freshen_exp as the initial renaming. This
        works as long as FV(e) ∩ BV(e) = ∅ (so the mapping [xs ↦ ys] never overlaps with future
        updates to σ). *)
+    destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|cond_failure].
     replace [![f]]! with f in Hρ by now unbox_newtypes.
     destruct (freshen_exp fresh (M.empty _) e) as [fresh' e'] eqn:Hfreshen; symmetry in Hfreshen.
-    destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|exact failure].
     specialize success with (e' := e') (σ0 := σ) (next_x := fresh').
     (* Prove that we did what we said we did *)
-    eapply success; repeat match goal with |- _ /\ _ => split end; eauto.
+    cond_success; eapply success; repeat match goal with |- _ /\ _ => split end; eauto.
     + assert (Hid : f_eq id (apply_r (M.empty _))). {
         unfold f_eq, apply_r; intros x; now rewrite M.gempty. }
       rewrite Hid; eapply freshen_exp_Alpha; eauto.
@@ -1742,14 +1710,16 @@ Proof.
            = used_vars e' ∪ vars(C[f(ys)])
            < fresh' *)
       exact seems_legit.
-  (* It's easy to preserve invariants across the rules that update the heuristic, since no change was made *)
-  - intros; now split.
-  - intros; now split.
   (* We must explain how to maintain all the intermediate state variables across the edit *)
-  - intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hguard _ _ [[fresh Hfresh] [[ρ Hρ] Huniq]].
-    split; [easy|]; unfold Local, Modify, S_inline; split; [|split].
+  - intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hcond _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq].
+    split; [exact tt|split; [split; [split; [split|]|]|]]; unfold S_plain, S_fresh, S_fns, S_uniq.
+    + (* Need to set fresh variable in cdata properly for future passes.
+         Though we don't use it, later passes do. *)
+      exact (update_next_var next_x cdata).
+    + (* Update the inlining heuristic *)
+      constructor; exact (IH.(update_App) f ft ys).
     (* next_x is a sufficiently fresh variable *)
-    + decompose [and] Hguard. now exists next_x.
+    + decompose [and] Hcond. now exists next_x.
     (* The set of known functions remains the same *)
     + exists ρ.
       (* For any known g:
@@ -1757,7 +1727,8 @@ Proof.
          - If g was in a bundle and we are in one of the bundle's definitions, we're still
            in that definition *)
       exact seems_legit.
-    + decompose [and] Hguard; unfold S_uniq.
+    + (* Unique bindings is preserved *)
+      decompose [and] Hcond; unfold S_uniq.
       rewrite app_exp_c_eq, isoBAB.
       rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
       * unfold S_uniq in Huniq.
@@ -1774,37 +1745,21 @@ Defined.
 
 Recursive Extraction rw_inline.
 
-(* TODO: move to proto_util.v and make uncurry_proto use this too *)
-Definition initial_fresh (e : exp) : S_fresh <[]> e.
-Proof.
-  exists (1 + max_var ![e] 1)%positive.
-  change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
-  intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
-  destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
-Defined.
-
 Definition initial_fns (e : exp) : S_fns <[]> e.
 Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
 
-Lemma inline_top' (IH : R_misc) (c : comp_data) (e : exp) (s : S_inline _ <[]> e)
-  : result exp_univ_exp inline_step S_misc (@S_inline) <[]> e.
-Proof. exact (run_rewriter' rw_inline IH c e tt tt s). Defined.
+Lemma inline_top' (e : exp) (s : S_inline <[]> e)
+  : result exp_univ_exp inline_step (@S_inline) <[]> e.
+Proof. exact (run_rewriter' rw_inline e tt s). Defined.
 
-Lemma inline_top (IH : R_misc) (c : comp_data) (e : exp) (H : unique_bindings ![e])
-  : exp * comp_data.
-Proof.
-  pose (res := run_rewriter' rw_inline IH c e tt tt (initial_fresh e, (initial_fns e, H))).
-  destruct res eqn:Hres.
-  exact (resTree, resSMisc).
-Defined.
+Definition inline_top (IH : InlineHeuristic) (c : comp_data) (e : exp) (H : unique_bindings ![e])
+  : exp * comp_data :=
+  let '{| resTree := e'; resState := (cdata, _, _, _, _) |} :=
+    run_rewriter' rw_inline e tt (c, mk_IH _ _ _ IH, initial_fresh e, initial_fns e, H)
+  in (e', cdata).
 
-Lemma inline_unsafe (IH : R_misc) (e : exp) (c : comp_data) : exp * comp_data.
-Proof.
-  pose (res := run_rewriter' rw_inline IH c e tt tt
-                            (initial_fresh e, (initial_fns e, seems_legit))).
-  destruct res eqn:Hres.
-  exact (resTree, resSMisc).
-Defined.
+Definition inline_unsafe (IH : InlineHeuristic) (e : exp) (c : comp_data) : exp * comp_data :=
+  inline_top IH c e seems_legit.
 
 Recursive Extraction inline_unsafe.
 
@@ -1823,3 +1778,42 @@ Definition inline_uncurry (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
 
 Definition inline_uncurry_marked_anf (e:exp) (s:M.t nat) (bound:nat)  (d:nat) :=
   inline_unsafe (InlinedUncurriedMarkedAnf s) e.
+
+Definition test_term :=
+  Efun [
+    Ffun [20]! [1]! [[1]!; [2]!]
+      (Efun [
+        Ffun [3]! [1]! [[4]!; [5]!] 
+          (Efun [
+            Ffun [6]! [1]! [[7]!; [8]!] 
+              (Eapp [9]! [1]! [[7]!; [8]!; [5]!])
+          ]
+          (Eapp [4]! [1]! [[6]!]));
+        Ffun [9]! [1]! [[10]!; [11]!; [12]!] 
+          (Ecase [11]! [
+          ([1]!,
+            Eproj [15]! [101]! 0 [11]! 
+            (Efun [
+              Ffun [14]! [1]! [[13]!] 
+                (Econstr [16]! [1]! [[12]!; [13]!] 
+                (Eapp [10]! [1]! [[16]!]))
+            ]
+            (Efun [
+              Ffun [17]! [1]! [[18]!]
+                (Eapp [18]! [1]! [[14]!; [15]!])
+            ]
+            (Eapp [3]! [1]! [[17]!; [12]!]))));
+          ([2]!,
+            Econstr [19]! [1]! [] 
+            (Eapp [10]! [1]! [[19]!]))
+          ])
+      ]
+      (Eapp [1]! [1]! [[3]!]))
+  ]
+  (Ehalt [20]!).
+
+Recursive Extraction rw_inline.
+Compute run_rewriter rw_inline test_term tt
+   (mkCompData 1 1 1 1 (M.empty _) (M.empty _) (M.empty _) [],
+    mk_IH _ _ _ (InlineUncurried (M.empty _)),
+    initial_fresh test_term, initial_fns test_term, seems_legit).

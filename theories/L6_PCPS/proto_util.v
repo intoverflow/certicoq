@@ -208,32 +208,28 @@ Context
   {R_misc S_misc : Set}
   {D : forall A, univD A -> Set} `{@Delayed exp_univ Frame_exp (@D)}
   {R_C : forall A, frames_t A root -> Set}
-  {R_e : forall A, univD A -> Set}
   {St : forall A, frames_t A root -> univD A -> Set}
-  `{@Preserves_R_C exp_univ Frame_exp root (@R_C)}
+  `{@Preserves_R exp_univ Frame_exp root (@R_C)}
   `{@Preserves_S exp_univ Frame_exp root (@St)}
-  (rw : rewriter root R R_misc S_misc (@D) (@R_C) (@R_e) (@St)).
+  (rw : rewriter root R (@D) (@R_C) (@St)).
 
 Definition run_rewriter' :
-  R_misc -> S_misc -> forall (e : univD root), R_C _ <[]> -> R_e _ e -> St _ <[]> e ->
-  result root R S_misc (@St) <[]> e.
+  forall (e : univD root), R_C _ <[]> -> St _ <[]> e ->
+  result root R (@St) <[]> e.
 Proof.
-  intros mr ms e r_C r_e st; unfold rewriter, rw_for in rw.
-  specialize (rw lots_of_fuel mr ms _ <[]> e (delay_id _)).
-  rewrite delay_id_law in rw; exact (rw r_C r_e st).
+  intros e r s; unfold rewriter, rw_for in rw.
+  specialize (rw lots_of_fuel _ <[]> e (delay_id _)).
+  rewrite delay_id_law in rw; exact (rw r s).
 Defined.
 
-Definition run_rewriter (mr : R_misc) (ms : S_misc) (e : univD root)
-           (r_C : R_C _ <[]>) (r_e : R_e _ e) (st : St _ <[]> e) : univD root :=
-  let '{| resTree := e' |} := run_rewriter' mr ms e r_C r_e st in e'.
+Definition run_rewriter (e : univD root)
+           (r : R_C _ <[]>) (s : St _ <[]> e) : univD root :=
+  let '{| resTree := e' |} := run_rewriter' e r s in e'.
 
 End RunRewriter.
 
 Definition trivial_R_C {A} (C : exp_c A exp_univ_exp) : Set := unit.
-Instance Preserves_R_C_trivial_R_C : Preserves_R_C _ exp_univ_exp (@trivial_R_C). Proof. constructor. Defined.
-
-Definition trivial_R_e {A} (e : univD A) : Set := unit.
-Instance Preserves_R_e_trivial_R_e : Preserves_R_e _ (@trivial_R_e). Proof. constructor. Defined.
+Instance Preserves_R_trivial_R_C : Preserves_R _ exp_univ_exp (@trivial_R_C). Proof. constructor. Defined.
 
 Definition trivial_delay_t {A} (e : univD A) : Set := unit.
 Instance Delayed_trivial_delay_t : Delayed (@trivial_delay_t).
@@ -244,4 +240,19 @@ Definition S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
 
 (* We don't have to do anything to preserve a fresh variable as we move around *)
 Instance Preserves_S_S_fresh : Preserves_S _ exp_univ_exp (@S_fresh).
+Proof. constructor; intros; assumption. Defined.
+
+(* Compute an initial fresh variable *)
+Definition initial_fresh (e : exp) : S_fresh <[]> e.
+Proof.
+  exists (1 + max_var ![e] 1)%positive.
+  change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
+  intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
+  destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
+Defined.
+
+(* Some passes assume unique bindings *)
+Definition S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+  unique_bindings ![C ⟦ e ⟧].
+Instance Preserves_S_S_uniq : Preserves_S _ exp_univ_exp (@S_uniq).
 Proof. constructor; intros; assumption. Defined.

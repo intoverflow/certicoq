@@ -3,7 +3,7 @@ Import ListNotations.
 
 From MetaCoq Require Import Template.All.
 
-From CertiCoq.L6 Require Import Prototype.
+From CertiCoq.L6 Require Import PrototypeGenFrame.
 
 Unset Strict Unquote Universe Mode.
 

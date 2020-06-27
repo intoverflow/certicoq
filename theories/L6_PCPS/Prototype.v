@@ -25,694 +25,7 @@ Set Default Proof Mode "Ltac2".
 Set Universe Polymorphism.
 
 Require Export CertiCoq.L6.Rewriting.
-
-Instance Monad_TemplateMonad : Monad TemplateMonad := {
-  ret _ := TM.ret;
-  bind _ _ := TM.bind }.
-
-Notation "'let!' x ':=' c1 'in' c2" := (@bind _ _ _ _ c1 (fun x => c2))
-  (at level 61, c1 at next level, right associativity).
-Notation "'let!' ' p ':=' c1 'in' c2" :=
-  (@bind _ _ _ _ c1 (fun x => match x with p => c2 end))
-  (at level 61, p pattern, c1 at next level, right associativity).
-Infix "<$>" := fmap (at level 52, left associativity).
-Infix "<*>" := ap (at level 52, left associativity).
-
-Section Helpers.
-
-Context {M : Type -> Type} {A B : Type} `{Monad M}.
-
-Definition mapM (f : A -> M B) : list A -> M (list B) :=
-  fix go xs :=
-    match xs with
-    | [] => pure []
-    | x :: xs => pure cons <*> f x <*> go xs
-    end.
-
-Definition mapi' (f : nat -> A -> B) : list A -> list B :=
-  (fix go n xs :=
-    match xs with
-    | [] => []
-    | x :: xs => f n x :: go (S n) xs
-    end) O.
-
-Definition mapiM (f : N -> A -> M B) : list A -> M (list B) :=
-  (fix go n xs :=
-    match xs with
-    | [] => pure []
-    | x :: xs => pure cons <*> f n x <*> go (1 + n) xs
-    end) 0.
-
-Definition mapiM_nat (f : nat -> A -> M B) : list A -> M (list B) :=
-  (fix go n xs :=
-    match xs with
-    | [] => pure []
-    | x :: xs => pure cons <*> f n x <*> go (S n) xs
-    end) O.
-
-Definition foldrM (f : A -> B -> M B) (e : B) (xs : list A) : M B :=
-  fold_right (fun x m => let! y := m in f x y) (ret e) xs.
-
-Definition foldlM (f : B -> A -> M B) (x : B) : list A -> M B :=
-  let fix go acc xs :=
-    match xs with
-    | [] => ret acc
-    | x :: xs =>
-      let! acc := f acc x in
-      go acc xs
-    end
-  in go x.
-
-Definition foldri {A B} (f : N -> A -> B -> B) (g : N -> B) : list A -> B :=
-  let fix go n xs :=
-    match xs with
-    | [] => g n
-    | x :: xs => f n x (go (1 + n) xs)
-    end
-  in go 0.
-
-Definition foldri_nat {A B} (f : nat -> A -> B -> B) (g : nat -> B) : list A -> B :=
-  let fix go n xs :=
-    match xs with
-    | [] => g n
-    | x :: xs => f n x (go (S n) xs)
-    end
-  in go O.
-
-Definition foldli (f : N -> B -> A -> B) (x : B) : list A -> B :=
-  let fix go n acc xs :=
-    match xs with
-    | [] => acc
-    | x :: xs =>
-      let acc := f n acc x in
-      go (1 + n) acc xs
-    end
-  in go 0 x.
-
-Definition foldriM (f : N -> A -> B -> M B) (x : B) : list A -> M B :=
-  let fix go n xs :=
-    match xs with
-    | [] => ret x
-    | x :: xs => let! y := go (1 + n) xs in f n x y
-    end
-  in go 0.
-
-Definition foldriM_nat (f : nat -> A -> B -> M B) (x : B) : list A -> M B :=
-  let fix go n xs :=
-    match xs with
-    | [] => ret x
-    | x :: xs => let! y := go (S n) xs in f n x y
-    end
-  in go O.
-
-Definition foldliM (f : N -> B -> A -> M B) (x : B) : list A -> M B :=
-  let fix go n acc xs :=
-    match xs with
-    | [] => ret acc
-    | x :: xs =>
-      let! acc := f n acc x in
-      go (1 + n) acc xs
-    end
-  in go 0 x.
-
-End Helpers.
-
-(* -------------------- Finite maps -------------------- *)
-
-Notation "'Eq' A" := (RelDec (@eq A)) (at level 1, no associativity).
-Infix "==?" := eq_dec (at level 40, no associativity).
-
-Instance Eq_N : Eq N := {rel_dec := N.eqb}.
-
-Definition Map A B := list (A * B).
-Definition Set' A := Map A unit.
-
-Definition empty {A B} : Map A B := [].
-
-Definition sing {A B} k v : Map A B := [(k, v)].
-
-Definition size {A B} (m : Map A B) : nat := #|m|.
-
-Definition insert {A B} k v m : Map A B := (k, v) :: m.
-
-Definition delete {A B} `{Eq A} k : Map A B -> Map A B :=
- filter (fun '(k', _) => negb (k ==? k')).
-
-Fixpoint find {A B} `{Eq A} k m : option B :=
-  match m with
-  | [] => None
-  | (k', v) :: m => if k ==? k' then Some v else find k m
-  end.
-
-Fixpoint find_d {A B} `{Eq A} k d m : B :=
-  match m with
-  | [] => d
-  | (k', v) :: m => if k ==? k' then v else find_d k d m
-  end.
-
-Definition find_exc {M E A B} `{Eq A} `{Monad M} `{MonadExc E M} k m e : M B :=
-  match find k m with
-  | Some v => ret v
-  | None => raise e
-  end.
-
-Definition update {A B} `{Eq A} k (f : B -> B) d m : Map A B :=
-  insert k (f (find_d k d m)) m.
-
-Definition list_of_map {A B} : Map A B -> list (A * B) := id.
-
-Definition map_of_list {A B} : list (A * B) -> Map A B := id.
-Definition set_of_list {A} (xs : list A) : Set' A := map_of_list (map (fun x => (x, tt)) xs).
-Definition list_of_set {A} : Set' A -> list A := map fst.
-Definition set_of_option {A} (x : option A) : Set' A :=
-  match x with
-  | Some x => sing x tt
-  | None => empty
-  end.
-
-Definition map_of_ilist {A} : list A -> Map N A :=
-  let fix go n xs :=
-    match xs with
-    | [] => []
-    | x :: xs => (n, x) :: go (1 + n) xs
-    end
-  in go 0.
-
-Definition subset {A B} `{Eq A} `{Eq B} (m1 m2 : Map A B) : bool :=
-  forallb
-    (fun '(k1, v1) =>
-       existsb
-         (fun '(k2, v2) =>
-            if k1 ==? k2
-            then v1 ==? v2
-            else false)
-         m2)
-    m1.
-
-Definition mmap {A B C} (f : B -> C) : Map A B -> Map A C :=
-  fix go m :=
-    match m with
-    | [] => []
-    | (k, x) :: m => (k, f x) :: go m
-    end.
-
-Definition mkmap {A B C} (f : A -> B -> C) : Map A B -> Map A C :=
-  fix go m :=
-    match m with
-    | [] => []
-    | (k, x) :: m => (k, f k x) :: go m
-    end.
-
-Definition mfold {A B C} (f : A -> B -> C -> C) (e : C) : Map A B -> C :=
-  fix go m :=
-    match m with
-    | [] => e
-    | (k, x) :: m => f k x (go m)
-    end.
-
-Definition mfoldM {M A B C} `{Monad M} (f : A -> B -> C -> M C) (e : C) : Map A B -> M C :=
-  fix go m :=
-    match m with
-    | [] => ret e
-    | (k, x) :: m => let! r := go m in f k x r
-    end.
-
-Definition mmapM {M A B C} `{Monad M} (f : B -> M C) : Map A B -> M (Map A C) :=
-  fix go m :=
-    match m with
-    | [] => ret []
-    | (k, x) :: m => cons <$> (pair k <$> f x) <*> go m
-    end.
-
-Definition mchoose {A B} (m : Map A B) : option (A * B) :=
-  match m with
-  | [] => None
-  | kv :: _ => Some kv
-  end.
-
-Definition member {A B} `{Eq A} k (m : Map A B) : bool := if find k m then true else false.
-
-Definition intersect {A B C} `{Eq A} (m1 : Map A B) (m2 : Map A C) : Map A B :=
-  filter (fun '(x, _) => if find x m2 then true else false) m1.
-(* Definition union {A B} (m1 m2 : Map A B) := m1 ++ m2. *)
-Definition union {A B} `{Eq A} (m1 m2 : Map A B) := m1 ++ filter (fun '(x, _) => if find x m1 then false else true) m2.
-Infix "∪" := union (at level 50, left associativity).
-Infix "∩" := intersect (at level 50, left associativity).
-
-Definition minus {A B C} `{Eq A} (m1 : Map A B) (m2 : Map A C) : Map A B :=
-  filter (fun '(x, _) => if find x m2 then false else true) m1.
-Infix "\" := minus (at level 50, left associativity).
-
-Definition union_all {A B} `{Eq A} : list (Map A B) -> Map A B := fold_right union empty.
-
-Definition intersect_by {A B C} `{Eq A} (f : A -> B -> B -> option C) (m1 m2 : Map A B) : Map A C :=
-  fold_right
-   (fun '(k, v1) acc =>
-      match find k m2 with
-      | Some v2 => match f k v1 v2 with Some c => (k, c) :: acc | None => acc end
-      | None => acc
-      end)
-   [] m1.
-
-(* -------------------- Context generation -------------------- *)
-
-(* Reverse hex *)
-Fixpoint string_of_positive n :=
-  match n with
-  | xH => "1"
-  | xO xH => "2"
-  | xI xH => "3"
-  | xO (xO xH) => "4"
-  | xI (xO xH) => "5"
-  | xO (xI xH) => "6"
-  | xI (xI xH) => "7"
-  | xO (xO (xO xH)) => "8"
-  | xI (xO (xO xH)) => "9"
-  | xO (xI (xO xH)) => "A"
-  | xI (xI (xO xH)) => "B"
-  | xO (xO (xI xH)) => "C"
-  | xI (xO (xI xH)) => "D"
-  | xO (xI (xI xH)) => "E"
-  | xI (xI (xI xH)) => "F"
-  | xO (xO (xO (xO n))) => String "0" (string_of_positive n)
-  | xI (xO (xO (xO n))) => String "1" (string_of_positive n)
-  | xO (xI (xO (xO n))) => String "2" (string_of_positive n)
-  | xI (xI (xO (xO n))) => String "3" (string_of_positive n)
-  | xO (xO (xI (xO n))) => String "4" (string_of_positive n)
-  | xI (xO (xI (xO n))) => String "5" (string_of_positive n)
-  | xO (xI (xI (xO n))) => String "6" (string_of_positive n)
-  | xI (xI (xI (xO n))) => String "7" (string_of_positive n)
-  | xO (xO (xO (xI n))) => String "8" (string_of_positive n)
-  | xI (xO (xO (xI n))) => String "9" (string_of_positive n)
-  | xO (xI (xO (xI n))) => String "A" (string_of_positive n)
-  | xI (xI (xO (xI n))) => String "B" (string_of_positive n)
-  | xO (xO (xI (xI n))) => String "C" (string_of_positive n)
-  | xI (xO (xI (xI n))) => String "D" (string_of_positive n)
-  | xO (xI (xI (xI n))) => String "E" (string_of_positive n)
-  | xI (xI (xI (xI n))) => String "F" (string_of_positive n)
-  end.
-Definition string_of_N n :=
-  match n with
-  | N0 => "0"
-  | Npos n => string_of_positive n
-  end.
-Compute (string_of_N 100).
-Compute (string_of_N 200).
-Compute (string_of_N 350).
-
-Notation "'GM'" := (stateT N (sum string)).
-
-Definition fresh (prefix : string) : GM string :=
-  let! n := get in
-  let! _ := modify (fun x => 1 + x) in
-  ret (prefix +++ string_of_N n).
-
-Definition runGM {A} (m : GM A) : TemplateMonad A :=
-  m <- tmEval cbv m ;; (* Necessary: if removed, evaluation takes forever *)
-  match runStateT m 0 with
-  | inl e => tmFail ("runGM: " +++ e)
-  | inr (x, _) => TM.ret x
-  end.
-
-Definition runGM' {A} (n : N) (m : GM A) : string + (A × N) :=
-  runStateT m n.
-
-Definition findM {A} (k : string) (m : Map string A) : GM A :=
-  match find k m with
-  | Some v => ret v
-  | None => raise ("findM: " +++ k)
-  end.
-
-Definition findM' {A} (k : string) (m : Map string A) (s : string) : GM A :=
-  match find k m with
-  | Some v => ret v
-  | None => raise ("findM': " +++ s +++ ": " +++ k)
-  end.
-
-Definition findM'' {A B} `{Eq A} (k : A) (m : Map A B) (s : string) : GM B :=
-  match find k m with
-  | Some v => ret v
-  | None => raise ("findM'': " +++ s)
-  end.
-
-Definition nth_errorN {A} (xs : list A) (n : N) : option A :=
-  let fix go n xs :=
-    match n, xs with
-    | _, [] => None
-    | N0, x :: _ => Some x
-    | n, _ :: xs => go (n - 1) xs
-    end
-  in go 0 xs.
-
-Definition nthM {A} (n : N) (xs : list A) : GM A :=
-  match nth_errorN xs n with
-  | Some v => ret v
-  | None => raise ("nthM: " +++ string_of_N n)
-  end.
-
-Definition nthM_nat {A} (n : nat) (xs : list A) : GM A :=
-  match nth_error xs n with
-  | Some v => ret v
-  | None => raise ("nthM: " +++ nat2string10 n)
-  end.
-
-(* Parse a mutual inductive definition into constructor names + argument types *)
-
-Definition ind_info := Map string ((mutual_inductive_body × list inductive) × nat).
-
-Record mind_graph_t := mk_mg {
-  mgAtoms : Map string term; (* name -> AST e.g. "list_nat" -> tApp {| .. |} {| .. |} *)
-  mgTypes : Map string term; (* name -> AST *)
-  mgConstrs : Map string (list string); (* e.g. "nat" -> ["S"; "O"] *)
-  mgChildren : Map string ((N × list string) × string) }. (* e.g. "cons_nat" -> (1, ["nat"; "list_nat"], "list_nat") *)
-
-Definition is_sep (c : ascii) : bool :=
-  match c with
-  | "." | "#" => true
-  | _ => false
-  end%char.
-
-Fixpoint qualifier (s : string) : string :=
-  let fix go s :=
-    match s with
-    | "" => ("", false)
-    | String c s => 
-      let '(s, qualified) := go s in
-      let qualified := (qualified || is_sep c)%bool in
-      (if qualified then String c s else s, qualified)
-    end
-  in fst (go s).
-
-Definition inductives_of_env (decls : global_env) : ind_info :=
-  fold_right
-    (fun '(kername, decl) m =>
-      match decl with
-      | ConstantDecl _ => m
-      | InductiveDecl mbody =>
-        let qual := qualifier kername in
-        let kernames := mapi (fun i body => (i, qual +++ body.(ind_name))) mbody.(ind_bodies) in
-        let inds := map (fun '(i, kername) => mkInd kername i) kernames in
-        fold_right
-          (fun '(i, kername) m =>
-            insert kername (mbody, inds, i) m)
-          m kernames
-      end)
-    empty
-    decls.
-
-Fixpoint mangle (inds : ind_info) (e : term) : GM string :=
-  match e with
-  | tRel n => raise "mangle: relative binders not allowed"
-  | tApp tycon tys =>
-    let! tycon := mangle inds tycon in
-    foldlM
-      (fun tys ty =>
-        let! ty := mangle inds ty in
-        ret (tys +++ "_" +++ ty))
-      tycon tys
-  | tInd ind n =>
-    let! '(mbody, _, _) := findM ind.(inductive_mind) inds in
-    let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-    ret body.(ind_name)
-  | tConstruct ind n _ =>
-    let! '(mbody, _, _) := findM ind.(inductive_mind) inds in
-    let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-    let! '(c, _, _) := nthM_nat n body.(ind_ctors) in
-    ret c
-  | e => raise ("mangle: Unrecognized type: " +++ string_of_term e)
-  end.
-
-Fixpoint decompose_sorts (ty : term) : list name × term :=
-  match ty with
-  | tProd n (tSort _) ty =>
-    let '(ns, ty) := decompose_sorts ty in
-    (n :: ns, ty)
-  | ty => ([], ty)
-  end.
-
-Definition tm_type_of (inds : ind_info) (ind : inductive) (n : nat) (pars : list term) : GM term :=
-  let! '(mbody, inductives, _) := findM ind.(inductive_mind) inds in
-  let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-  let! '(c, cty, arity) := nthM_nat n body.(ind_ctors) in
-  let '(_, cty) := decompose_sorts cty in
-  let ind_env := (rev pars ++ rev_map (fun ind => tInd ind []) inductives)%list in
-  ret (subst0 ind_env cty).
-
-(* Types of constructors for ind specialized to pars *)
-Definition constr_types (inds : ind_info) (ind : inductive) (pars : list term)
-  : GM (list (string × (list term × term))) :=
-  let! '(mbody, _, _) := findM ind.(inductive_mind) inds in
-  let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-  foldriM_nat
-    (fun n _ cs =>
-      let ctr := mkApps (tConstruct ind n []) pars in
-      let! ctr_ty := tm_type_of inds ind n pars in
-      let '(_, tys, rty) := decompose_prod ctr_ty in
-      let! c := mangle inds ctr in
-      ret ((c, (tys, rty)) :: cs))
-    [] body.(ind_ctors).
-
-Definition decompose_ind (ty : term) : GM (inductive × list term) :=
-  match ty with
-  | tInd ind _ => ret (ind, [])
-  | tApp (tInd ind _) ts => ret (ind, ts)
-  | ty => raise "decompose_ind: Unrecognized type"
-  end.
-
-Definition build_graph (atoms : list term) (p : program) : GM (ind_info × mind_graph_t) :=
-  let '(decls, ty) := p in
-  let! '(ind, pars) := decompose_ind ty in
-  let inds := inductives_of_env decls in
-  let! atoms :=
-    fold_right
-      (fun '(k, v) m => insert k v m)
-      empty
-      <$> (let! ids := mapM (mangle inds) atoms in ret (combine ids atoms))
-  in
-  let fix go n (ind : inductive) (pars : list term) g
-      : GM mind_graph_t :=
-    match n with O => ret g | S n =>
-      let ty := mkApps (tInd ind []) pars in
-      let! s := mangle inds ty in
-      if member s g.(mgTypes) then ret g else
-      let mgTypes := insert s ty g.(mgTypes) in
-      let! ctys := constr_types inds ind pars in
-      let mgConstrs := insert s (map fst ctys) g.(mgConstrs) in
-      let! mgChildren :=
-        foldriM
-          (fun n '(c, (tys, _)) m =>
-            let! tys := mapM (mangle inds) tys in
-            ret (insert c (n, tys, s) m))
-          g.(mgChildren) ctys
-      in
-      let g := mk_mg g.(mgAtoms) mgTypes mgConstrs mgChildren in
-      let! g :=
-        foldrM
-          (fun '(c, (tys, _)) g =>
-            foldrM
-              (fun ty g =>
-                let! '(ind, pars) := decompose_ind ty in
-                go n ind pars g)
-              g tys)
-          g ctys
-      in
-      ret g
-    end
-  in
-  let! g := go 100%nat ind pars (mk_mg atoms atoms empty empty) in
-  ret (inds, g).
-
-(* Generate a type of depth-1 frames + associated operations *)
-
-Record frame := mk_frame {
-  hIndex : nat;
-  hName : string;
-  hConstr : term;
-  hLefts : list term;
-  hFrame : term;
-  hRights : list term;
-  hRoot : term }.
-
-Definition fn : term -> term -> term := tProd nAnon.
-Definition type0 := tSort Universe.type0.
-Definition func x t e := tLambda (nNamed x) t e.
-Definition lam t e := tLambda nAnon t e.
-
-Definition gen_univ_univD (typename : string) (g : mind_graph_t)
-  : ((mutual_inductive_entry × Map string N) × string) × term :=
-  let ty_u := typename +++ "_univ" in
-  let mgTypes := list_of_map g.(mgTypes) in
-  let tys := map (fun '(ty, _) => (ty, ty_u +++ "_" +++ ty)) mgTypes in
-  let ty_ns := foldri (fun n '(ty, _) m => insert ty n m) (fun _ => empty) tys in
-  let tys := map snd tys in
-  let ind_entry : one_inductive_entry := {|
-    mind_entry_typename := ty_u;
-    mind_entry_arity := type0;
-    mind_entry_template := false;
-    mind_entry_consnames := tys;
-    mind_entry_lc := repeat (tRel 0) #|tys| |}
-  in
-  let univ_ind := mkInd (typename +++ "_univ") 0 in
-  let univ := tInd univ_ind [] in
-  let body :=
-    func "u" univ
-      (tCase (univ_ind, O)
-        (lam univ type0)
-        (tRel 0) (map (fun '(_, ty) => (O, ty)) mgTypes))
-  in ({|
-    mind_entry_record := None;
-    mind_entry_finite := Finite;
-    mind_entry_params := [];
-    mind_entry_inds := [ind_entry];
-    mind_entry_universes := Monomorphic_entry (LevelSet.empty, ConstraintSet.empty);
-    mind_entry_variance := None;
-    mind_entry_private := None |}, ty_ns, typename +++ "_univD", body).
-
-Definition holes_of {A} (xs : list A) : list ((list A × A) × list A) :=
-  let fix go l xs :=
-    match xs with
-    | [] => []
-    | x :: xs => (rev l, x, xs) :: go (x :: l) xs
-    end
-  in go [] xs.
-
-Definition gen_frames (g : mind_graph_t) : GM (list frame × Map string (list frame)) :=
-  let! cfs :=
-    foldrM
-      (fun '(c, (n_constr, tys, rty)) hs =>
-        let! tys := mapM (fun ty => findM ty g.(mgTypes)) tys in
-        let! rty := findM rty g.(mgTypes) in
-        let! '(ind, pars) := decompose_ind rty in
-        foldriM
-          (fun n_arg '(l, x, r) hs =>
-            ret ((c, {|
-              hIndex := 0; (* bogus! filled in below *)
-              hName := c +++ string_of_N n_arg;
-              hConstr := mkApps (tConstruct ind (N.to_nat n_constr) []) pars;
-              hLefts := l;
-              hFrame := x;
-              hRights := r;
-              hRoot := rty |}) :: hs))
-          hs (holes_of tys))
-      [] (list_of_map g.(mgChildren))
-  in
-  ret (foldri_nat
-    (fun i '(c, f) '(fs, m) =>
-      let f := mk_frame i f.(hName) f.(hConstr) f.(hLefts) f.(hFrame) f.(hRights) f.(hRoot) in
-      (f :: fs, update c (cons f) [] m))
-    (fun _ => ([], empty))
-    cfs).
-
-Definition index_of {A} (f : A -> bool) (xs : list A) : GM nat :=
-  let fix go n xs :=
-    match xs with
-    | [] => raise "index_of: not found"
-    | x :: xs => if f x then ret n else go (S n) xs
-    end
-  in go O xs.
-
-Definition gen_frame_t (typename : string) (inds : ind_info) (g : mind_graph_t) (fs : list frame)
-  : GM mutual_inductive_entry :=
-  let univ := tInd (mkInd (typename +++ "_univ") 0) [] in
-  let to_univ ty :=
-    let! mangled := mangle inds ty in
-    let! n := index_of (fun '(s, _) => eq_string s mangled) (list_of_map g.(mgTypes)) in
-    ret (tConstruct (mkInd (typename +++ "_univ") 0) n [])
-  in
-  let! ctr_types :=
-    mapM
-      (fun '(mk_frame _ _ _ ls t rs root) =>
-        let! args := mapM to_univ [t; root] in
-        let rty := mkApps (tRel #|ls ++ rs|) args in
-        ret (fold_right fn (fold_right fn rty rs) ls))
-      fs
-  in
-  let ind_entry : one_inductive_entry := {|
-    mind_entry_typename := typename +++ "_frame_t";
-    mind_entry_arity := fn univ (fn univ type0);
-    mind_entry_template := false;
-    mind_entry_consnames := map (fun h => h.(hName)) fs;
-    mind_entry_lc := ctr_types |}
-  in
-  ret {|
-    mind_entry_record := None;
-    mind_entry_finite := Finite;
-    mind_entry_params := [];
-    mind_entry_inds := [ind_entry];
-    mind_entry_universes := Monomorphic_entry (LevelSet.empty, ConstraintSet.empty);
-    mind_entry_variance := None;
-    mind_entry_private := None |}.
-
-Definition gen_frameD (typename : string) (univD_kername : string) (fs : list frame)
-  : string × term :=
-  let univ_ty := tInd (mkInd (typename +++ "_univ") O) [] in
-  let univD ty := mkApps (tConst univD_kername []) [ty] in
-  let frame_ind := mkInd (typename +++ "_frame_t") O in
-  let frame_ty := mkApps (tInd frame_ind []) [tRel 1; tRel O] in
-  let mk_arm h :=
-    let 'mk_frame _ name constr lefts frame rights root := h in
-    let ctr_arity := #|lefts ++ rights| in
-    let indices := rev (seq (1 + #|rights|) #|lefts|) ++ [O] ++ rev (seq 1 #|rights|) in
-    let add_arg arg_ty body := lam arg_ty body in
-    (ctr_arity, fold_right lam (fold_right lam (lam frame (mkApps constr (map tRel indices))) rights) lefts)
-  in
-  let body :=
-    func "A" univ_ty (func "B" univ_ty (func "h" frame_ty
-      (tCase (frame_ind, O)
-        (func "A" univ_ty (func "B" univ_ty (func "h" frame_ty
-          (fn (univD (tRel 2)) (univD (tRel 2))))))
-        (tRel O) (map mk_arm fs))))
-  in
-  (typename +++ "_frameD", body).
-
-Definition kername_of_const (s : string) : TemplateMonad string :=
-  ref <- tmAbout s ;;
-  match ref with
-  | Some (ConstRef kername) => TM.ret kername
-  | Some _ => tmFail ("kername_of_const: Not a constant: " +++ s)
-  | None => tmFail ("kername_of_const: Not in scope: " +++ s)
-  end.
-
-Definition gen_Frame_ops (typename : string) (T : program) (atoms : list term) : GM _ :=
-  let! '(inds, g) := build_graph atoms T in
-  let! '(fs, cfs) := gen_frames g in
-  let '(univ, univ_of_tyname, univD, univD_body) := gen_univ_univD typename g in
-  let! frame_t := gen_frame_t typename inds g fs in
-  ret (inds, g, fs, cfs, univ, univ_of_tyname, univD, univD_body, frame_t).
-
-Record aux_data_t := mk_aux_data {
-  aIndInfo : ind_info;
-  aTypename : string;
-  aGraph : mind_graph_t;
-  aUnivOfTyname : Map string N;
-  aFramesOfConstr : Map string (list frame) }.
-
-Class AuxData (U : Set) := aux_data : aux_data_t.
-
-Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Type) : TemplateMonad unit :=
-  p <- tmQuoteRec T ;;
-  atoms <- monad_map tmQuote atoms ;;
-  mlet (inds, g, fs, cfs, univ, univ_of_tyname, univD, univD_body, frame_t) <-
-    runGM (gen_Frame_ops typename p atoms) ;;
-  tmMkInductive univ ;;
-  tmMkDefinition univD univD_body ;;
-  tmMkInductive frame_t ;;
-  univD_kername <- kername_of_const univD ;;
-  let '(frameD, frameD_body) := gen_frameD typename univD_kername fs in
-  tmMkDefinition frameD frameD_body ;;
-  tmMkDefinition (typename +++ "_Frame_ops") (
-    mkApps (tConstruct (mkInd "Frame" 0) 0 []) [
-      tInd (mkInd (typename +++ "_univ") 0) [];
-      tConst (typename +++ "_univD") [];
-      tInd (mkInd (typename +++ "_frame_t") 0) [];
-         tConst (typename +++ "_frameD") []]) ;;
-  qinds <- tmQuote inds ;;
-  qg <- tmQuote g ;;
-  quniv_of_tyname <- tmQuote univ_of_tyname ;;
-  qtypename <- tmQuote typename ;;
-  qcfs <- tmQuote cfs ;;
-  tmMkDefinition (typename +++ "_aux_data")
-    (mkApps <%@mk_aux_data%> [qinds; qtypename; qg; quniv_of_tyname; qcfs]).
+Require Export CertiCoq.L6.PrototypeGenFrame.
 
 (* -------------------- Converting between named and indices --------------------
    Indices are a real pain for some of the things we want to do.
@@ -930,16 +243,14 @@ Definition rename (σ : Map string string) : term -> term :=
 (* The type of correct rewriters (AuxData and Preserves instances are additional assumptions
    needed by the generator) *)
 Definition rewriter {U} `{Frame U} `{AuxData U} (root : U) (R : relation (univD root))
-  (R_misc S_misc : Set)
   (D : forall {A}, univD A -> Set) `{@Delayed U H (@D)}
   (R_C : forall {A}, frames_t A root -> Set)
-  (R_e : forall {A}, univD A -> Set)
   (St : forall {A}, frames_t A root -> univD A -> Set)
- `{@Preserves_R_C U H root (@R_C)}
+ `{@Preserves_R U H root (@R_C)}
  `{@Preserves_S U H root (@St)}
 :=
-  Fuel -> R_misc -> S_misc -> forall A (C : @frames_t U H A root) (e : univD A) (d : D e),
-  rw_for root R S_misc (@R_C) (@R_e) (@St) C (delayD e d).
+  Fuel -> forall A (C : @frames_t U H A root) (e : univD A) (d : D e),
+  rw_for root R (@R_C) (@St) C (delayD e d).
 
 (* ---------- Flags to aid in proof saerch ---------- *)
 
@@ -949,6 +260,8 @@ Inductive EditDelay (s : string) : Prop := MkEditDelay.
 Inductive PreserveTopdownEdit (s : string) : Prop := MkPreserveTopdownEdit.
 Inductive PreserveBottomupEdit (s : string) : Prop := MkPreserveBottomupEdit.
 Inductive RunRule (s : string) : Prop := MkRunRule.
+Inductive Success (s : string) : Prop := MkSuccess.
+Inductive Failure (s : string) : Prop := MkFailure.
 
 (* For each constructor, *)
 Inductive ConstrDelay {A} (c : A) : Prop := MkConstrDelay.
@@ -1080,25 +393,20 @@ Record rule_t := mk_rule {
   rRhs : term;
   rLhsVars : Set' string;
   rRecVars : Set' string;
-  rSpecialVars : Set' string;
-  rOneRMisc : term;
-  rOneSMisc : term;
-  rGuard : term }.
+  rSpecialVars : Set' string; }.
 Record rules_t := mk_rules {
   rR : inductive;
   rRules : list rule_t;
   rUniv : inductive;
   rRootU : nat;
-  rHFrame : term;
-  rRMisc : term;
-  rSMisc : term }.
+  rHFrame : term; }.
 
 Definition ctor_ty := (string × term) × nat.
 Definition ctors_ty := list ctor_ty.
 
 Section GoalGeneration.
 
-Context (R_C R_e St : term).
+Context (R_C St : term).
 
 (* Check if a term is a variable if you strip off casts *)
 Fixpoint is_var (x : term) : option string :=
@@ -1136,17 +444,7 @@ Definition rec_rhs_vars_of : term -> Set' string.
           end
         | _ => empty
         end
-      else if (
-          (func ==? (prefix +++ "Put")) ||
-          (func ==? (prefix +++ "Modify")) ||
-          (func ==? (prefix +++ "Local")))%bool
-      then
-        match args with
-        | [_; _; _; rhs] => go rhs
-        | _ => empty
-        end
-      else
-        empty
+      else empty
     | _ => empty
     end
   in go
@@ -1161,13 +459,6 @@ Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
   in
   let '(Γ, rty) := decompose_prod_assum [] ctor_ty in
   let! Γ := named_of_context Γ in
-  let! '(Γ, R_misc, S_misc, guard) :=
-    match Γ with
-    | (_, {| decl_type := tApp <%@When%> [R_misc; S_misc; guard] |}) :: Γ =>
-      ret (Γ, R_misc, S_misc, guard)
-    | _ => raise "rule_of_ind_ctor: missing When clause"
-    end
-  in
   match rty with
   (* Topdown rule *)
   | tApp (tVar _) [
@@ -1178,7 +469,7 @@ Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
     let rec_vars := rec_rhs_vars_of rhs in
     let special_vars := rec_vars ∩ lhs_vars in
     ret (mk_rule name ctor_ty arity dTopdown hole_ut Γ C lhs rhs
-      lhs_vars rec_vars special_vars R_misc S_misc guard)
+      lhs_vars rec_vars special_vars)
   (* Bottomup rule *)
   | tApp (tConst _BottomUp []) [_; tApp (tVar _) [
       tApp (tConst _framesD []) [
@@ -1188,7 +479,7 @@ Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
     let rec_vars := rec_rhs_vars_of rhs in
     let special_vars := rec_vars ∩ lhs_vars in
     ret (mk_rule name ctor_ty arity dBottomup hole_ut Γ C lhs rhs
-      lhs_vars rec_vars special_vars R_misc S_misc guard)
+      lhs_vars rec_vars special_vars)
   | rty => raise ("rule_of_ind_ctor: " +++ string_of_term rty)
   end
 )).
@@ -1203,11 +494,11 @@ Definition parse_rel_pure (ind : inductive) (mbody : mutual_inductive_body)
   in
   match rules with
   | [] => raise "parse_rel: empty relation"
-  | {| rΓ := Γ; rC := tVar C; rOneRMisc := R_misc; rOneSMisc := S_misc |} :: _ =>
+  | {| rΓ := Γ; rC := tVar C |} :: _ =>
     let! Cty := findM C Γ in
     match Cty.(decl_type) with
     | tApp (tConst _frames_t []) [tInd univ []; HFrame; _hole; tConstruct _univ root []] =>
-      ret (mk_rules ind rules univ root HFrame R_misc S_misc)
+      ret (mk_rules ind rules univ root HFrame)
     | _ => raise "parse_rel: C's type illformed"
     end
   | _ :: _ => raise "parse_rel: C not tRel"
@@ -1267,10 +558,8 @@ Context
 Context (delay_t : term)
         (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *).
 Context
-  (R_C R_e St : term) (rules : rules_t)
+  (R_C St : term) (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
-  (R_misc := rules.(rRMisc))
-  (S_misc := rules.(rSMisc))
   (rw_univ_i := rules.(rUniv))
   (rw_univ := tInd rw_univ_i [])
   (mk_univ := fun n => tConstruct rw_univ_i n [])
@@ -1353,7 +642,7 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
-Context (R_C R_e St : term) (rules : rules_t)
+Context (R_C St : term) (rules : rules_t)
         (rw_univ := rules.(rUniv))
         (HFrame := rules.(rHFrame))
         (root := rules.(rRootU))
@@ -1361,8 +650,6 @@ Context (R_C R_e St : term) (rules : rules_t)
         (frames_t := mkApps <%@frames_t%> [tInd rw_univ []; HFrame])
         (* specialize to rw_univ -> Set *)
         (univD := mkApps <%@univD%> [tInd rw_univ []; HFrame]) 
-        (R_misc := rules.(rRMisc))
-        (S_misc := rules.(rSMisc))
         (mk_univ := fun n => tConstruct rw_univ n []).
 
 Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
@@ -1384,31 +671,23 @@ Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
   (* Filter to drop C *)
   let rhs_ctx := filter (fun '(_, x, decl) => negb (x ==? C)) rhs_ctx in
   let! R := gensym "R" in
-  let! mr := gensym "mr" in
-  let! ms := gensym "ms" in
   let! r_C := gensym "r_C" in
-  let! r_e := gensym "r_e" in
   let! s := gensym "s" in
-  let guard := rule.(rGuard) in
   let hole := mk_univ hole in
   let root := mk_univ root in
-  ret (fn (mkApps <%ExtraVars%> [quote_string rule.(rName)])
-    (tProd (nNamed mr) R_misc (tProd (nNamed ms) S_misc
+  let rule_name := quote_string rule.(rName) in
+  ret (fn (mkApps <%ExtraVars%> [rule_name])
     (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [hole; root])
     (fold_right
       (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty)
-      (tProd (nNamed r_C) (mkApps R_C [hole; tVar C])
-       (tProd (nNamed r_e) (mkApps R_e [hole; lhs])
+       (tProd (nNamed r_C) (mkApps R_C [hole; tVar C])
        (tProd (nNamed s) (mkApps St [hole; tVar C; lhs])
        (fn
-         (fold_right
-           (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty)
-           (fn
-             (mkApps <%@eq%> [<%bool%>; mkApps guard [tVar mr; tVar ms]; <%true%>])
-             (tVar R))
-           (rev rhs_ctx))
-         (fn (tVar R) (tVar R))))))
-      (rev lhs_ctx))))))).
+         (fn (mkApps <%Success%> [rule_name]) (fold_right
+           (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty) (tVar R)
+           (rev rhs_ctx)))
+         (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R)) (tVar R)))))
+      (rev lhs_ctx))))).
 
 Definition gen_extra_vars_tys : GM (list term) :=
   mapM
@@ -1422,29 +701,18 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
-Context (R_C R_e St : term)
+Context (R_C St : term)
         (rs : rules_t)
         (rw_univ := rs.(rUniv)).
 
 Definition gen_preserve_edit_ty  (rule : rule_t) : term :=
   let '{| rDir := d; rHoleU := hole_ut; rΓ := Γ; rC := C; rLhs := lhs; rRhs := rhs |} := rule in
   let hole_t := tConstruct rw_univ hole_ut [] in
-  match d with
-  | dTopdown =>
-    fn (mkApps <%PreserveTopdownEdit%> [quote_string rule.(rName)])
-    (it_mkProd_or_LetIn (drop_names Γ)
-    (fn (mkApps R_C [hole_t; C])
-    (fn (mkApps R_e [hole_t; lhs])
-    (fn (mkApps St [hole_t; C; lhs])
-    (mkApps <%prod%> [mkApps R_e [hole_t; rhs]; mkApps St [hole_t; C; rhs]])))))
-  | dBottomup =>
-    fn (mkApps <%PreserveBottomupEdit%> [quote_string rule.(rName)])
-    (it_mkProd_or_LetIn (drop_names Γ)
-    (fn (mkApps R_C [hole_t; C])
-    (fn (mkApps R_e [hole_t; lhs])
-    (fn (mkApps St [hole_t; C; lhs])
-    (mkApps St [hole_t; C; rhs])))))
-  end.
+  fn (mkApps <%PreserveTopdownEdit%> [quote_string rule.(rName)])
+  (it_mkProd_or_LetIn (drop_names Γ)
+  (fn (mkApps R_C [hole_t; C])
+  (fn (mkApps St [hole_t; C; lhs])
+  (mkApps <%prod%> [mkApps R_C [hole_t; C]; mkApps St [hole_t; C; rhs]])))).
 
 Definition gen_preserve_edit_tys : GM (list term) :=
   mapM (fun t => indices_of [] (gen_preserve_edit_ty t)) rs.(rRules).
@@ -1456,7 +724,7 @@ End GoalGeneration.
 Section GoalGeneration.
 
 Context
-  (R_C R_e St : term)
+  (R_C St : term)
   (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
   (rw_univ_i := rules.(rUniv))
@@ -1464,23 +732,17 @@ Context
   (mk_univ := fun n => tConstruct rw_univ_i n [])
   (HFrame := rules.(rHFrame))
   (root := mk_univ rules.(rRootU))
-  (R_misc := rules.(rRMisc))
-  (S_misc := rules.(rSMisc))
   (* specialize to forall A, frames_t A root -> univD A -> Set *)
   (rw_for := mkApps <%@rw_for%> [
-    rw_univ; HFrame; root; rw_rel; S_misc; R_C; R_e; St])
-  (rw_for' := mkApps <%@rw_for'%> [
-    rw_univ; HFrame; root; rw_rel; S_misc; R_C; St]).
+    rw_univ; HFrame; root; rw_rel; R_C; St]).
 
 Definition gen_run_rule_ty (r : rule_t) : term. ltac1:(refine(
   let hole := mk_univ r.(rHoleU) in
-  let rw_for := match r.(rDir) with dTopdown => rw_for | dBottomup => rw_for' end in
   fn (mkApps <%RunRule%> [quote_string r.(rName)])
-  (fn R_misc (fn S_misc
   (it_mkProd_or_LetIn (drop_names r.(rΓ))
   (fn
     (mkApps rw_for [hole; r.(rC); r.(rRhs)])
-    (mkApps rw_for [hole; r.(rC); r.(rLhs)])))))
+    (mkApps rw_for [hole; r.(rC); r.(rLhs)])))
 )).
 Defined.
 
@@ -1575,10 +837,8 @@ Context
   (univ_of_tyname := aux_data.(aUnivOfTyname))
   (frames_of_constr := aux_data.(aFramesOfConstr)).
 Context
-  (R_C R_e St : term) (rules : rules_t)
+  (R_C St : term) (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
-  (R_misc := rules.(rRMisc))
-  (S_misc := rules.(rSMisc))
   (rw_univ_i := rules.(rUniv))
   (rw_univ := tInd rules.(rUniv) [])
   (mk_univ := fun n => tConstruct rw_univ_i n [])
@@ -1605,7 +865,7 @@ Context
   (resProof := mkApps <%@resProof%> [rw_univ; HFrame; root; rw_rel; St])
   (* specialize to forall A, frames_t A root -> univD A -> Set *)
   (rw_for := mkApps <%@rw_for%> [
-    rw_univ; HFrame; root; rw_rel; S_misc; R_C; R_e; St])
+    rw_univ; HFrame; root; rw_rel; R_C; St])
   (frame_ind := mkInd (typename +++ "_frame_t") 0)
   (frame_t := tInd frame_ind [])
   (frame_cons := fun n => tConstruct frame_ind n [])
@@ -1642,7 +902,7 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
   let! C := gensym "C" in
   let constr_ty := fold_right (fun '(_, _, ty, _, _, _) res => fn ty res) rty_term xutfs in 
   ret (fn (mkApps <%@SmartConstr%> [constr_ty; constr])
-    (fn R_misc (fn S_misc (tProd (nNamed C) (mkApps frames_t [univ_rty; root]) 
+    (tProd (nNamed C) (mkApps frames_t [univ_rty; root]) 
     (fold_right
       (fun '(x, _, t, _, _, _) ty => tProd (nNamed x) t ty)
       (fold_right
@@ -1653,7 +913,6 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                 rty_term; mkApps <%@frameD%> [
                   rw_univ; HFrame; u; univ_rty;
                   mkApps f (map tVar (lxs ++ rxs)); tVar x]])
-              (fn R_misc (fn S_misc
               (fold_right
                 (fun '(x', _, t, _, _, _) ty => if x ==? x' then ty else tProd (nNamed x') t ty)
                   (mkApps rw_for [
@@ -1661,11 +920,11 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                       u; univ_rty; root; 
                       mkApps f (map tVar (lxs ++ rxs)); tVar C];
                     tVar x])
-                xutfs))))
+                xutfs))
             ty)
         (mkApps rw_for [univ_rty; tVar C; mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
         xutfs)
-      xutfs)))))
+      xutfs)))
 )).
 Defined.
 
@@ -1797,10 +1056,8 @@ Context
 Context (delay_t : term)
         (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *).
 Context
-  (R_C R_e St : term) (rules : rules_t)
+  (R_C St : term) (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
-  (R_misc := rules.(rRMisc))
-  (S_misc := rules.(rSMisc))
   (rw_univ_i := rules.(rUniv))
   (rw_univ := tInd rw_univ_i [])
   (mk_univ := fun n => tConstruct rw_univ_i n [])
@@ -1817,14 +1074,11 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let t_univ_i := N.to_nat t_univ_i in
   let! t_ty := findM' t_tyname graph.(mgTypes) "t_tyname" in
   let! '(ind, pars) := decompose_ind t_ty in
-  let! mr := gensym "mr" in
-  let! ms := gensym "ms" in
   let! d := gensym "d" in
   let! R := gensym "R" in
   let! C := gensym "C" in
   let! e := gensym (abbreviate t_tyname) in
   let! r_C := gensym "r_C" in
-  let! r_e := gensym "r_e" in
   let! s := gensym "s" in
   let t_univ := mk_univ t_univ_i in
   let! constrs := findM' t_tyname graph.(mgConstrs) "t_tyname" in
@@ -1902,7 +1156,6 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
         let rΓ := filter (fun '(x, decl) => negb (x ==? localC)) r.(rΓ) in
         let σ := sing localC C in
         let rΓ := map (on_snd (map_decl (rename σ))) rΓ in
-        let rGuard := rename σ r.(rGuard) in
         let! '(extra_vars, σ) :=
           let Γ := map_of_list rΓ in
           mfoldM
@@ -1925,7 +1178,6 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
         in
         ret (fn (mkApps <%InspectCaseRule%> [quote_string r.(rName)]) (fn header
           (it_mkProd_or_LetIn (drop_names rΓ)
-          (fn (mkApps <%@eq%> [<%bool%>; mkApps rGuard [tVar mr; tVar ms]; <%true%>])
           (fold_right
             (fun '(x, x', md', xty, u) ty =>
               tProd (nNamed x') xty
@@ -1942,18 +1194,16 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
                 end)
               (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; old_lhs]) (tVar R))
               extra_vars))
-            extra_vars))))))
+            extra_vars)))))
       applicable
   in
   ret (fn (mkApps <%@Topdown%> [rw_univ; t_univ])
-    (tProd (nNamed mr) R_misc (tProd (nNamed ms) S_misc 
     (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [t_univ; root])
     (tProd (nNamed e) (mkApps univD [t_univ])
     (tProd (nNamed d) (mkApps delay_t [t_univ; tVar e])
     (tProd (nNamed r_C) (mkApps R_C [t_univ; tVar C]) 
-    (tProd (nNamed r_e) (mkApps R_e [t_univ; mkApps delayD [t_univ; tVar e; tVar d]]) 
     (tProd (nNamed s) (mkApps St [t_univ; tVar C; mkApps delayD [t_univ; tVar e; tVar d]])
-    (fold_right fn (fold_right fn (tVar R) congruences) applicable)))))))))))
+    (fold_right fn (fold_right fn (tVar R) congruences) applicable))))))))
 )).
 Defined.
 
@@ -1966,8 +1216,6 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let! R := gensym "R" in
   let! C := gensym "C" in
   let! e := gensym (abbreviate t_tyname) in
-  let! mr := gensym "mr" in
-  let! ms := gensym "ms" in
   let! r_C := gensym "r_C" in
   let! s := gensym "s" in
   let t_univ := mk_univ t_univ_i in
@@ -1989,7 +1237,6 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
         let rΓ := filter (fun '(x, decl) => negb (x ==? localC)) r.(rΓ) in
         let σ := sing localC C in
         let rΓ := map (on_snd (map_decl (rename σ))) rΓ in
-        let rGuard := rename σ r.(rGuard) in
         let! header :=
           gen_case_tree ind_info [(tVar e, r.(rLhs))] type0 
             (mkApps <%Active%> [quote_string r.(rName)])
@@ -1998,16 +1245,15 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
         ret (fn (mkApps <%InspectCaseRule%> [quote_string r.(rName)]) (fn header
           (it_mkProd_or_LetIn (drop_names rΓ)
           (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; r.(rLhs)])
-          (fn (mkApps <%@eq%> [<%bool%>; mkApps rGuard [tVar mr; tVar ms]; <%true%>]) (tVar R)))))))
+          (tVar R))))))
       applicable
   in
   ret (fn (mkApps <%@Bottomup%> [rw_univ; t_univ])
-    (tProd (nNamed mr) R_misc (tProd (nNamed ms) S_misc
     (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [t_univ; root])
     (tProd (nNamed e) (mkApps univD [t_univ])
     (tProd (nNamed r_C) (mkApps R_C [t_univ; tVar C]) 
     (tProd (nNamed s) (mkApps St [t_univ; tVar C; tVar e])
-    (fold_right fn (fn (fn <%Fallback%> (tVar R)) (tVar R)) applicable)))))))))
+    (fold_right fn (fn (fn <%Fallback%> (tVar R)) (tVar R)) applicable)))))))
 )).
 Defined.
 
@@ -2041,16 +1287,16 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
-Context (aux : aux_data_t) (delay_t delayD R_C R_e St : term) (rules : rules_t).
+Context (aux : aux_data_t) (delay_t delayD R_C St : term) (rules : rules_t).
 
 Definition gen_all : GM (RwObligations term). ltac1:(refine(
-  let! extra_vars := gen_extra_vars_tys R_C R_e St rules in
+  let! extra_vars := gen_extra_vars_tys R_C St rules in
   let! edit_delays := gen_edit_delay_tys aux delay_t delayD rules in
-  let! preserve_edits := gen_preserve_edit_tys R_C R_e St rules in
-  let! run_rules := gen_run_rule_tys R_C R_e St rules in
+  let! preserve_edits := gen_preserve_edit_tys R_C St rules in
+  let! run_rules := gen_run_rule_tys R_C St rules in
   let! constr_delays := gen_constr_delay_tys delay_t delayD aux in
-  let! smart_constrs := gen_smart_constr_tys aux R_C R_e St rules in
-  let! '(topdowns, bottomups) := gen_inspect_tys aux delay_t delayD R_C R_e St rules in
+  let! smart_constrs := gen_smart_constr_tys aux R_C St rules in
+  let! '(topdowns, bottomups) := gen_inspect_tys aux delay_t delayD R_C St rules in
   ret (mk_obs extra_vars edit_delays preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
@@ -2102,24 +1348,22 @@ Ltac unquote_and_assert_obs obs k :=
 
 Ltac mk_rw_obs k :=
   lazymatch goal with
-  | |- @rewriter ?U ?HFrame ?HAux ?root ?R _ _ ?D ?HDelay ?R_C ?R_e ?St _ _ =>
+  | |- @rewriter ?U ?HFrame ?HAux ?root ?R ?D ?HDelay ?R_C ?St _ _ =>
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
       delay_t <- tmQuote D ;;
       delayD <- tmQuote (@delayD U HFrame D HDelay) ;;
       R_C' <- tmQuote (@R_C) ;;
-      R_e' <- tmQuote (@R_e) ;;
       St' <- tmQuote (@St) ;;
-      ret (delay_t, delayD, R_C', R_e', St')) ltac:(fun pack =>
+      ret (delay_t, delayD, R_C', St')) ltac:(fun pack =>
     lazymatch pack with
-    | (?delay_t, ?delayD, ?R_C', ?R_e', ?St') =>
+    | (?delay_t, ?delayD, ?R_C', ?St') =>
       runGM n (
         let! delay_t' := named_of [] delay_t in
         let! delayD' := named_of [] delayD in
         let! R_C'' := named_of [] R_C' in
-        let! R_e'' := named_of [] R_e' in
         let! St'' := named_of [] St' in
-        gen_all HAux delay_t' delayD' R_C'' R_e'' St'' rules) ltac:(fun qobs n =>
+        gen_all HAux delay_t' delayD' R_C'' St'' rules) ltac:(fun qobs n =>
         unquote_and_assert_obs qobs k)
         (* run_template_program (unquote_all qobs) k) *)
     end))
@@ -2149,45 +1393,40 @@ Ltac assert_obs obs k :=
   end.
 *)
 
-Ltac mk_smart_constr_children root R_C R_e St mr ms s hasHrel Hrel :=
+Ltac mk_smart_constr_children root R_C St s hasHrel Hrel :=
   lazymatch goal with
   | H : SmartConstrCase (frameD ?frame ?hole) -> _ |- _ =>
-    specialize (H (MkSmartConstrCase _) mr ms);
+    specialize (H (MkSmartConstrCase _));
     let x := fresh "x" in
     let s' := fresh "s" in
-    let ms' := fresh "ms" in
     let Hrel' := fresh "Hrel" in
-    edestruct H as [x s' ms' Hrel'];
-    [eapply (@preserve_R_C _ _ root R_C _); cbn; eassumption
-    |apply (@preserve_R_e _ _ R_e _ _ _ frame hole); assumption
+    edestruct H as [x s' Hrel'];
+    [eapply (@preserve_R _ _ root R_C _); cbn; eassumption
     |eapply (@preserve_S_dn _ _ root St _); cbn; eassumption
     |idtac];
-    clear H; clear s ms;
+    clear H; clear s;
     apply (@preserve_S_up _ _ root St _) in s'; cbn in s';
     lazymatch hasHrel with
     | false => idtac
     | true => apply (rt_trans _ _ _ _ _ Hrel) in Hrel'; clear Hrel
     end;
-    mk_smart_constr_children root R_C R_e St mr ms' s' true Hrel'
+    mk_smart_constr_children root R_C St s' true Hrel'
   | _ =>
     lazymatch hasHrel with
-    | false => econstructor; [exact s|exact ms|apply rt_refl]
-    | true => econstructor; [exact s|exact ms|exact Hrel]
+    | false => econstructor; [exact s|apply rt_refl]
+    | true => econstructor; [exact s|exact Hrel]
     end
   end.
 Ltac mk_smart_constr :=
    clear;
-   let mr := fresh "mr" in
-   let ms := fresh "ms" in
    let C := fresh "C" in
    let r_C := fresh "r_C" in
-   let r_e := fresh "r_e" in
    let s := fresh "s" in
-   intros _ mr ms C; intros;
+   intros _ C; intros;
    lazymatch goal with
-   | |- @rw_for _ _ ?root _ _ ?R_C ?R_e ?St _ _ _ =>
-     unfold rw_for in *; intros r_C r_e s;
-     mk_smart_constr_children root R_C R_e St mr ms s false None
+   | |- @rw_for _ _ ?root _ ?R_C ?St _ _ _ =>
+     unfold rw_for in *; intros r_C s;
+     mk_smart_constr_children root R_C St s false None
    end.
 
 (* TODO: hack to get constr given the name of the rule *)
@@ -2206,24 +1445,22 @@ Ltac mk_run_rule :=
     let Hnext := fresh "Hnext" in
     lazymatch goal with H : _ |- _ => revert H end;
     let r_C := fresh "r_C" in
-    let r_e := fresh "r_e" in
     let s := fresh "s" in
-    unfold rw_for; intros Hnext r_C r_e s;
+    unfold rw_for; intros Hnext r_C s;
     eapply (H (MkPreserveTopdownEdit rule)) in s; try eassumption;
-    clear r_e; destruct s as [r_e s];
+    clear r_C; destruct s as [r_C s];
     let x' := fresh "x'" in
     let s' := fresh "s'" in
-    let ms' := fresh "ms'" in
     let Hrel := fresh "Hrel" in
-    destruct (Hnext r_C r_e s) as [x' s' ms' Hrel];
-    econstructor; [exact s'|exact ms'|];
+    destruct (Hnext r_C s) as [x' s' Hrel];
+    econstructor; [exact s'|];
     eapply rt_trans; [eapply rt_step|exact Hrel];
     run_template_program (tm_get_constr rule) ltac:(fun ctor =>
     match ctor with
     | {| my_projT2 := ?ctor' |} =>
       eapply ctor';
       lazymatch goal with
-      | |- When _ => exact I 
+      (* | |- When _ => exact I  *)
       | _ => eassumption
       end
     end)
@@ -2234,21 +1471,21 @@ Ltac mk_run_rule :=
     lazymatch goal with H : _ |- _ => revert H end;
     let r_C := fresh "r_C" in
     let s := fresh "s" in
-    unfold rw_for'; intros Hnext r_C s;
+    unfold rw_for; intros Hnext r_C s;
     eapply (H (MkPreserveBottomupEdit rule)) in s; try eassumption;
+    clear r_C; destruct s as [r_C s];
     let x' := fresh "x'" in
     let s' := fresh "s'" in
-    let ms' := fresh "ms'" in
     let Hrel := fresh "Hrel" in
-    destruct (Hnext r_C s) as [x' s' ms' Hrel];
-    econstructor; [exact s'|exact ms'|];
+    destruct (Hnext r_C s) as [x' s' Hrel];
+    econstructor; [exact s'|];
     eapply rt_trans; [eapply rt_step|exact Hrel];
     run_template_program (tm_get_constr rule) ltac:(fun ctor =>
     match ctor with
     | {| my_projT2 := ?ctor' |} =>
       eapply ctor';
       lazymatch goal with
-      | |- When _ => exact I 
+      (* | |- When _ => exact I  *)
       | _ => eassumption
       end
     end)
@@ -2281,7 +1518,7 @@ Ltac mk_topdown_congruence :=
     eapply (H (MkInspectCaseCongruence constr) (MkCongruence constr));
     solve [eassumption|reflexivity]
   end.
-Ltac mk_topdown_active mr ms s :=
+Ltac mk_topdown_active s :=
   lazymatch goal with
   | H : InspectCaseRule _ -> Active ?rule -> _, Hdelay : EditDelay ?rule -> _,
     Hextras : ExtraVars ?rule -> _ |- _ =>
@@ -2290,10 +1527,12 @@ Ltac mk_topdown_active mr ms s :=
     lazymatch goal with
     | HdelayD : delayD _ _ = _ |- _ =>
       rewrite HdelayD in s;
-      eapply (Hextras (MkExtraVars rule) mr ms);
+      eapply (Hextras (MkExtraVars rule));
       [(* Find all the misc. arguments by unification *) eassumption ..
-      |(* Success continuation: add rhs vars + assumptions above the line *) intros
+      |(* Success continuation: add rhs vars + assumptions above the line *)
+       intros _; intros
       |(* Failure continuation: forget everything about the rule we just applied *)
+       intros _;
        rewrite <- HdelayD in s;
        clear Hdelay Hextras H;
        repeat lazymatch goal with
@@ -2303,7 +1542,7 @@ Ltac mk_topdown_active mr ms s :=
       [(* Success: apply the proper rule *)
        eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity]; eassumption
       |(* Failure: try to apply other rules *)
-        mk_topdown_active mr ms s]
+        mk_topdown_active s]
     end
   | _ => mk_topdown_congruence
   end.
@@ -2314,32 +1553,29 @@ Ltac mk_topdown :=
   | H : PreserveTopdownEdit _ -> _ |- _ => clear H
   | H : PreserveBottomupEdit _ -> _ |- _ => clear H
   end;
-  let mr := fresh "mr" in
-  let ms := fresh "ms" in
   let d := fresh "d" in
   let R := fresh "R" in
   let C := fresh "C" in
   let e := fresh "e" in
   let r_C := fresh "r_C" in
-  let r_e := fresh "r_e" in
   let s := fresh "s" in
-  intros _ mr ms R C e d r_C r_e s; intros;
+  intros _ R C e d r_C s; intros;
   repeat strip_one_match;
-  mk_topdown_active mr ms s.
+  mk_topdown_active s.
 
 Ltac mk_bottomup_fallback :=
   lazymatch goal with
   | H : InspectCaseRule _ -> Active _ -> _ |- _ => fail
   | H : Fallback -> _ |- _ => exact (H MkFallback)
   end.
-Ltac mk_bottomup_active mr ms :=
+Ltac mk_bottomup_active :=
   lazymatch goal with
   | H : InspectCaseRule _ -> Active ?rule -> _, Hextras : ExtraVars ?rule -> _ |- _ =>
-    eapply (Hextras (MkExtraVars rule) mr ms);
-    [eassumption..|intros|clear Hextras H];
+    eapply (Hextras (MkExtraVars rule));
+    [eassumption..|intros _; intros|intros _; clear Hextras H];
     [eapply (H (MkInspectCaseRule rule) (MkActive rule)); eauto
     (* TODO: eassumption not sufficient because sometimes need reflexivity? *)
-    |mk_bottomup_active mr ms]
+    |mk_bottomup_active]
   | _ => mk_bottomup_fallback
   end.
 Ltac mk_bottomup :=
@@ -2350,16 +1586,14 @@ Ltac mk_bottomup :=
   | H : PreserveTopdownEdit _ -> _ |- _ => clear H
   | H : PreserveBottomupEdit _ -> _ |- _ => clear H
   end;
-  let mr := fresh "mr" in
-  let ms := fresh "ms" in
   let R := fresh "R" in
   let C := fresh "C" in
   let e := fresh "e" in
   let r := fresh "r" in
   let s := fresh "s" in
-  intros _ mr ms R C e r s; intros;
+  intros _ R C e r s; intros;
   repeat strip_one_match;
-  mk_bottomup_active mr ms.
+  mk_bottomup_active.
 
 Ltac try_find_constr e k_constr k_atom :=
   lazymatch goal with
@@ -2370,36 +1604,17 @@ Ltac try_find_constr e k_constr k_atom :=
     | _ => k_atom e
     end
   end.
-Ltac next_action e k_put k_modify k_local k_rec k_constr k_atom :=
+Ltac next_action e k_rec k_constr k_atom :=
   lazymatch e with
-  | Put ?s ?e' => k_put s e'
-  | Modify ?f ?e' => k_modify f e'
-  | Local ?f ?e' => k_local f e'
   | Rec ?e' => k_rec e'
   | _ => try_find_constr e k_constr k_atom
   end.
 
-Ltac mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr ms :=
+Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
   let rec go _ :=
     lazymatch goal with
-    | |- rw_for _ _ _ _ _ _ _ ?e =>
+    | |- @rw_for _ _ _ _ _ _ _ _ ?e =>
       next_action e 
-        (* Monadic operations: apply the corresponding combinator and continue *)
-        ltac:(fun f e' =>
-          (* idtac "put" f e'; *)
-          (* match goal with |- ?G => idtac G end; *)
-          (* idtac) *)
-          apply (@rw_Put univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear dependent mr; clear dependent ms; intros mr ms; go tt)
-        ltac:(fun f e' =>
-          (* idtac "modify" f e'; *)
-          (* match goal with |- ?G => idtac G end; *)
-          (* idtac) *)
-          apply (@rw_Modify univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear dependent mr; clear dependent ms; intros mr ms; go tt)
-        ltac:(fun f e' => 
-          apply (@rw_Local univ HFrame root R R_misc S_misc mr ms R_C R_e St);
-          clear dependent mr; clear dependent ms; intros mr ms; go tt)
         (* Recursive calls: *)
         ltac:(fun e' =>
           match e' with
@@ -2411,7 +1626,7 @@ Ltac mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr
             | H : x = delayD _ ?d |- _ =>
               (* ...then we can recur with d to save a tree traversal *)
               rewrite H;
-              apply (recur mr ms _ _ _ d)
+              apply (recur _ _ _ d)
             end
           (* If recursive call on arbitrary function call with variable as last argument... *)
           | ?f ?x =>
@@ -2422,32 +1637,28 @@ Ltac mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr
               (* idtac "can fuse" f x "with" U HFrame D HD univ y d; *)
               (* ...then we can ask the user to prove a fusion law and use it to save a call to f: *)
               let r_C := fresh "r_C" in
-              let r_e := fresh "r_e" in
               let s := fresh "s" in
-              intros r_C r_e s;
+              intros r_C s;
               let Hfuse := fresh "Hfuse" in
               assert (Hfuse : {d' : @D univ y |
                 f (@delayD U HFrame D HD univ y d) = @delayD U HFrame D HD univ y d'});
               [|let r_C' := fresh "r_C" in
-                let r_e' := fresh "r_e" in
                 let s' := fresh "s" in
                 let r_Cty := type of r_C in
-                let r_ety := type of r_e in
                 let sty := type of s in
                 (assert (r_C' : r_Cty) by exact r_C);
-                (assert (r_e' : r_ety) by exact r_e);
                 (assert (s' : sty) by exact s);
-                revert r_C' r_e' s'; clear r_C r_e s;
+                revert r_C' s'; clear r_C s;
                 let Hd' := fresh "Hd" in
                 let d' := fresh "d" in
                 destruct Hfuse as [d' Hd'];
                 rewrite H, Hd';
-                apply (recur mr ms _ _ _ d')]
+                apply (recur _ _ _ d')]
             end
           (* If recursive call isn't on a variable at all, recur with the identity delay *)
           | _ =>
             lazymatch goal with
-            | |- rw_for _ _ _ _ _ _ ?C _ =>
+            | |- @rw_for _ _ _ _ _ _ _ ?C _ =>
               let hole :=
                 lazymatch type of C with
                 | @frames_t _ _ ?hole _ => hole
@@ -2455,32 +1666,29 @@ Ltac mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr
                 end
               in
               rewrite <- (@delay_id_law univ HFrame delay_t HD hole e');
-              apply (recur mr ms _ _ _ (@delay_id univ HFrame delay_t HD hole e'))
+              apply (recur _ _ _ (@delay_id univ HFrame delay_t HD hole e'))
             end
           end)
         (* Constructor nodes: apply the smart constructor... *)
         ltac:(fun constr Hconstr =>
-          apply (Hconstr (MkSmartConstr constr) mr ms);
-          (* ...and recursively expand each child (with proper mr, ms!) *)
-          clear mr ms; intros _ mr ms; intros;
-          go tt)
+          apply (Hconstr (MkSmartConstr constr));
+          (* ...and recursively expand each child *)
+          intros; go tt)
         (* Atoms: just return the atom *)
-        ltac:(fun e => apply (@rw_id univ HFrame root R R_misc S_misc R_C R_e St mr ms))
+        ltac:(fun e => apply (@rw_id univ HFrame root R R_C St))
     end
   in go tt.
 
 Ltac mk_rewriter :=
   lazymatch goal with
-  | |- @rewriter ?univ ?HFrame _ ?root ?R ?R_misc ?S_misc ?delay_t ?HD ?R_C ?R_e ?St _ _ =>
+  | |- @rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
     unfold rewriter;
     lazymatch goal with
     | |- Rewriting.Fuel -> ?T =>
       let recur := fresh "recur" in
-      let mr := fresh "mr" in
-      let ms := fresh "ms" in
       let A := fresh "A" in
-      apply (@Fuel_Fix T); [apply (@rw_base univ _ root _ R_misc S_misc delay_t HD R_C R_e St)|];
-      intros recur mr ms A; destruct A;
+      apply (@Fuel_Fix T); [apply (@rw_base univ _ root _ delay_t HD R_C St)|];
+      intros recur A; destruct A;
       lazymatch goal with
       (* Nonatomic children *)
       | Htopdown : Topdown ?hole -> _ |- forall _ : frames_t ?hole _, _ =>
@@ -2488,56 +1696,48 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        revert mr ms;
-        eapply (@rw_chain univ HFrame root R R_misc S_misc delay_t HD R_C R_e St);
+        eapply (@rw_chain univ HFrame root R delay_t HD R_C St);
         [(* Topdown *)
-         intros mr ms;
          let r_C := fresh "r_C" in
-         let r_e := fresh "r_e" in
          let s := fresh "s" in
-         intros r_C r_e s;
+         intros r_C s;
          let r_C' := fresh "r_C" in
-         let r_e' := fresh "r_e" in
          let s' := fresh "s" in
          let r_Cty := type of r_C in
-         let r_ety := type of r_e in
          let sty := type of s in
          (assert (r_C' : r_Cty) by exact r_C);
-         (assert (r_e' : r_ety) by exact r_e);
          (assert (s' : sty) by exact s);
-         revert r_C' r_e' s';
-         change (@rw_for univ _ root R S_misc R_C R_e St _ C (delayD e d));
-         apply (Htopdown (MkTopdown hole) mr ms _ C e d r_C r_e s);
-         clear r_C r_e s;
+         revert r_C' s';
+         change (@rw_for univ _ root R R_C St _ C (delayD e d));
+         apply (Htopdown (MkTopdown hole) _ C e d r_C s);
+         clear r_C s;
          lazymatch goal with
          (* Rule applications *)
          | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
            intros _ _; intros;
            lazymatch goal with He : delayD e d = _ |- _ => rewrite He end;
-           eapply (Hrun (MkRunRule rule) mr ms);
+           eapply (Hrun (MkRunRule rule));
            [try eassumption..
-           |mk_edit_rhs recur univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr ms]
+           |mk_edit_rhs recur univ HFrame root R delay_t HD R_C St]
          (* Congruence cases *)
          | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
            intros _ _; intros;
            lazymatch goal with Hdelay : delayD e d = _ |- _ => rewrite Hdelay end;
-           apply (Hconstr (MkSmartConstr constr) mr ms);
-           (* For each child, intros new mr, ms *)
-           clear mr ms; intros _ mr ms; intros;
+           apply (Hconstr (MkSmartConstr constr));
+           intros;
            lazymatch goal with
            (* If child is nonatomic (has call to delayD), recur *)
-           | |- rw_for _ _ _ _ _ _ _ (delayD _ _) =>
-             apply (recur mr ms)
+           | |- @rw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
+             apply recur
            (* Otherwise, just return it *)
-           | |- rw_for _ _ _ _ _ _ _ _ =>
-             apply (@rw_id univ HFrame root R R_misc S_misc R_C R_e St mr ms)
+           | |- @rw_for _ _ _ _ _ _ _ _ _ =>
+             apply (@rw_id univ HFrame root R R_C St)
            end
          end
         |(* Bottomup *)
          lazymatch goal with
          | Hbottomup : Bottomup hole -> _ |- _ =>
            clear d e; intros e;
-           intros mr ms;
            let r_C := fresh "r_C" in
            let s := fresh "s" in
            intros r_C s;
@@ -2548,8 +1748,8 @@ Ltac mk_rewriter :=
            (assert (r_C' : r_Cty) by exact r_C);
            (assert (s' : sty) by exact s);
            revert r_C' s';
-           change (@rw_for' univ _ root R S_misc R_C St _ C e);
-           apply (Hbottomup (MkBottomup hole) mr ms _ C e r_C s);
+           change (@rw_for univ _ root R R_C St _ C e);
+           apply (Hbottomup (MkBottomup hole) _ C e r_C s);
            clear r_C s;
            lazymatch goal with
            (* Rule applications *)
@@ -2557,13 +1757,13 @@ Ltac mk_rewriter :=
              intros _ _; intros;
              lazymatch goal with He : e = _ |- _ => rewrite He end;
              (* Run the rule... *)
-             eapply (Hrun (MkRunRule rule) mr ms); [eassumption..|];
+             eapply (Hrun (MkRunRule rule)); [eassumption..|];
              (* ...and then just return the modified tree *)
-             apply (@rw_id' univ HFrame root R R_misc S_misc R_C St mr ms)
+             apply (@rw_id univ HFrame root R R_C St)
            (* Fallback (just return the child) *)
            | |- Fallback -> _ =>
              intros _;
-             apply (@rw_id' univ HFrame root R R_misc S_misc R_C St mr ms)
+             apply (@rw_id univ HFrame root R R_C St)
            end
          end]
       (* Atomic children: just run the delayed computation *)
@@ -2572,7 +1772,7 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        apply (@rw_base univ HFrame root R R_misc S_misc delay_t HD R_C R_e St mr ms _ _ _ d)
+        apply (@rw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
       end
     end
   end.
@@ -2588,3 +1788,23 @@ Ltac mk_rw :=
   | _ => idtac
   end;
   [..|mk_rewriter].
+
+Ltac mk_easy_delay :=
+  try lazymatch goal with
+  | |- ConstrDelay _ -> _ =>
+    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
+  | |- EditDelay _ -> _ =>
+    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
+  end.
+
+Ltac cond_failure :=
+  lazymatch goal with
+  | H : Failure ?rule -> ?R |- ?R =>
+    apply (H (MkFailure rule))
+  end.
+
+Ltac cond_success :=
+  lazymatch goal with
+  | Hs : Success ?rule -> _, Hf : Failure ?rule -> _ |- ?R =>
+    specialize (Hs (MkSuccess rule)); clear Hf
+  end.

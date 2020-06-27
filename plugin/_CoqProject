@@ -24,6 +24,8 @@ extraction/astCommon.mli
 #extraction/beta_contraction.mli
 extraction/binary.ml
 extraction/binary.mli
+extraction/binNatDef.ml
+extraction/binNatDef.mli
 extraction/bits.ml
 extraction/bits.mli
 extraction/bracket.ml
@@ -294,6 +296,8 @@ extraction/uGraph0.ml
 extraction/uGraph0.mli
 extraction/uncurry.ml
 extraction/uncurry.mli
+extraction/frame.ml
+extraction/frame.mli
 extraction/rewriting.ml
 extraction/rewriting.mli
 extraction/prototype.ml
@@ -304,8 +308,8 @@ extraction/cps_proto.ml
 extraction/cps_proto.mli
 extraction/proto_util.ml
 extraction/proto_util.mli
-#extraction/uncurry_proto.ml
-#extraction/uncurry_proto.mli
+extraction/uncurry_proto.ml
+extraction/uncurry_proto.mli
 extraction/universes0.ml
 extraction/universes0.mli
 extraction/usefulTypes.ml
