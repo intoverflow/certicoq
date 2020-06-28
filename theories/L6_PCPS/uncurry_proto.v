@@ -167,12 +167,13 @@ Definition metadata_update (f g f1 : var) fp_numargs (fv gv fv1 gv1 : list var) 
   in
   (b, aenv, lm, s, cdata).
 
-Definition rw_uncurry :
-  rewriter exp_univ_exp uncurry_step (@trivial_delay_t) (@R_C) (@S).
+Definition rw_uncurry' :
+  rewriter exp_univ_exp uncurry_step trivial_delay_t (@R_C) (@S).
 Proof.
   mk_rw; mk_easy_delay.
   (* Obligation 1: uncurry_cps side conditions *)
-  - intros. rename X into success, H0 into failure.
+  - intros; unfold delayD, Delayed_trivial_delay_t, trivial_delay_t in *.
+    rename X into success, H0 into failure.
     (* Check nonlinearities *)
     destruct k as [k], k' as [k'], g as [g], g' as [g'].
     destruct (eq_var k k') eqn:Hkk'; [|cond_failure].
@@ -202,13 +203,15 @@ Proof.
     (* Prove that all the above code actually satisfies the side condition *)
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
-    eapply success; repeat match goal with |- _ /\ _ => split end;
-      try solve [reflexivity|eassumption|subst;reflexivity].
+    eapply (success (MkSuccess _)); [..|reflexivity|reflexivity];
+      repeat match goal with |- _ /\ _ => split end;
+      try solve [reflexivity|eassumption|subst;reflexivity|reflexivity].
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
     + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
       eapply fresher_than_monotonic; eauto; lia.
   (* Obligation 2: uncurry_anf side conditions *)
-  - intros. rename X0 into success, H0 into failure.
+  - intros; unfold delayD, Delayed_trivial_delay_t, trivial_delay_t in *.
+    rename X0 into success, H0 into failure.
     (* Check nonlinearities *)
     destruct g as [g], g' as [g'].
     destruct (eq_var g g') eqn:Hgg'; [|cond_failure].
@@ -236,7 +239,8 @@ Proof.
     (* Prove that all the above code actually satisfies the side condition *)
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
-    eapply success; repeat match goal with |- _ /\ _ => split end;
+    eapply (success (MkSuccess _)); [..|reflexivity|reflexivity];
+      repeat match goal with |- _ /\ _ => split end;
       try solve [reflexivity|eassumption|subst;reflexivity].
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
     + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
@@ -270,8 +274,23 @@ Proof.
       intros arbitrary; rewrite !In_or_Iff_Union; tauto.
 Defined.
 
-(* Check rw_uncurry. *)
+Definition rw_uncurry :
+  rewriter exp_univ_exp uncurry_step trivial_delay_t (@R_C) (@S).
+Proof.
+  let x := eval unfold rw_uncurry', Fuel_Fix, rw_chain, rw_id, rw_base in rw_uncurry' in
+  let x := eval unfold Preserves_S_S_plain in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_prod, Preserves_R_R_plain, preserve_R in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_fresh, delayD, Delayed_trivial_delay_t in x in
+  let x := eval lazy beta iota zeta in x in
+  exact x.
+Defined.
+
+(* Set Extraction Flag 2031. (* default + linear let + linear beta *) *)
 (* Recursive Extraction rw_uncurry. *)
+(* - uncurry is directly recursive (no fixpoint combinator) 
+   - the context parameter C looks dead by induction *)
 
 Lemma uncurry_one (cps : bool) (ms : S_misc) (e : exp) (s : S_fresh <[]> e)
   : option (result exp_univ_exp uncurry_step (@S) <[]> e).
@@ -305,23 +324,3 @@ Proof.
   - destruct ms as [[[[_ _] _] [_ st]] cdata'].
     exact (e', st, cdata').
 Defined.
-
-(*
-Definition rw_uncurry' : 
-  rewriter exp_univ_exp uncurry_step (@trivial_delay_t) (@R_C) (@S).
-Proof.
-  let x := eval unfold rw_uncurry, Fuel_Fix, rw_chain, rw_id, rw_base in rw_uncurry in
-  let x := eval unfold Preserves_S_S_plain in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold Preserves_S_S_prod, Preserves_R_R_plain, preserve_R in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold Preserves_S_S_fresh, delayD, Delayed_trivial_delay_t in x in
-  let x := eval lazy beta iota zeta in x in
-  exact x.
-Defined.
-
-Set Extraction Flag 2031. (* default + linear let + linear beta *)
-Recursive Extraction rw_uncurry'.
-(* - uncurry' is directly recursive (no fixpoint combinator) 
-   - the context parameter C looks dead by induction *)
-*)

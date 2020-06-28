@@ -228,13 +228,6 @@ Definition run_rewriter (e : univD root)
 
 End RunRewriter.
 
-Definition trivial_R_C {A} (C : exp_c A exp_univ_exp) : Set := unit.
-Instance Preserves_R_trivial_R_C : Preserves_R _ exp_univ_exp (@trivial_R_C). Proof. constructor. Defined.
-
-Definition trivial_delay_t {A} (e : univD A) : Set := unit.
-Instance Delayed_trivial_delay_t : Delayed (@trivial_delay_t).
-Proof. unshelve econstructor; [intros A e _; exact e|..]; reflexivity. Defined.
-
 Definition S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
   {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
 

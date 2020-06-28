@@ -388,6 +388,30 @@ Class Preserves_S (U : Set) `{Frame U} (Root : U)
     forall {A B : U} (fs : frames_t B Root) (f : frame_t A B) (x : univD A),
     P fs (frameD f x) -> P (fs >:: f) x }.
 
+(* -------------------- Delayed computation -------------------- *)
+
+(* The delayed computation may depend on the focus *)
+Class Delayed {U : Set} `{Frame U} (D : forall {A}, univD A -> Set) := {
+  delayD : forall {A} (e : univD A), D e -> univD A;
+  delay_id : forall {A} (e : univD A), D e;
+  delay_id_law : forall {A} (e : univD A), delayD e (delay_id e) = e }.
+
+(* -------------------- Handy instances -------------------- *)
+
+Definition trivial_R_C {U : Set} `{Frame U} {Root : U} A (C : frames_t A Root) : Set := unit.
+Instance Preserves_R_trivial_R_C {U : Set} `{H : Frame U} {Root : U} :
+  Preserves_R _ Root (@trivial_R_C U H Root).
+Proof. constructor. Defined.
+
+Definition trivial_S {U : Set} `{Frame U} {Root : U} A (C : frames_t A Root) (e : univD A) : Set := unit.
+Instance Preserves_S_trivial_S {U : Set} `{H : Frame U} {Root : U} :
+  Preserves_S _ Root (@trivial_S U H Root).
+Proof. do 2 constructor. Defined.
+
+Definition trivial_delay_t {U : Set} `{Frame U} A (e : univD A) : Set := unit.
+Instance Delayed_trivial_delay_t {U : Set} `{H : Frame U} : Delayed (@trivial_delay_t U H).
+Proof. ltac1:(unshelve econstructor; [intros A e _; exact e|..]; reflexivity). Defined.
+
 (* Parameters and state variables with no invariants *)
 
 Definition R_plain {U : Set} `{Frame U} {Root : U}
@@ -422,14 +446,6 @@ Proof.
   constructor; unfold S_prod; intros A B fs f x [s1 s2]; split;
   try (now eapply @preserve_S_up); (now eapply @preserve_S_dn).
 Defined.
-
-(* -------------------- Delayed computation -------------------- *)
-
-(* The delayed computation may depend on the focus *)
-Class Delayed {U : Set} `{Frame U} (D : forall {A}, univD A -> Set) := {
-  delayD : forall {A} (e : univD A), D e -> univD A;
-  delay_id : forall {A} (e : univD A), D e;
-  delay_id_law : forall {A} (e : univD A), delayD e (delay_id e) = e }.
 
 (* -------------------- Annotations -------------------- *)
 

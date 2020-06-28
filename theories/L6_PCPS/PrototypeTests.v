@@ -156,28 +156,7 @@ Goal True.
       let! delayD' := named_of [] delayD in
       let! R_C' := named_of [] R_C in
       let! St' := named_of [] St in
-      gen_edit_delay_tys exp_aux_data delay_t' delayD' rules) ltac:(fun tys n =>
-      run_template_program (
-        tys' <- monad_map tmUnquote tys ;;
-        tmPrint tys')
-        (* tmPrint tys) *)
-        ltac:(fun x => idtac))
-  end))).
-Abort.
-
-Goal True.
-  ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (R_C, St)) ltac:(fun R_C_St =>
-  match R_C_St with
-  | (?R_C, ?St) =>
-    runGM n (
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
-      gen_extra_vars_tys R_C' St' rules) ltac:(fun guard_impl_tys n =>
+      gen_extra_vars_tys exp_aux_data delay_t' delayD' R_C' St' rules) ltac:(fun guard_impl_tys n =>
       (* match guard_impl_tys with *)
       (* | [_; ?R2] => idtac R2 *)
       (* end) *)
@@ -378,22 +357,38 @@ Proof.
     (* end; *)
     (* try lazymatch goal with *)
     (* | |- ExtraVars _ -> _ => admit *)
-    (* end; *)
+    (* end; [..|admit]; *)
     idtac).
   { cbn; intros; ltac1:(cond_success); eauto. }
   { clear; intros; ltac1:(cond_failure). }
-  { clear; intros; ltac1:(cond_success); auto. }
+  { clear; intros; ltac1:(cond_success); unfold delayD in *; cbn in *; eauto. }
   { clear; intros. ltac1:(destruct (PeanoNat.Nat.eq_dec #|xs| 0); [cond_success; eauto|cond_failure]). }
   { clear; intros. ltac1:(destruct (PeanoNat.Nat.eq_dec #|xs| 0); [cond_success; eauto|cond_failure]). }
   { exists tt. reflexivity. }
 Defined.
 
-Compute rw_R' (xI (xI (xI (xI (xI xH))))) exp_univ_exp <[]>
+Definition rw_R'' : 
+  rewriter exp_univ_exp R' (@opaque_delay_t) (@R_C) (@St).
+Proof.
+  ltac1:(let x := eval unfold rw_R', Fuel_Fix, rw_chain, rw_id, rw_base in rw_R' in
+  let x := eval unfold preserve_R, Preserves_R_R_C, Preserves_S_St in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold delayD, opaque_delay_t, Delayed_D_unit in x in
+  let x := eval lazy beta iota zeta in x in
+  exact x).
+Defined.
+
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
+Recursive Extraction rw_R''.
+(* - is directly recursive (no fixpoint combinator) 
+   - the context parameter C looks dead by induction *)
+
+(*
+Compute rw_R'' (xI xH) exp_univ_exp <[]>
   (eCons (mk_var 0) (mk_constr 0) [] (eApp (mk_var 1) []))
   tt
   {| envVal := 0; envPrf := eq_refl |}
-  {| stVal := 0; stPrf := eq_refl |}.
-Recursive Extraction rw_R'.
+  {| stVal := 0; stPrf := eq_refl |}. *)
 
 (* -------------------- Example with state (not working yet) -------------------- *)
 
@@ -749,17 +744,21 @@ Proof.
   (* Now there are two things left: first, we need to explain how to check the preconditions
      of each rule and compute intermediate values *)
   - (* Case folding *)
-    intros _ R C x ces [cpConses HConses] _ success failure.
-    destruct (cpConses x) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
+    intros _ R C x ces d [cpConses HConses] _ success failure.
+    destruct (cpConses (d x)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (find_arm c ces) as [e|] eqn:Hc > [|ltac1:(cond_failure)].
-    ltac1:(cond_success); apply (success c e); split; auto.
+    ltac1:(cond_success;
+      eapply (success (d x) (map (subst_arm d) ces) e d c (subst_exp d e)));
+      auto; split.
     + edestruct HConses as [D [E Hctx]]; eauto.
-    + now apply find_arm_In.
+    + apply find_arm_In in Hc; destruct Hc as [l [r Hlr]].
+      exists (map (subst_arm d) l), (map (subst_arm d) r); subst ces.
+      now rewrite !map_app.
   - (* Projection folding *)
-    clear; intros _ R C x y n e [cpConses HConses] _ success failure.
-    destruct (cpConses y) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
+    clear; intros _ R C x y n e d [cpConses HConses] _ success failure.
+    destruct (cpConses (d y)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (nth_error ys n) as [y'|] eqn:Hn > [|ltac1:(cond_failure)].
-    ltac1:(cond_success); apply (success y' ys); split; auto.
+    ltac1:(cond_success); apply (success (d x) (d y) n (subst_exp d e) d y' ys); split; auto.
     edestruct HConses as [D [E Hctx]]; eauto.
   (* Next, we need to explain how to maintain the invariant on our fresh variable across
      rule application *)
@@ -770,17 +769,31 @@ Defined.
 
 Check rw_cp.
 Eval unfold rewriter, rw_for in rewriter exp_univ_exp cp_fold (@renaming) (@cp_env) (@cp_state).
-Recursive Extraction rw_cp.
+
+Definition rw_cp' : 
+  rewriter exp_univ_exp cp_fold (@renaming) (@cp_env) (@cp_state).
+Proof.
+  ltac1:(let x := eval unfold rw_cp, Fuel_Fix, rw_chain, rw_id, rw_base in rw_cp in
+  let x := eval unfold preserve_R, Preserves_cp_env, Preserves_cp_state in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold delayD, Delayed_renaming in x in
+  let x := eval lazy beta iota zeta in x in
+  exact x).
+Defined.
+
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
+Recursive Extraction rw_cp'.
 
 Definition rw_cp_top e : result exp_univ_exp cp_fold (@cp_state) <[]> e.
 Proof.
   rewrite <- delay_id_law.
   ltac1:(refine(
-  rw_cp lots_of_fuel exp_univ_exp <[]> e
+  rw_cp' lots_of_fuel exp_univ_exp <[]> e
     id (exist _ (fun _ => None) _) tt); intros; congruence).
 Defined.
 Check rw_cp_top.
 
+(*
 Compute (rw_cp_top (
   let x0 := mk_var 0 in
   let x1 := mk_var 1 in
@@ -801,3 +814,4 @@ Compute (rw_cp_top (
       (eProj x5 x2 (1%nat)
       (eApp x4 [x5]))));
     (c3, (eApp x0 [x0]))])))).
+*)

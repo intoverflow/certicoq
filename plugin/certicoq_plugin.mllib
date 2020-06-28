@@ -138,11 +138,10 @@ Cps_proto_metacoq
 Cps_proto
 Proto_util
 Uncurry
-Uncurry_proto
 Color
 Shrink_cps
 Freshen
-Inline
+Inline_proto
 TermsDB
 Variables
 Closure_conversion

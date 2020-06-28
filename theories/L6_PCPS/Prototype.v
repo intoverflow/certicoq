@@ -256,7 +256,6 @@ Definition rewriter {U} `{Frame U} `{AuxData U} (root : U) (R : relation (univD 
 
 (* For each rule, *)
 Inductive ExtraVars (s : string) : Prop := MkExtraVars.
-Inductive EditDelay (s : string) : Prop := MkEditDelay.
 Inductive PreserveTopdownEdit (s : string) : Prop := MkPreserveTopdownEdit.
 Inductive PreserveBottomupEdit (s : string) : Prop := MkPreserveBottomupEdit.
 Inductive RunRule (s : string) : Prop := MkRunRule.
@@ -281,7 +280,6 @@ Inductive Impossible : Prop := MkImpossible.
 Record RwObligations A := mk_obs {
   (* For each rule, *)
   obExtraVars : list A;
-  obEditDelays : list A;
   obPreserveEdits : list A;
   obRunRules : list A;
   (* For each constructor, *)
@@ -467,7 +465,7 @@ Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
       tApp (tConst framesD2 []) [_; _; _; _; _; rhs]] =>
     let lhs_vars := vars_of lhs in
     let rec_vars := rec_rhs_vars_of rhs in
-    let special_vars := rec_vars ∩ lhs_vars in
+    let special_vars := rec_vars in (*∩ lhs_vars in*)
     ret (mk_rule name ctor_ty arity dTopdown hole_ut Γ C lhs rhs
       lhs_vars rec_vars special_vars)
   (* Bottomup rule *)
@@ -544,7 +542,7 @@ Ltac parse_rel n R k :=
     runGM n (parse_rel_pure ind mbody body) k
   end).
 
-(* ---------- Types of helpers for delayed computation in each edit ---------- *)
+(* ---------- Types of helpers for computing preconditions/intermediate values ---------- *)
 
 Section GoalGeneration.
 
@@ -557,91 +555,6 @@ Context
   (frames_of_constr := aux_data.(aFramesOfConstr)).
 Context (delay_t : term)
         (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *).
-Context
-  (R_C St : term) (rules : rules_t)
-  (rw_rel := tInd rules.(rR) [])
-  (rw_univ_i := rules.(rUniv))
-  (rw_univ := tInd rw_univ_i [])
-  (mk_univ := fun n => tConstruct rw_univ_i n [])
-  (HFrame := rules.(rHFrame))
-  (root := mk_univ rules.(rRootU))
-  (* specialize to rw_univ -> Set *)
-  (univD := mkApps <%@univD%> [rw_univ; HFrame]).
-
-Definition gen_edit_delay_ty (r : rule_t) : GM term. ltac1:(refine(
-  let! R := gensym "R" in
-  let! d := gensym "d" in
-  let lhs_univ := mk_univ r.(rHoleU) in
-  let lhs_vars := r.(rLhsVars) in
-  let rhs_recs := r.(rRecVars) in
-  let! '(xts, σ) :=
-    mfoldM
-      (fun x _ '(xts, σ) =>
-        let! decl := findM' x r.(rΓ) "special_var" in
-        let ty := decl.(decl_type) in
-        let! tyname := mangle ind_info ty in
-        let! x' := gensym (remove_sigils' x) in
-        let σ := insert x x' σ in
-        if member x rhs_recs then
-          let! d' := gensym "d" in
-          let! univ_n := findM' tyname univ_of_tyname "edit_delay univ_of_tyname" in
-          let u := mk_univ (N.to_nat univ_n) in
-          ret ((x, x', ty, Some (d', u)) :: xts, σ)
-        else ret ((x, x', ty, None) :: xts, σ))
-      ([], empty) lhs_vars
-  in
-  let new_lhs := rename σ r.(rLhs) in
-  ret (fn (mkApps <%EditDelay%> [quote_string r.(rName)])
-    (tProd (nNamed R) type0
-    (fold_right
-      (fun '(x, _, xty, _) ty => tProd (nNamed x) xty ty)
-      (tProd (nNamed d) (mkApps delay_t [lhs_univ; r.(rLhs)])
-      (fn
-        (fold_right
-          (fun '(x, x', xty, mdu') ty =>
-            match mdu' with
-            | None => tProd (nNamed x') xty ty
-            | Some (d', u) =>
-              tProd (nNamed x') xty (tProd (nNamed d') (mkApps delay_t [u; tVar x]) ty)
-            end)
-          (fn
-            (mkApps <%@eq%> [
-               mkApps univD [lhs_univ];
-               mkApps delayD [lhs_univ; r.(rLhs); tVar d];
-               new_lhs])
-            (fold_right
-              (fun '(x, x', xty, mdu') ty =>
-                match mdu' with
-                | None => ty
-                | Some (d', u) =>
-                  fn (mkApps <%@eq%> [xty; tVar x'; mkApps delayD [u; tVar x; tVar d']]) ty
-                end)
-              (tVar R)
-              xts))
-          xts)
-        (tVar R)))
-      xts)))
-)).
-Defined.
-
-Definition gen_edit_delay_tys : GM (list term). ltac1:(refine(
-  let rules :=
-    filter
-      (fun 'r => match r.(rDir) with dTopdown => true | dBottomup => false end)
-      rules.(rRules)
-  in
-  let! named := mapM (fun r => gen_edit_delay_ty r) rules in
-  mapM (indices_of []) named
-  (* ret named *)
-)).
-Defined.
-
-End GoalGeneration.
-
-(* ---------- Types of helpers for computing preconditions/intermediate values ---------- *)
-
-Section GoalGeneration.
-
 Context (R_C St : term) (rules : rules_t)
         (rw_univ := rules.(rUniv))
         (HFrame := rules.(rHFrame))
@@ -653,41 +566,140 @@ Context (R_C St : term) (rules : rules_t)
         (mk_univ := fun n => tConstruct rw_univ n []).
 
 Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
-  let hole := rule.(rHoleU) in
-  let lhs := rule.(rLhs) in
-  let lhs_vars := rule.(rLhsVars) in
-  (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order.
-     We will rearrange it to be (lhs vars .. rhs vars ..). *)
-  let ctx := map (fun '(x, decl) => (member x lhs_vars, x, decl)) rule.(rΓ) in
-  let '(lhs_ctx, rhs_ctx) := partition (fun '(in_lhs, _, _) => in_lhs) ctx in
-  (* rhs_ctx also contains C: C will actually be introduced in the outer scope
-     already. We'll just borrow its name. *)
-  let! C :=
-    match rule.(rC) with
-    | tVar C => ret C
-    | t => raise ("gen_extra_vars_ty: expected tVar, got: " +++ string_of_term t)
-    end
-  in
-  (* Filter to drop C *)
-  let rhs_ctx := filter (fun '(_, x, decl) => negb (x ==? C)) rhs_ctx in
-  let! R := gensym "R" in
-  let! r_C := gensym "r_C" in
-  let! s := gensym "s" in
-  let hole := mk_univ hole in
-  let root := mk_univ root in
-  let rule_name := quote_string rule.(rName) in
-  ret (fn (mkApps <%ExtraVars%> [rule_name])
-    (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [hole; root])
-    (fold_right
-      (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty)
-       (tProd (nNamed r_C) (mkApps R_C [hole; tVar C])
-       (tProd (nNamed s) (mkApps St [hole; tVar C; lhs])
-       (fn
-         (fn (mkApps <%Success%> [rule_name]) (fold_right
-           (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty) (tVar R)
-           (rev rhs_ctx)))
-         (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R)) (tVar R)))))
-      (rev lhs_ctx))))).
+  match rule.(rDir) with
+  | dTopdown =>
+    let hole := rule.(rHoleU) in
+    let lhs := rule.(rLhs) in
+    let lhs_vars := rule.(rLhsVars) in
+    (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order. *)
+    (*    We will rearrange it to be (lhs vars .. rhs vars ..). *)
+    let ctx := map (fun '(x, decl) => (member x lhs_vars, x, decl)) rule.(rΓ) in
+    let '(lhs_ctx, rhs_ctx) := partition (fun '(in_lhs, _, _) => in_lhs) ctx in
+    (* rhs_ctx also contains C: C will actually be introduced in the outer scope
+       already. We'll just borrow its name. *)
+    let! C :=
+      match rule.(rC) with
+      | tVar C => ret C
+      | t => raise ("gen_extra_vars_ty: expected tVar, got: " +++ string_of_term t)
+      end
+    in
+    (* Filter to drop C *)
+    let rhs_ctx := filter (fun '(_, x, decl) => negb (x ==? C)) rhs_ctx in
+    let rhs_ctx := map (fun '(_, x, decl) => (x, decl)) rhs_ctx in
+    let! R := gensym "R" in
+    (* let n_univs := mfold (fun u n m => insert n u m) empty univ_of_tyname in *)
+    (* let! t_tyname := findM'' (N.of_nat hole) n_univs "t_univ_i" in *)
+    (* let! e := gensym (abbreviate t_tyname) in *)
+    let! d := gensym "d" in
+    let! r_C := gensym "r_C" in
+    let! s := gensym "s" in
+    let hole := mk_univ hole in
+    let root := mk_univ root in
+    let rule_name := quote_string rule.(rName) in
+    let rΓ := filter (fun '(x, decl) => negb (x ==? C)) rule.(rΓ) in
+    let! '(extra_vars, σ) :=
+      let Γ := map_of_list rΓ in
+      mfoldM
+        (fun x 'tt '(extras, σ) =>
+          let! x' := gensym (remove_sigils' x) in
+          let! md' := if member x rule.(rSpecialVars) then Some <$> gensym "d" else ret None in
+          let! decl := findM' x Γ "special_var" in
+          let ty := decl.(decl_type) in
+          let! tyname := mangle ind_info ty in
+          let! univ_n := findM' tyname univ_of_tyname "applicable: univ_n" in
+          let u := mk_univ (N.to_nat univ_n) in
+          ret ((x, x', md', ty, u) :: extras, insert x x' σ))
+        ([], empty) (rule.(rLhsVars) ∪ rule.(rSpecialVars))
+    in
+    let lhs' := rename σ rule.(rLhs) in
+    ret (fn (mkApps <%ExtraVars%> [rule_name])
+      (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [hole; root])
+      (fold_right
+        (fun '(x, x', md', xty, u) ty =>
+          if member x rule.(rLhsVars)
+          then tProd (nNamed x') xty ty
+          else ty)
+        (tProd (nNamed d) (mkApps delay_t [hole; lhs'])
+        (tProd (nNamed r_C) (mkApps R_C [hole; tVar C])
+        (tProd (nNamed s) (mkApps St [hole; tVar C; mkApps delayD [hole; lhs'; tVar d]])
+        (fn (fn (mkApps <%Success%> [rule_name])
+          (fold_right
+            (fun '(x, x', md', xty, u) ty =>
+              (if member x rule.(rLhsVars) then tProd (nNamed x) xty else tProd (nNamed x') xty)
+              match md' with
+              | Some d' => tProd (nNamed d') (mkApps delay_t [u; tVar x']) ty
+              | None => ty
+              end)
+            (it_mkProd_or_LetIn (drop_names rhs_ctx)
+            (fn (mkApps <%@eq%> [mkApps univD [hole]; mkApps delayD [hole; lhs'; tVar d]; rule.(rLhs)])
+            (fold_right
+              (fun '(x, x', md', xty, u) ty =>
+                match md' with
+                | Some d' => fn (mkApps <%@eq%> [xty; tVar x; mkApps delayD [u; tVar x'; tVar d']]) ty
+                | None => ty
+                end)
+              (tVar R)
+              extra_vars)))
+            extra_vars))
+        (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R))
+        (tVar R))))))
+        (* (fold_right (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty) *)
+        (*   (tProd (nNamed d) (mkApps delay_t [hole; lhs']) *)
+        (*         (tProd (nNamed r_C) (mkApps R_C [hole; tVar C]) *)
+        (*         (tProd (nNamed s) (mkApps St [hole; tVar C; lhs]) *)
+        (*         (fn (mkApps <%@eq%> [mkApps univD [hole]; *)
+        (*                             mkApps delayD [hole; lhs'; tVar d]; *)
+        (*                             rule.(rLhs)]) *)
+        (*         (fold_right *)
+        (*           (fun '(x, x', md', xty, u) ty => *)
+        (*             match md' with *)
+        (*             | Some d' => fn (mkApps <%@eq%> [xty; tVar x; mkApps delayD [u; tVar x'; tVar d']]) ty *)
+        (*             | None => ty *)
+        (*             end) *)
+        (*           (fn (fn (mkApps <%Success%> [rule_name]) *)
+        (*                 (it_mkProd_or_LetIn (drop_names rhs_ctx) *)
+        (*                 (tVar R))) *)
+        (*               (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R)) (tVar R))) *)
+        (*           extra_vars))))) *)
+        (*   (rev lhs_ctx)) *)
+        extra_vars))))
+  | dBottomup =>
+    let hole := rule.(rHoleU) in
+    let lhs := rule.(rLhs) in
+    let lhs_vars := rule.(rLhsVars) in
+    (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order.
+       We will rearrange it to be (lhs vars .. rhs vars ..). *)
+    let ctx := map (fun '(x, decl) => (member x lhs_vars, x, decl)) rule.(rΓ) in
+    let '(lhs_ctx, rhs_ctx) := partition (fun '(in_lhs, _, _) => in_lhs) ctx in
+    (* rhs_ctx also contains C: C will actually be introduced in the outer scope
+       already. We'll just borrow its name. *)
+    let! C :=
+      match rule.(rC) with
+      | tVar C => ret C
+      | t => raise ("gen_extra_vars_ty: expected tVar, got: " +++ string_of_term t)
+      end
+    in
+    (* Filter to drop C *)
+    let rhs_ctx := filter (fun '(_, x, decl) => negb (x ==? C)) rhs_ctx in
+    let! R := gensym "R" in
+    let! r_C := gensym "r_C" in
+    let! s := gensym "s" in
+    let hole := mk_univ hole in
+    let root := mk_univ root in
+    let rule_name := quote_string rule.(rName) in
+    ret (fn (mkApps <%ExtraVars%> [rule_name])
+      (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [hole; root])
+      (fold_right
+        (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty)
+         (tProd (nNamed r_C) (mkApps R_C [hole; tVar C])
+         (tProd (nNamed s) (mkApps St [hole; tVar C; lhs])
+         (fn
+           (fn (mkApps <%Success%> [rule_name]) (fold_right
+             (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty) (tVar R)
+             (rev rhs_ctx)))
+           (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R)) (tVar R)))))
+        (rev lhs_ctx)))))
+  end.
 
 Definition gen_extra_vars_tys : GM (list term) :=
   mapM
@@ -1168,7 +1180,7 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
               let! univ_n := findM' tyname univ_of_tyname "applicable: univ_n" in
               let u := mk_univ (N.to_nat univ_n) in
               ret ((x, x', md', ty, u) :: extras, insert x x' σ))
-            ([], empty) r.(rLhsVars)
+            ([], empty) (r.(rLhsVars) ∪ r.(rSpecialVars))
         in
         let old_lhs := rename σ r.(rLhs) in
         let! header :=
@@ -1290,14 +1302,13 @@ Section GoalGeneration.
 Context (aux : aux_data_t) (delay_t delayD R_C St : term) (rules : rules_t).
 
 Definition gen_all : GM (RwObligations term). ltac1:(refine(
-  let! extra_vars := gen_extra_vars_tys R_C St rules in
-  let! edit_delays := gen_edit_delay_tys aux delay_t delayD rules in
+  let! extra_vars := gen_extra_vars_tys aux delay_t delayD R_C St rules in
   let! preserve_edits := gen_preserve_edit_tys R_C St rules in
   let! run_rules := gen_run_rule_tys R_C St rules in
   let! constr_delays := gen_constr_delay_tys delay_t delayD aux in
   let! smart_constrs := gen_smart_constr_tys aux R_C St rules in
   let! '(topdowns, bottomups) := gen_inspect_tys aux delay_t delayD R_C St rules in
-  ret (mk_obs extra_vars edit_delays preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
+  ret (mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
 
@@ -1306,18 +1317,17 @@ Defined.
    It's safer to unquote each term in obs with ltac. *)
 Definition unquote_all (obs : RwObligations term)
  : TemplateMonad (RwObligations typed_term). ltac1:(refine(
-  let '(mk_obs extra_vars edit_delays preserve_edits run_rules constr_delays smart_constrs topdowns bottomups) :=
+  let '(mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups) :=
     obs
   in
   extra_vars <- monad_map tmUnquote extra_vars ;;
-  edit_delays <- monad_map tmUnquote edit_delays ;;
   preserve_edits <- monad_map tmUnquote preserve_edits ;;
   run_rules <- monad_map tmUnquote run_rules ;;
   constr_delays <- monad_map tmUnquote constr_delays ;;
   smart_constrs <- monad_map tmUnquote smart_constrs ;;
   topdowns <- monad_map tmUnquote topdowns ;;
   bottomups <- monad_map tmUnquote bottomups ;;
-  ret (mk_obs extra_vars edit_delays preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
+  ret (mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
 
@@ -1335,15 +1345,14 @@ Ltac unquote_and_assert_terms terms k :=
 
 Ltac unquote_and_assert_obs obs k :=
   lazymatch obs with
-  | mk_obs ?extra_vars ?edit_delays ?preserve_edits ?run_rules ?constr_delays ?smart_constrs ?topdowns ?bottomups =>
+  | mk_obs ?extra_vars ?preserve_edits ?run_rules ?constr_delays ?smart_constrs ?topdowns ?bottomups =>
     unquote_and_assert_terms extra_vars ltac:(fun _ =>
-    unquote_and_assert_terms edit_delays ltac:(fun _ =>
     unquote_and_assert_terms preserve_edits ltac:(fun _ =>
     unquote_and_assert_terms run_rules ltac:(fun _ =>
     unquote_and_assert_terms constr_delays ltac:(fun _ =>
     unquote_and_assert_terms smart_constrs ltac:(fun _ =>
     unquote_and_assert_terms topdowns ltac:(fun _ =>
-    unquote_and_assert_terms bottomups k)))))))
+    unquote_and_assert_terms bottomups k))))))
   end.
 
 Ltac mk_rw_obs k :=
@@ -1370,28 +1379,6 @@ Ltac mk_rw_obs k :=
   end.
 
 Ltac mk_rw' := mk_rw_obs ltac:(fun _ => idtac).
-
-(*
-Ltac assert_typed_terms terms k :=
-  lazymatch terms with
-  | [] => k tt
-  | {| my_projT2 := ?t |} :: ?rest => assert t; [|assert_typed_terms rest k]
-  end.
-
-Ltac assert_obs obs k :=
-  lazymatch obs with
-  | @mk_obs _ ?extra_vars ?edit_delays ?preserve_edits ?run_rules ?constr_delays
-            ?smart_constrs ?topdowns ?bottomups =>
-    assert_typed_terms extra_vars ltac:(fun _ =>
-    assert_typed_terms edit_delays ltac:(fun _ =>
-    assert_typed_terms preserve_edits ltac:(fun _ =>
-    assert_typed_terms run_rules ltac:(fun _ =>
-    assert_typed_terms constr_delays ltac:(fun _ =>
-    assert_typed_terms smart_constrs ltac:(fun _ =>
-    assert_typed_terms topdowns ltac:(fun _ =>
-    assert_typed_terms bottomups k)))))))
-  end.
-*)
 
 Ltac mk_smart_constr_children root R_C St s hasHrel Hrel :=
   lazymatch goal with
@@ -1520,30 +1507,17 @@ Ltac mk_topdown_congruence :=
   end.
 Ltac mk_topdown_active s :=
   lazymatch goal with
-  | H : InspectCaseRule _ -> Active ?rule -> _, Hdelay : EditDelay ?rule -> _,
-    Hextras : ExtraVars ?rule -> _ |- _ =>
-    eapply (Hdelay (MkEditDelay rule));
-    assert Sentinel by exact MkSentinel; intros;
-    lazymatch goal with
-    | HdelayD : delayD _ _ = _ |- _ =>
-      rewrite HdelayD in s;
-      eapply (Hextras (MkExtraVars rule));
-      [(* Find all the misc. arguments by unification *) eassumption ..
-      |(* Success continuation: add rhs vars + assumptions above the line *)
-       intros _; intros
-      |(* Failure continuation: forget everything about the rule we just applied *)
-       intros _;
-       rewrite <- HdelayD in s;
-       clear Hdelay Hextras H;
-       repeat lazymatch goal with
-       | H : ?T |- _ => lazymatch T with Sentinel => fail | _ => clear H end
-       end;
-       lazymatch goal with H : Sentinel |- _ => clear H end];
-      [(* Success: apply the proper rule *)
-       eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity]; eassumption
-      |(* Failure: try to apply other rules *)
-        mk_topdown_active s]
-    end
+  | H : InspectCaseRule _ -> Active ?rule -> _, Hextras : ExtraVars ?rule -> _ |- _ =>
+    eapply (Hextras (MkExtraVars rule));
+    [(* Find all the misc. arguments by unification *) eassumption ..
+    |(* Success continuation: add rhs vars + assumptions above the line *)
+     intros _; intros
+    |(* Failure continuation: forget everything about the rule we just applied *)
+     intros _; clear Hextras H];
+    [(* Success: apply the proper rule *)
+     eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity]; eassumption
+    |(* Failure: try to apply other rules *)
+      mk_topdown_active s]
   | _ => mk_topdown_congruence
   end.
 Ltac mk_topdown :=
@@ -1792,8 +1766,6 @@ Ltac mk_rw :=
 Ltac mk_easy_delay :=
   try lazymatch goal with
   | |- ConstrDelay _ -> _ =>
-    clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
-  | |- EditDelay _ -> _ =>
     clear; simpl; intros; lazymatch goal with H : forall _, _ |- _ => eapply H; try reflexivity; eauto end
   end.
 

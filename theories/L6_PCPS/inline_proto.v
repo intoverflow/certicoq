@@ -1664,12 +1664,13 @@ Definition log_msg s cdata :=
           cenv := cenv; fenv := fenv; nenv := nenv; log := log |} := cdata in
   mkCompData x c t ft cenv fenv nenv (s :: log).
 
-Definition rw_inline : rewriter exp_univ_exp inline_step
-  (@trivial_delay_t) (@trivial_R_C) (@S_inline).
+Definition rw_inline' : rewriter exp_univ_exp inline_step
+  trivial_delay_t trivial_R_C (@S_inline).
 Proof.
   mk_rw; mk_easy_delay.
   (* To actually perform inlining, we need to check the heuristic, do the renaming, etc. *)
-  - clear; intros _ R C f ft' ys _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq] success failure.
+  - clear; unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
+    intros _ R C f ft' ys _ _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq] success failure.
     (* Look up f in the map of known functions *)
     destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|cond_failure].
     specialize (Hρ ![f] ft xs e Hget).
@@ -1684,9 +1685,10 @@ Proof.
     destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|cond_failure].
     replace [![f]]! with f in Hρ by now unbox_newtypes.
     destruct (freshen_exp fresh (M.empty _) e) as [fresh' e'] eqn:Hfreshen; symmetry in Hfreshen.
-    specialize success with (e' := e') (σ0 := σ) (next_x := fresh').
+    specialize success with (e' := e') (σ := σ) (next_x := fresh').
     (* Prove that we did what we said we did *)
-    cond_success; eapply success; repeat match goal with |- _ /\ _ => split end; eauto.
+    cond_success; eapply success; [..|reflexivity]; [exact tt|..];
+      repeat match goal with |- _ /\ _ => split end; eauto.
     + assert (Hid : f_eq id (apply_r (M.empty _))). {
         unfold f_eq, apply_r; intros x; now rewrite M.gempty. }
       rewrite Hid; eapply freshen_exp_Alpha; eauto.
@@ -1711,7 +1713,8 @@ Proof.
            < fresh' *)
       exact seems_legit.
   (* We must explain how to maintain all the intermediate state variables across the edit *)
-  - intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hcond _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq].
+  - clear; unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
+    intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hcond _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq].
     split; [exact tt|split; [split; [split; [split|]|]|]]; unfold S_plain, S_fresh, S_fns, S_uniq.
     + (* Need to set fresh variable in cdata properly for future passes.
          Though we don't use it, later passes do. *)
@@ -1743,7 +1746,14 @@ Proof.
         exact seems_legit.
 Defined.
 
-(* Recursive Extraction rw_inline. *)
+Definition rw_inline : rewriter exp_univ_exp inline_step
+  trivial_delay_t trivial_R_C (@S_inline).
+Proof.
+  let x := eval unfold rw_inline', Fuel_Fix, rw_chain, rw_id, rw_base in rw_inline' in
+  let x := eval unfold delayD, Delayed_trivial_delay_t in x in
+  let x := eval lazy beta iota zeta in x in
+  exact x.
+Defined.
 
 Definition initial_fns (e : exp) : S_fns <[]> e.
 Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
@@ -1760,8 +1770,6 @@ Definition inline_top (IH : InlineHeuristic) (c : comp_data) (e : exp) (H : uniq
 
 Definition inline_unsafe (IH : InlineHeuristic) (e : exp) (c : comp_data) : exp * comp_data :=
   inline_top IH c e seems_legit.
-
-(* Recursive Extraction inline_unsafe. *)
 
 (* d should be max argument size, perhaps passed through by uncurry *)
 Definition postuncurry_contract (e:exp) (s:M.t nat) (d:nat) :=
