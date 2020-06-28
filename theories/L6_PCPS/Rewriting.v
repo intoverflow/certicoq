@@ -406,7 +406,7 @@ Instance Preserves_S_S_plain (U : Set) `{Frame U} (Root : U) (S : Set) :
   Preserves_S _ Root (S_plain S).
 Proof. constructor; intros A B fs f x s; exact s. Defined.
 
-(* Composing two states: TODO: generalize and move to Rewriting.v *)
+(* Composing two states *)
 
 Definition S_prod {U : Set} `{Frame U} {Root : U}
            (S1 S2 : forall {A}, frames_t A Root -> univD A -> Set) 
@@ -496,21 +496,10 @@ Definition Fuel := positive.
 
 Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
 
-Section FuelFix.
+Require Import Lia.
 
-(* TODO: may have to tweak this a bit to get fixpoints to compile to simple recursive functions *)
-Fixpoint Fuel_Fix {A} (d : A) (f : A -> A) (n : Fuel) : A :=
-  match n with
-  | xH => d
-  | xO n => Fuel_Fix (Fuel_Fix d f n) f n
-  | xI n => f (Fuel_Fix (Fuel_Fix d f n) f n)
-  end.
-
-(* Function Fuel_Fix (n : Fuel) (x : A) {measure Pos.to_nat n} : B := *)
-(*   match n with *)
-(*   | xH => d x *)
-(*   | _ => f (Fuel_Fix (Pos.pred n)) x *)
-(*   end. *)
-(* Proof. ltac1:(lia). ltac1:(lia). Defined. *)
-
-End FuelFix.
+Definition Fuel_Fix {A} (d : A) (f : A -> A) : Fuel -> A.
+Proof.
+  apply (@Fix positive Pos.lt Coqlib.Plt_wf (fun _ => A)); intros n rec.
+  destruct n as [n'|n'|] eqn:Hn > [| |exact d]; ltac1:(refine (f (rec (Pos.pred n) _)); lia).
+Defined.

@@ -305,3 +305,23 @@ Proof.
   - destruct ms as [[[[_ _] _] [_ st]] cdata'].
     exact (e', st, cdata').
 Defined.
+
+(*
+Definition rw_uncurry' : 
+  rewriter exp_univ_exp uncurry_step (@trivial_delay_t) (@R_C) (@S).
+Proof.
+  let x := eval unfold rw_uncurry, Fuel_Fix, rw_chain, rw_id, rw_base in rw_uncurry in
+  let x := eval unfold Preserves_S_S_plain in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_prod, Preserves_R_R_plain, preserve_R in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_fresh, delayD, Delayed_trivial_delay_t in x in
+  let x := eval lazy beta iota zeta in x in
+  exact x.
+Defined.
+
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
+Recursive Extraction rw_uncurry'.
+(* - uncurry' is directly recursive (no fixpoint combinator) 
+   - the context parameter C looks dead by induction *)
+*)

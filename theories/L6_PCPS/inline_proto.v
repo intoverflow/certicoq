@@ -1743,7 +1743,7 @@ Proof.
         exact seems_legit.
 Defined.
 
-Recursive Extraction rw_inline.
+(* Recursive Extraction rw_inline. *)
 
 Definition initial_fns (e : exp) : S_fns <[]> e.
 Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
@@ -1761,7 +1761,7 @@ Definition inline_top (IH : InlineHeuristic) (c : comp_data) (e : exp) (H : uniq
 Definition inline_unsafe (IH : InlineHeuristic) (e : exp) (c : comp_data) : exp * comp_data :=
   inline_top IH c e seems_legit.
 
-Recursive Extraction inline_unsafe.
+(* Recursive Extraction inline_unsafe. *)
 
 (* d should be max argument size, perhaps passed through by uncurry *)
 Definition postuncurry_contract (e:exp) (s:M.t nat) (d:nat) :=
@@ -1812,8 +1812,8 @@ Definition test_term :=
   ]
   (Ehalt [20]!).
 
-Recursive Extraction rw_inline.
-Compute run_rewriter rw_inline test_term tt
-   (mkCompData 1 1 1 1 (M.empty _) (M.empty _) (M.empty _) [],
-    mk_IH _ _ _ (InlineUncurried (M.empty _)),
-    initial_fresh test_term, initial_fns test_term, seems_legit).
+(* Recursive Extraction rw_inline. *)
+(* Compute run_rewriter rw_inline test_term tt *)
+(*    (mkCompData 1 1 1 1 (M.empty _) (M.empty _) (M.empty _) [], *)
+(*     mk_IH _ _ _ (InlineUncurried (M.empty _)), *)
+(*     initial_fresh test_term, initial_fns test_term, seems_legit). *)
