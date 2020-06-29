@@ -43,12 +43,12 @@ Qed.
 Definition rw_cfold' : rewriter exp_univ_exp cfold_step
   trivial_delay_t (@R_ctors) trivial_S.
 Proof.
-  mk_rw; mk_easy_delay; [|constructor; [assumption|do 2 constructor]].
+  mk_rw; mk_easy_delay.
   unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
-  intros _ R C [x] ces d [ρ Hρ] _ success failure.
+  intros _ R C [x] ces d r _ success failure; destruct r as [ρ Hρ] eqn:Hr.
   destruct (M.get x ρ) as [[c ys]|] eqn:Hget; [|cond_failure].
   destruct (find_case c ces) as [e|] eqn:Hfind_case; [|cond_failure].
-  cond_success; eapply (success (mk_var x) ces e tt c e); [|reflexivity..].
+  cond_success success; eapply (success (mk_var x) ces e tt c e); [|reflexivity..|auto|constructor].
   split; [|now apply find_case_refines_In]; destruct (Hρ x c ys Hget) as [? [? ?]]; eauto.
 Defined.
 

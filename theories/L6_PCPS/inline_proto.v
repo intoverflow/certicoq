@@ -1479,15 +1479,14 @@ Inductive inline_step : exp -> exp -> Prop :=
 (* Inlining for CPS *)
 | inline_cps :
   forall (C : frames_t exp_univ_exp exp_univ_exp) f ft ft' (xs : list var) e e' e'' (ys : list var)
-    lhs σ next_x,
+    lhs σ,
   lhs = Eapp f ft ys /\
   known_function f ft xs e C lhs /\
   Alpha_conv ![e] ![e'] id /\
   unique_bindings ![e'] /\
   Disjoint _ (used_vars ![C ⟦ e ⟧]) (bound_var ![e']) /\
   set_lists ![xs] ![ys] (M.empty _) = Some σ /\
-  e'' = rename_all' σ e' /\
-  fresher_than next_x (used_vars ![C ⟦ e'' ⟧]) ->
+  e'' = rename_all' σ e' ->
   inline_step
     (C ⟦ Eapp f ft' ys ⟧)
     (C ⟦ Rec e'' ⟧).
@@ -1765,9 +1764,9 @@ Proof.
     destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|cond_failure].
     replace [![f]]! with f in Hρ by now unbox_newtypes.
     destruct (freshen_exp fresh (M.empty _) e) as [fresh' e'] eqn:Hfreshen; symmetry in Hfreshen.
-    specialize success with (e' := e') (σ := σ) (next_x := fresh').
+    specialize success with (e' := e') (σ := σ).
     (* Prove that we did what we said we did *)
-    cond_success; eapply success; [..|reflexivity]; [exact tt|..];
+    cond_success success; eapply success; [..|reflexivity| |]; [exact tt|..];
       repeat match goal with |- _ /\ _ => split end; eauto.
     + assert (Hid : f_eq id (apply_r (M.empty _))). {
         unfold f_eq, apply_r; intros x; now rewrite M.gempty. }
@@ -1783,47 +1782,46 @@ Proof.
       exact seems_legit.
     + (* BV(e') ⊆ [fresh, fresh') by freshen_exp_bounded and fresh > vars(C[e]) *)
       exact seems_legit.
-    + (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ codomain σ. then have 
-           vars(C[rename_all σ e'])
-           = vars(C) ∪ vars(rename_all σ e')
-           ⊆ vars(C) ∪ used_vars e' ∪ codomain σ
-           = vars(C) ∪ used_vars e' ∪ ys
-           ⊆ vars(C) ∪ used_vars e' ∪ vars(C[f(ys)])
-           = used_vars e' ∪ vars(C[f(ys)])
-           < fresh' *)
-      exact seems_legit.
-  (* We must explain how to maintain all the intermediate state variables across the edit *)
-  - clear; unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
-    intros _ C f ft ft' xs e e' e'' ys lhs σ next_x Hcond _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq].
-    split; [exact tt|split; [split; [split; [split|]|]|]]; unfold S_plain, S_fresh, S_fns, S_uniq.
-    + (* Need to set fresh variable in cdata properly for future passes.
-         Though we don't use it, later passes do. *)
-      exact (update_next_var next_x cdata).
-    + (* Update the inlining heuristic *)
-      constructor; exact (IH.(update_App) f ft ys).
-    (* next_x is a sufficiently fresh variable *)
-    + decompose [and] Hcond. now exists next_x.
-    (* The set of known functions remains the same *)
-    + exists ρ.
-      (* For any known g:
-         - If g was in an earlier bundle, it's still there
-         - If g was in a bundle and we are in one of the bundle's definitions, we're still
-           in that definition *)
-      exact seems_legit.
-    + (* Unique bindings is preserved *)
-      decompose [and] Hcond; unfold S_uniq.
-      rewrite app_exp_c_eq, isoBAB.
-      rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
-      * unfold S_uniq in Huniq.
-        rewrite app_exp_c_eq, isoBAB in Huniq.
-        rewrite (proj1 (ub_app_ctx_f _)) in Huniq.
-        decompose [and] Huniq; clear Huniq; auto.
-      * (* Follows from UB(e') because BV(e'') = BV(e') because xs ∩ BV(e') = ∅ *)
+    + constructor.
+    (* We must explain how to maintain all the intermediate state variables across the edit *)
+    + unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
+      split; [split; [split; [split|]|]|]; unfold S_plain, S_fresh, S_fns, S_uniq.
+      * (* Need to set fresh variable in cdata properly for future passes.
+           Though we don't use it, later passes do. *)
+        exact (update_next_var fresh' cdata).
+      * (* Update the inlining heuristic *)
+        constructor; exact (IH.(update_App) f ft ys).
+      * (* fresh' is a sufficiently fresh variable *)
+        exists fresh'.
+        (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ codomain σ. then have 
+             vars(C[rename_all σ e'])
+             = vars(C) ∪ vars(rename_all σ e')
+             ⊆ vars(C) ∪ used_vars e' ∪ codomain σ
+             = vars(C) ∪ used_vars e' ∪ ys
+             ⊆ vars(C) ∪ used_vars e' ∪ vars(C[f(ys)])
+             = used_vars e' ∪ vars(C[f(ys)])
+             < fresh' *)
         exact seems_legit.
-      * (* Follows from vars(C[e]) ∩ BV(e') = ∅.
-             BV(e'') = BV(e') because xs ∩ BV(e') = ∅
-             BV(C) ⊆ vars(C[e]) *)
+      * (* The set of known functions remains the same *)
+        exists ρ.
+        (* For any known g:
+           - If g was in an earlier bundle, it's still there
+           - If g was in a bundle and we are in one of the bundle's definitions, we're still
+             in that definition *)
         exact seems_legit.
+      * (* Unique bindings is preserved *)
+        rewrite app_exp_c_eq, isoBAB.
+        rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
+        -- unfold S_uniq in Huniq.
+           rewrite app_exp_c_eq, isoBAB in Huniq.
+           rewrite (proj1 (ub_app_ctx_f _)) in Huniq.
+           decompose [and] Huniq; clear Huniq; auto.
+        -- (* Follows from UB(e') because BV(e'') = BV(e') because xs ∩ BV(e') = ∅ *)
+           exact seems_legit.
+        -- (* Follows from vars(C[e]) ∩ BV(e') = ∅.
+                BV(e'') = BV(e') because xs ∩ BV(e') = ∅
+                BV(C) ⊆ vars(C[e]) *)
+           exact seems_legit.
 Defined.
 
 Definition rw_inline : rewriter exp_univ_exp inline_step

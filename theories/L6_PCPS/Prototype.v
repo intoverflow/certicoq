@@ -256,9 +256,8 @@ Definition rewriter {U} `{Frame U} `{AuxData U} (root : U) (R : relation (univD 
 
 (* For each rule, *)
 Inductive ExtraVars (s : string) : Prop := MkExtraVars.
-Inductive PreserveTopdownEdit (s : string) : Prop := MkPreserveTopdownEdit.
-Inductive PreserveBottomupEdit (s : string) : Prop := MkPreserveBottomupEdit.
-Inductive RunRule (s : string) : Prop := MkRunRule.
+Inductive TopdownRunRule (s : string) : Prop := MkTopdownRunRule.
+Inductive BottomupRunRule (s : string) : Prop := MkBottomupRunRule.
 Inductive Success (s : string) : Prop := MkSuccess.
 Inductive Failure (s : string) : Prop := MkFailure.
 
@@ -280,7 +279,6 @@ Inductive Impossible : Prop := MkImpossible.
 Record RwObligations A := mk_obs {
   (* For each rule, *)
   obExtraVars : list A;
-  obPreserveEdits : list A;
   obRunRules : list A;
   (* For each constructor, *)
   obConstrDelays : list A;
@@ -638,7 +636,7 @@ Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
                 | Some d' => fn (mkApps <%@eq%> [xty; tVar x; mkApps delayD [u; tVar x'; tVar d']]) ty
                 | None => ty
                 end)
-              (tVar R)
+              (fn (mkApps R_C [hole; tVar C]) (fn (mkApps St [hole; tVar C; rule.(rRhs)]) (tVar R)))
               extra_vars)))
             extra_vars))
         (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R))
@@ -666,6 +664,7 @@ Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
   | dBottomup =>
     let hole := rule.(rHoleU) in
     let lhs := rule.(rLhs) in
+    let rhs := rule.(rRhs) in
     let lhs_vars := rule.(rLhsVars) in
     (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order.
        We will rearrange it to be (lhs vars .. rhs vars ..). *)
@@ -695,7 +694,8 @@ Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
          (tProd (nNamed s) (mkApps St [hole; tVar C; lhs])
          (fn
            (fn (mkApps <%Success%> [rule_name]) (fold_right
-             (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty) (tVar R)
+             (fun '(_, s, d) ty => tProd (nNamed s) d.(decl_type) ty)
+             (fn (mkApps R_C [hole; tVar C]) (fn (mkApps St [hole; tVar C; rhs]) (tVar R)))
              (rev rhs_ctx)))
            (fn (fn (mkApps <%Failure%> [rule_name]) (tVar R)) (tVar R)))))
         (rev lhs_ctx)))))
@@ -706,28 +706,6 @@ Definition gen_extra_vars_tys : GM (list term) :=
     (fun r => let! ty := gen_extra_vars_ty r in indices_of [] ty)
     (* (fun r => gen_extra_vars_ty r) *)
     rules.(rRules).
-
-End GoalGeneration.
-
-(* ---------- Types of helpers for preserving env/state across edits ---------- *)
-
-Section GoalGeneration.
-
-Context (R_C St : term)
-        (rs : rules_t)
-        (rw_univ := rs.(rUniv)).
-
-Definition gen_preserve_edit_ty  (rule : rule_t) : term :=
-  let '{| rDir := d; rHoleU := hole_ut; rΓ := Γ; rC := C; rLhs := lhs; rRhs := rhs |} := rule in
-  let hole_t := tConstruct rw_univ hole_ut [] in
-  fn (mkApps <%PreserveTopdownEdit%> [quote_string rule.(rName)])
-  (it_mkProd_or_LetIn (drop_names Γ)
-  (fn (mkApps R_C [hole_t; C])
-  (fn (mkApps St [hole_t; C; lhs])
-  (mkApps <%prod%> [mkApps R_C [hole_t; C]; mkApps St [hole_t; C; rhs]])))).
-
-Definition gen_preserve_edit_tys : GM (list term) :=
-  mapM (fun t => indices_of [] (gen_preserve_edit_ty t)) rs.(rRules).
 
 End GoalGeneration.
 
@@ -750,11 +728,18 @@ Context
 
 Definition gen_run_rule_ty (r : rule_t) : term. ltac1:(refine(
   let hole := mk_univ r.(rHoleU) in
-  fn (mkApps <%RunRule%> [quote_string r.(rName)])
+  let run_rule :=
+    match r.(rDir) with
+    | dTopdown => <%TopdownRunRule%>
+    | dBottomup => <%BottomupRunRule%>
+    end
+  in
+  fn (mkApps run_rule [quote_string r.(rName)])
   (it_mkProd_or_LetIn (drop_names r.(rΓ))
-  (fn
-    (mkApps rw_for [hole; r.(rC); r.(rRhs)])
-    (mkApps rw_for [hole; r.(rC); r.(rLhs)])))
+  ((match r.(rDir) with dTopdown => fn (mkApps R_C [hole; r.(rC)]) | dBottomup => id end)
+  (fn (mkApps St [hole; r.(rC); r.(rRhs)])
+  (fn (mkApps rw_for [hole; r.(rC); r.(rRhs)])
+  (mkApps rw_for [hole; r.(rC); r.(rLhs)])))))
 )).
 Defined.
 
@@ -1124,11 +1109,11 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
         ret (fn (mkApps <%@InspectCaseCongruence%> [constr_ty; constr]) (fn header
           (fold_right
             (fun '(md, x, x', t, u) ty =>
-              tProd (nNamed x) t (tProd (nNamed x') t
+              tProd (nNamed x) t
               (match md with
                | Some d => tProd (nNamed d) (mkApps delay_t [u; tVar x]) ty
-               | None => ty
-               end)))
+               | None => tProd (nNamed x') t ty
+               end))
             (fn
               (mkApps <%@eq%> [rty;
                 mkApps delayD [t_univ; tVar e; tVar d];
@@ -1204,7 +1189,8 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
                 | Some d' => fn (mkApps <%@eq%> [xty; tVar x; mkApps delayD [u; tVar x'; tVar d']]) ty
                 | None => ty
                 end)
-              (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; old_lhs]) (tVar R))
+              (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; old_lhs])
+              (fn (mkApps R_C [t_univ; tVar C]) (fn (mkApps St [t_univ; tVar C; r.(rRhs)]) (tVar R))))
               extra_vars))
             extra_vars)))))
       applicable
@@ -1257,7 +1243,7 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
         ret (fn (mkApps <%InspectCaseRule%> [quote_string r.(rName)]) (fn header
           (it_mkProd_or_LetIn (drop_names rΓ)
           (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; r.(rLhs)])
-          (tVar R))))))
+          (fn (mkApps St [t_univ; tVar C; r.(rRhs)]) (tVar R)))))))
       applicable
   in
   ret (fn (mkApps <%@Bottomup%> [rw_univ; t_univ])
@@ -1303,12 +1289,11 @@ Context (aux : aux_data_t) (delay_t delayD R_C St : term) (rules : rules_t).
 
 Definition gen_all : GM (RwObligations term). ltac1:(refine(
   let! extra_vars := gen_extra_vars_tys aux delay_t delayD R_C St rules in
-  let! preserve_edits := gen_preserve_edit_tys R_C St rules in
   let! run_rules := gen_run_rule_tys R_C St rules in
   let! constr_delays := gen_constr_delay_tys delay_t delayD aux in
   let! smart_constrs := gen_smart_constr_tys aux R_C St rules in
   let! '(topdowns, bottomups) := gen_inspect_tys aux delay_t delayD R_C St rules in
-  ret (mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
+  ret (mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
 
@@ -1317,17 +1302,16 @@ Defined.
    It's safer to unquote each term in obs with ltac. *)
 Definition unquote_all (obs : RwObligations term)
  : TemplateMonad (RwObligations typed_term). ltac1:(refine(
-  let '(mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups) :=
+  let '(mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups) :=
     obs
   in
   extra_vars <- monad_map tmUnquote extra_vars ;;
-  preserve_edits <- monad_map tmUnquote preserve_edits ;;
   run_rules <- monad_map tmUnquote run_rules ;;
   constr_delays <- monad_map tmUnquote constr_delays ;;
   smart_constrs <- monad_map tmUnquote smart_constrs ;;
   topdowns <- monad_map tmUnquote topdowns ;;
   bottomups <- monad_map tmUnquote bottomups ;;
-  ret (mk_obs extra_vars preserve_edits run_rules constr_delays smart_constrs topdowns bottomups)
+  ret (mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
 
@@ -1345,14 +1329,13 @@ Ltac unquote_and_assert_terms terms k :=
 
 Ltac unquote_and_assert_obs obs k :=
   lazymatch obs with
-  | mk_obs ?extra_vars ?preserve_edits ?run_rules ?constr_delays ?smart_constrs ?topdowns ?bottomups =>
+  | mk_obs ?extra_vars ?run_rules ?constr_delays ?smart_constrs ?topdowns ?bottomups =>
     unquote_and_assert_terms extra_vars ltac:(fun _ =>
-    unquote_and_assert_terms preserve_edits ltac:(fun _ =>
     unquote_and_assert_terms run_rules ltac:(fun _ =>
     unquote_and_assert_terms constr_delays ltac:(fun _ =>
     unquote_and_assert_terms smart_constrs ltac:(fun _ =>
     unquote_and_assert_terms topdowns ltac:(fun _ =>
-    unquote_and_assert_terms bottomups k))))))
+    unquote_and_assert_terms bottomups k)))))
   end.
 
 Ltac mk_rw_obs k :=
@@ -1426,16 +1409,14 @@ Definition tm_get_constr (s : string) : TemplateMonad typed_term :=
 
 Ltac mk_run_rule :=
   lazymatch goal with
-  | H : PreserveTopdownEdit ?rule -> _ |- RunRule ?rule -> _ =>
-    clear - H;
+  | |- TopdownRunRule ?rule -> _ =>
+    clear;
     intros;
-    let Hnext := fresh "Hnext" in
-    lazymatch goal with H : _ |- _ => revert H end;
     let r_C := fresh "r_C" in
     let s := fresh "s" in
-    unfold rw_for; intros Hnext r_C s;
-    eapply (H (MkPreserveTopdownEdit rule)) in s; try eassumption;
-    clear r_C; destruct s as [r_C s];
+    let Hnext := fresh "Hnext" in
+    lazymatch goal with H1 : _, H2 : _, H3 : _ |- _ => revert H1 H2 H3 end;
+    unfold rw_for; intros r_C s Hnext _ _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1451,16 +1432,14 @@ Ltac mk_run_rule :=
       | _ => eassumption
       end
     end)
-  | H : PreserveBottomupEdit ?rule -> _ |- RunRule ?rule -> _ =>
-    clear - H;
+  | |- BottomupRunRule ?rule -> _ =>
+    clear;
     intros;
-    let Hnext := fresh "Hnext" in
-    lazymatch goal with H : _ |- _ => revert H end;
     let r_C := fresh "r_C" in
     let s := fresh "s" in
-    unfold rw_for; intros Hnext r_C s;
-    eapply (H (MkPreserveBottomupEdit rule)) in s; try eassumption;
-    clear r_C; destruct s as [r_C s];
+    let Hnext := fresh "Hnext" in
+    lazymatch goal with H1 : _, H2 : _ |- _ => revert H1 H2 end;
+    unfold rw_for; intros s Hnext r_C _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1505,7 +1484,7 @@ Ltac mk_topdown_congruence :=
     eapply (H (MkInspectCaseCongruence constr) (MkCongruence constr));
     solve [eassumption|reflexivity]
   end.
-Ltac mk_topdown_active s :=
+Ltac mk_topdown_active r_C s :=
   lazymatch goal with
   | H : InspectCaseRule _ -> Active ?rule -> _, Hextras : ExtraVars ?rule -> _ |- _ =>
     eapply (Hextras (MkExtraVars rule));
@@ -1514,18 +1493,21 @@ Ltac mk_topdown_active s :=
      intros _; intros
     |(* Failure continuation: forget everything about the rule we just applied *)
      intros _; clear Hextras H];
-    [(* Success: apply the proper rule *)
-     eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity]; eassumption
+    [(* Success: switch to new env + state and apply the proper rule *)
+     lazymatch goal with
+     | H1 : _ , H2 : _ |- _ =>
+       clear r_C s; rename H1 into r_C, H2 into s;
+       eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity|exact r_C|exact s];
+       eassumption
+     end
     |(* Failure: try to apply other rules *)
-      mk_topdown_active s]
+      mk_topdown_active r_C s]
   | _ => mk_topdown_congruence
   end.
 Ltac mk_topdown :=
   repeat lazymatch goal with
   | H : Topdown -> _ |- _ => clear H
   | H : SmartConstr _ -> _ |- _ => clear H
-  | H : PreserveTopdownEdit _ -> _ |- _ => clear H
-  | H : PreserveBottomupEdit _ -> _ |- _ => clear H
   end;
   let d := fresh "d" in
   let R := fresh "R" in
@@ -1535,7 +1517,7 @@ Ltac mk_topdown :=
   let s := fresh "s" in
   intros _ R C e d r_C s; intros;
   repeat strip_one_match;
-  mk_topdown_active s.
+  mk_topdown_active r_C s.
 
 Ltac mk_bottomup_fallback :=
   lazymatch goal with
@@ -1557,8 +1539,6 @@ Ltac mk_bottomup :=
   | H : Topdown -> _ |- _ => clear H
   | H : Bottomup -> _ |- _ => clear H
   | H : SmartConstr _ -> _ |- _ => clear H
-  | H : PreserveTopdownEdit _ -> _ |- _ => clear H
-  | H : PreserveBottomupEdit _ -> _ |- _ => clear H
   end;
   let R := fresh "R" in
   let C := fresh "C" in
@@ -1687,12 +1667,15 @@ Ltac mk_rewriter :=
          clear r_C s;
          lazymatch goal with
          (* Rule applications *)
-         | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
+         | Hrun : TopdownRunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
            intros _ _; intros;
            lazymatch goal with He : delayD e d = _ |- _ => rewrite He end;
-           eapply (Hrun (MkRunRule rule));
-           [try eassumption..
-           |mk_edit_rhs recur univ HFrame root R delay_t HD R_C St]
+           let r_C'' := fresh "r_C" in
+           let s'' := fresh "s" in
+           lazymatch goal with H1 : _, H2 : _ |- _ => rename H1 into r_C'', H2 into s'' end;
+           eapply (Hrun (MkTopdownRunRule rule));
+           [idtac..|exact r_C''|exact s''|idtac];
+           [try eassumption..|mk_edit_rhs recur univ HFrame root R delay_t HD R_C St]
          (* Congruence cases *)
          | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
            intros _ _; intros;
@@ -1727,13 +1710,16 @@ Ltac mk_rewriter :=
            clear r_C s;
            lazymatch goal with
            (* Rule applications *)
-           | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
+           | Hrun : BottomupRunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
              intros _ _; intros;
              lazymatch goal with He : e = _ |- _ => rewrite He end;
              (* Run the rule... *)
-             eapply (Hrun (MkRunRule rule)); [eassumption..|];
+             let s'' := fresh "s" in
+             lazymatch goal with H : _ |- _ => rename H into s'' end;
+             eapply (Hrun (MkBottomupRunRule rule));
+             [idtac..|exact s''|idtac];
              (* ...and then just return the modified tree *)
-             apply (@rw_id univ HFrame root R R_C St)
+             [try eassumption..|apply (@rw_id univ HFrame root R R_C St)]
            (* Fallback (just return the child) *)
            | |- Fallback -> _ =>
              intros _;
@@ -1751,12 +1737,14 @@ Ltac mk_rewriter :=
     end
   end.
 
+
 (* Like mk_rw', but apply the default automation and only leave behind nontrivial goals *)
 Ltac mk_rw :=
   mk_rw';
   lazymatch goal with
   | |- SmartConstr _ -> _ => mk_smart_constr
-  | |- RunRule _ -> _ => mk_run_rule
+  | |- TopdownRunRule _ -> _ => mk_run_rule
+  | |- BottomupRunRule _ -> _ => mk_run_rule
   | |- Topdown _ -> _ => mk_topdown
   | |- Bottomup _ -> _ => mk_bottomup
   | _ => idtac
@@ -1775,8 +1763,8 @@ Ltac cond_failure :=
     apply (H (MkFailure rule))
   end.
 
-Ltac cond_success :=
+Ltac cond_success name :=
   lazymatch goal with
   | Hs : Success ?rule -> _, Hf : Failure ?rule -> _ |- ?R =>
-    specialize (Hs (MkSuccess rule)); clear Hf
+    specialize (Hs (MkSuccess rule)); clear Hf; rename Hs into name
   end.

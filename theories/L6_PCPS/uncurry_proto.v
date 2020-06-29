@@ -79,7 +79,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (k k' : var) (kt : fun_tag) (fv fv1 : list var)
     (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
-    (lhs rhs : list fundef) (s : Ensemble cps.var) (next_x : cps.var)
+    (lhs rhs : list fundef) (s : Ensemble cps.var)
     fp_numargs (ms ms' : S_misc),
   (* Non-linear LHS constraints *)
   k = k' /\
@@ -96,9 +96,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   fresh_copies s gv1 /\ length gv1 = length gv /\
   fresh_copies (s :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
   ~ ![f1] \in (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
-  (* (3) next_x must be a fresh variable *)
-  fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
-  (* (4) generate fun_tag + update ms *)
+  (* (3) generate fun_tag + update ms *)
   fp_numargs = length fv + length gv /\
   (ft1, ms') = get_fun_tag (N.of_nat fp_numargs) ms ->
   (* The rewrite *)
@@ -127,9 +125,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   fresh_copies s gv1 /\ length gv1 = length gv /\
   fresh_copies (s :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
   ~ ![f1] \in (s :|: FromList ![gv1] :|: FromList ![fv1]) /\
-  (* (3) next_x must be a fresh variable *)
-  fresher_than next_x (s :|: FromList ![gv1] :|: FromList ![fv1] :|: [set ![f1]]) /\
-  (* (4) generate fun_tag + update ms *)
+  (* (3) generate fun_tag + update ms *)
   fp_numargs = length fv + length gv /\
   (ft1, ms') = get_fun_tag (N.of_nat fp_numargs) ms ->
   (* The rewrite *)
@@ -173,7 +169,6 @@ Proof.
   mk_rw; mk_easy_delay.
   (* Obligation 1: uncurry_cps side conditions *)
   - intros; unfold delayD, Delayed_trivial_delay_t, trivial_delay_t in *.
-    rename X into success, H0 into failure.
     (* Check nonlinearities *)
     destruct k as [k], k' as [k'], g as [g], g' as [g'].
     destruct (eq_var k k') eqn:Hkk'; [|cond_failure].
@@ -193,25 +188,41 @@ Proof.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g, Hocc_k.
     (* Generate ft1 + new misc state ms *)
     pose (fp_numargs := length fv + length gv).
-    specialize success with (ms := ms) (fp_numargs := fp_numargs).
-    destruct (get_fun_tag (BinNatDef.N.of_nat fp_numargs) ms) as [ft1 ms'].
+    cond_success success; specialize success with (ms := ms) (fp_numargs := fp_numargs).
+    destruct (get_fun_tag (BinNatDef.N.of_nat fp_numargs) ms) as [ft1 ms'] eqn:Hms'.
     (* Generate f1, fv1, gv1, next_x *)
     clearpose Hxgv1 xgv1 (gensyms next_x gv); destruct xgv1 as [next_x0 gv1].
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
-    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1) (next_x := (next_x1 + 1)%positive).
+    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
     (* Prove that all the above code actually satisfies the side condition *)
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
-    eapply (success (MkSuccess _)); [..|reflexivity|reflexivity];
+    eapply success; [..|reflexivity|reflexivity| |];
       repeat match goal with |- _ /\ _ => split end;
       try solve [reflexivity|eassumption|subst;reflexivity|reflexivity].
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
-    + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
-      eapply fresher_than_monotonic; eauto; lia.
+    + (* Explain how to update state *)
+      unfold Rec; intros; split.
+      (* There are two parts: update various pieces of metadata and show that next_x is still fresh *)
+      * exact (metadata_update f [g]! [f1]! fp_numargs fv gv fv1 gv1 ms').
+      * exists (next_x1 + 1)%positive.
+        match type of Hfresh_fv with
+        | fresher_than _ ?S =>
+          assert (Hunion : fresher_than (next_x1 + 1)%positive (S :|: [set f1]))
+        end.
+        apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
+        eapply fresher_than_monotonic; eauto; lia.
+        eapply fresher_than_antimon; [|eassumption].
+        rewrite used_iso, isoABA, used_app.
+        change (exp_of_proto ?A) with ![A].
+        rewrite used_iso, isoABA, used_app.
+        unfold used; simpl; unbox_newtypes.
+        do 10 normalize_used_vars'; repeat normalize_sets.
+        rewrite !strip_vars_app; repeat normalize_sets.
+        intros arbitrary; rewrite !In_or_Iff_Union; clear; tauto.
   (* Obligation 2: uncurry_anf side conditions *)
   - intros; unfold delayD, Delayed_trivial_delay_t, trivial_delay_t in *.
-    rename X0 into success, H0 into failure.
     (* Check nonlinearities *)
     destruct g as [g], g' as [g'].
     destruct (eq_var g g') eqn:Hgg'; [|cond_failure].
@@ -229,49 +240,37 @@ Proof.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g.
     (* Generate ft1 + new misc state ms *)
     pose (fp_numargs := length fv + length gv).
-    specialize success with (ms := ms) (fp_numargs := fp_numargs).
-    destruct (get_fun_tag (BinNatDef.N.of_nat fp_numargs) ms) as [ft1 ms'].
+    cond_success success; specialize success with (ms := ms) (fp_numargs := fp_numargs).
+    destruct (get_fun_tag (BinNatDef.N.of_nat fp_numargs) ms) as [ft1 ms'] eqn:Hms'.
     (* Generate f1, fv1, gv1, next_x *)
     clearpose Hxgv1 xgv1 (gensyms next_x gv); destruct xgv1 as [next_x0 gv1].
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
-    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1) (next_x := (next_x1 + 1)%positive).
+    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
     (* Prove that all the above code actually satisfies the side condition *)
     edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
     edestruct (@gensyms_spec var) as [Hfv_copies [Hfresh_fv Hfv_len]]; try exact Hxfv1; [eassumption|].
-    eapply (success (MkSuccess _)); [..|reflexivity|reflexivity];
+    eapply success; [..|reflexivity|reflexivity| |];
       repeat match goal with |- _ /\ _ => split end;
       try solve [reflexivity|eassumption|subst;reflexivity].
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
-    + apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
-      eapply fresher_than_monotonic; eauto; lia.
-  (* Obligation 3: explain how to update state across uncurry_cps *)
-  - clear; unfold Rec; intros; split; [assumption|].
-    (* There are two parts: update various pieces of metadata and show that next_x is still fresh *)
-    split.
-    + exact (metadata_update f g f1 fp_numargs fv gv fv1 gv1 ms').
-    + exists next_x; repeat match goal with H : _ /\ _ |- _ => destruct H end.
-      eapply fresher_than_antimon; [|eassumption].
-      rewrite used_iso, isoABA, used_app.
-      subst s lhs. change (exp_of_proto ?A) with ![A].
-      rewrite used_iso, isoABA, used_app.
-      unfold used; simpl; unbox_newtypes.
-      do 10 normalize_used_vars'; repeat normalize_sets.
-      rewrite !strip_vars_app; repeat normalize_sets.
-      intros arbitrary; rewrite !In_or_Iff_Union; tauto.
-  (* Obligation 4: update state across uncurry_anf.
-     The proof script ends up being identical to obligation 3 *)
-  - clear; unfold Rec; intros; split; [assumption|]; split.
-    + exact (metadata_update f g f1 fp_numargs fv gv fv1 gv1 ms').
-    + exists next_x; repeat match goal with H : _ /\ _ |- _ => destruct H end.
-      eapply fresher_than_antimon; [|eassumption].
-      rewrite used_iso, isoABA, used_app.
-      subst s lhs. change (exp_of_proto ?A) with ![A].
-      rewrite used_iso, isoABA, used_app.
-      unfold used; simpl; unbox_newtypes.
-      do 10 normalize_used_vars'; repeat normalize_sets.
-      rewrite !strip_vars_app; repeat normalize_sets.
-      intros arbitrary; rewrite !In_or_Iff_Union; tauto.
+    + unfold Rec; intros; split.
+      * exact (metadata_update f [g]! [f1]! fp_numargs fv gv fv1 gv1 ms').
+      * exists (next_x1 + 1)%positive.
+        match type of Hfresh_fv with
+        | fresher_than _ ?S =>
+          assert (Hunion : fresher_than (next_x1 + 1)%positive (S :|: [set f1]))
+        end.
+        apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
+        eapply fresher_than_monotonic; eauto; lia.
+        eapply fresher_than_antimon; [|eassumption].
+        rewrite used_iso, isoABA, used_app.
+        change (exp_of_proto ?A) with ![A].
+        rewrite used_iso, isoABA, used_app.
+        unfold used; simpl; unbox_newtypes.
+        do 10 normalize_used_vars'; repeat normalize_sets.
+        rewrite !strip_vars_app; repeat normalize_sets.
+        intros arbitrary; rewrite !In_or_Iff_Union; clear; tauto.
 Defined.
 
 Definition rw_uncurry :
@@ -289,8 +288,8 @@ Defined.
 
 (* Set Extraction Flag 2031. (* default + linear let + linear beta *) *)
 (* Recursive Extraction rw_uncurry. *)
-(* - uncurry is directly recursive (no fixpoint combinator) 
-   - the context parameter C looks dead by induction *)
+(* - uncurry is directly recursive (no fixpoint combinator)  *)
+(* - the context parameter C looks dead by induction *)
 
 Lemma uncurry_one (cps : bool) (ms : S_misc) (e : exp) (s : S_fresh <[]> e)
   : option (result exp_univ_exp uncurry_step (@S) <[]> e).

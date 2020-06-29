@@ -178,25 +178,6 @@ Goal True.
     runGM n (
       let! R_C' := named_of [] R_C in
       let! St' := named_of [] St in
-      gen_preserve_edit_tys R_C' St' rules) ltac:(fun edit_tys n =>
-      run_template_program (
-        edit_tys' <- monad_map tmUnquote edit_tys ;;
-        tmPrint edit_tys') ltac:(fun x => idtac))
-  end))).
-Abort.
-
-Goal True.
-  ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (R_C, St)) ltac:(fun R_C_St =>
-  match R_C_St with
-  | (?R_C, ?St) =>
-    runGM n (
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
       gen_run_rule_tys R_C' St' rules) ltac:(fun tys n =>
       run_template_program (
         tys' <- monad_map tmUnquote tys ;;
@@ -338,15 +319,10 @@ Proof.
   ltac1:(mk_rw';
     try lazymatch goal with
     | |- SmartConstr _ -> _ => mk_smart_constr
-    | |- RunRule _ -> _ => mk_run_rule
+    | |- TopdownRunRule _ -> _ => mk_run_rule
+    | |- BottomupRunRule _ -> _ => mk_run_rule
     | |- Topdown _ -> _ => mk_topdown
     | |- Bottomup _ -> _ => mk_bottomup
-    end; [..|mk_rewriter];
-    (* Our rewriter's state has no invariants and is never used, so we can just return
-       a dummy value at each edit *)
-    try lazymatch goal with
-    | |- PreserveTopdownEdit _ -> _ => intros; split; constructor; (exact O || reflexivity)
-    | |- PreserveBottomupEdit _ -> _ => intros; split; constructor; (exact O || reflexivity)
     end;
     (* This particular rewriter's delayed computation is just the identity function, *)
     (*    so ConstrDelay and EditDelay are easy *)
@@ -357,13 +333,21 @@ Proof.
     (* end; *)
     (* try lazymatch goal with *)
     (* | |- ExtraVars _ -> _ => admit *)
-    (* end; [..|admit]; *)
+    (* end; *)
+    [..|mk_rewriter];
     idtac).
-  { cbn; intros; ltac1:(cond_success); eauto. }
+  { cbn; intros; ltac1:(cond_success success).
+    eapply success; eauto.
+    constructor > [exact O|reflexivity]. }
   { clear; intros; ltac1:(cond_failure). }
-  { clear; intros; ltac1:(cond_success); unfold delayD in *; cbn in *; eauto. }
-  { clear; intros. ltac1:(destruct (PeanoNat.Nat.eq_dec #|xs| 0); [cond_success; eauto|cond_failure]). }
-  { clear; intros. ltac1:(destruct (PeanoNat.Nat.eq_dec #|xs| 0); [cond_success; eauto|cond_failure]). }
+  { clear; intros; ltac1:(cond_success success); cbn in *.
+    eapply success; eauto; constructor > [exact O|reflexivity]. }
+  { clear; intros. destruct (PeanoNat.Nat.eq_dec #|xs| 0) > [|ltac1:(cond_failure)].
+    ltac1:(cond_success success); eapply success; eauto.
+    constructor > [exact O|reflexivity]. }
+  { clear; intros. destruct (PeanoNat.Nat.eq_dec #|xs| 0) > [|ltac1:(cond_failure)].
+    ltac1:(cond_success success); eapply success; eauto.
+    constructor > [exact O|reflexivity]. }
   { exists tt. reflexivity. }
 Defined.
 
@@ -744,27 +728,26 @@ Proof.
   (* Now there are two things left: first, we need to explain how to check the preconditions
      of each rule and compute intermediate values *)
   - (* Case folding *)
-    intros _ R C x ces d [cpConses HConses] _ success failure.
+    intros _ R C x ces d r s success failure.
+    destruct r as [cpConses HConses] eqn:Hr.
     destruct (cpConses (d x)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (find_arm c ces) as [e|] eqn:Hc > [|ltac1:(cond_failure)].
-    ltac1:(cond_success;
-      eapply (success (d x) (map (subst_arm d) ces) e d c (subst_exp d e)));
-      auto; split.
+    ltac1:(cond_success success).
+    specialize (success (d x) (map (subst_arm d) ces) e d c (subst_exp d e)).
+    apply success; auto; split.
     + edestruct HConses as [D [E Hctx]]; eauto.
-    + apply find_arm_In in Hc; destruct Hc as [l [r Hlr]].
-      exists (map (subst_arm d) l), (map (subst_arm d) r); subst ces.
+    + apply find_arm_In in Hc; destruct Hc as [l [r_arms Hlr]].
+      exists (map (subst_arm d) l), (map (subst_arm d) r_arms); subst ces.
       now rewrite !map_app.
   - (* Projection folding *)
-    clear; intros _ R C x y n e d [cpConses HConses] _ success failure.
+    clear; intros _ R C x y n e d r s success failure.
+    destruct r as [cpConses HConses] eqn:Hr.
     destruct (cpConses (d y)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (nth_error ys n) as [y'|] eqn:Hn > [|ltac1:(cond_failure)].
-    ltac1:(cond_success); apply (success (d x) (d y) n (subst_exp d e) d y' ys); split; auto.
+    ltac1:(cond_success success); apply (success (d x) (d y) n (subst_exp d e) d y' ys); auto; split; auto.
     edestruct HConses as [D [E Hctx]]; eauto.
-  (* Next, we need to explain how to maintain the invariant on our fresh variable across
-     rule application *)
-  - intros; split > [assumption|exact tt].
-  - intros; split > [assumption|exact tt].
-  - (* Prove the fusion law *) eexists. simpl. rewrite <- subst_exp_comp. reflexivity.
+  - (* Prove the fusion law *)
+    eexists. simpl. rewrite <- subst_exp_comp. reflexivity.
 Defined.
 
 Check rw_cp.
