@@ -825,9 +825,6 @@ Local Ltac freshen_used_facts :=
     assert (next' >= next) by now eapply freshen_fds_increasing
   end.
 
-(* The interval [x, z) *)
-Definition interval x z : Ensemble positive := fun y => x <= y < z.
-
 Fixpoint bound_var_no_names fds :=
   match fds with
   | cps.Fnil => Empty_set _
@@ -857,13 +854,64 @@ Proof.
   destruct (freshen_fds next1 σ' fds) as [next2 fds0] eqn:Hfds0; symmetry in Hfds0.
   inv Heq; cbn in *.
   apply Union_Included.
-  - (* f ∈ fds_base ⟹ σ'(f) ∈ strip_vars fs *) admit.
+  - (* f ∈ fds_base ⟹ σ'(f) ∈ strip_vars fs *)
+    rewrite !name_in_fundefs_FromList in Hsub; cbn in Hsub.
+    apply set_lists_In_corresp with (x := f) in Hset; [|now apply Hsub].
+    destruct Hset as [y [Hget Hin]].
+    apply Singleton_Included; unfold apply_r.
+    change (@cps.M.get cps.M.elt) with (@M.get cps.var).
+    rewrite Hget; now unfold Ensembles.In, FromList.
   - specialize (freshen_bounded_names next next' next1 next2 fds_base fds fds0 fs σ σ' Hgen Hset).
     freshen_used_facts.
     assert (next1 >= next') by lia.
     apply freshen_bounded_names; auto.
     now apply Union_Included_r in Hsub.
-Admitted.
+Qed.
+
+(* The interval [x, z) *)
+Definition interval x z : Ensemble positive := fun y => x <= y < z.
+
+(* Facts about intervals *)
+
+Lemma interval_lower x y : x < y -> x \in interval x y.
+Proof. unfold interval, Ensembles.In; lia. Qed.
+
+Lemma interval_lower_Singleton x y : x < y -> [set x] \subset interval x y.
+Proof. intros; now apply Singleton_Included, interval_lower. Qed.
+
+Lemma Singleton_predicate {A} (x : A) : [set x] <--> (fun y => y = x).
+Proof. split; intros y; unfold Ensembles.In; now inversion 1. Qed.
+
+Lemma Disjoint_intervals x y z w :
+  (forall a, ~ (x <= a < y /\ z <= a < w)) ->
+  Disjoint _ (interval x y) (interval z w).
+Proof.
+  intros Hforall; constructor; intros arb; intros [arb' Hl Hr].
+  unfold Ensembles.In, interval in *; specialize (Hforall arb'); lia.
+Qed.
+
+Ltac solve_interval :=
+  rewrite ?Singleton_predicate;
+  unfold interval, Included, Ensembles.In in *; cbn in *;
+  intros; lia.
+
+Ltac easy_interval :=
+  solve [apply interval_lower_Singleton; lia
+        |solve_interval
+        |eapply Included_trans; [eassumption|easy_interval]
+        |apply Union_Included; easy_interval
+        ].
+
+Lemma gensyms_bounded {A} x (xs : list A) x' xs' :
+  (x', xs') = gensyms x xs ->
+  FromList ![xs'] \subset interval x x'.
+Proof.
+  intros; unfold Included, FromList, Ensembles.In, interval; intros arbitrary Hxs'.
+  apply in_map with (f := mk_var) in Hxs'; normalize_roundtrips.
+  (assert (x' > ![mk_var arbitrary]) by (eapply gensyms_upper2; eauto)); cbn in *.
+  assert (![mk_var arbitrary] >= x) by (eapply gensyms_increasing'; eauto); cbn in *.
+  lia.
+Qed.
 
 Lemma freshen_bounded :
   freshen_stmt
@@ -874,26 +922,32 @@ Proof.
   apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips;
     intros; freshen_used_facts; repeat normalize_bound_var;
     try rewrite bound_var_Ecase in *.
-  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *)
+    easy_interval.
   - apply H0.
   - rewrite bound_var_no_names_Union.
     (* BV(fds') \ names(fds') ⊆ [next', next'')
        names(fds') ⊆ fs' ⊆ [next, next') (by freshen_bounded_names)
        BV(e') ⊆ [next'', next''') *)
-    admit.
-  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
-  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+    assert (name_in_fundefs ![fds'] \subset FromList ![fs']). {
+      eapply (freshen_bounded_names next next' next' next'' fds fds fds');
+        try lia; eauto with Ensembles_DB. }
+    apply gensyms_bounded in H.
+    easy_interval.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) easy_interval.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) easy_interval.
   - inversion 1.
-  - (* next easy, BV(e') ⊆ [next + 1, next') *) admit.
+  - (* next easy, BV(e') ⊆ [next + 1, next') *) easy_interval.
   - inversion 1.
   - inversion 1.
   - (* xs' ⊆ [next, next')
        BV(e') ⊆ [next', next'') 
        BV(fds') \ names(fds') ⊆ [next'', next''') *)
-    admit.
+    apply gensyms_bounded in H.
+    easy_interval.
   - inversion 1.
-  - (* From IHs *) admit.
-Admitted.
+  - (* From IHs *) easy_interval.
+Qed.
 
 Corollary freshen_exp_bounded : forall σ next e next' e',
   (next', e') = freshen_exp next σ e -> bound_var ![e'] \subset interval next next'.
@@ -1027,22 +1081,74 @@ Proof.
     apply (in_map mk_var) in oops; now normalize_roundtrips.
 Qed.
 
+Fixpoint injective_subdomain_In {A B} S (f : A -> B) x xs :
+  injective_subdomain S f ->
+  x \in S ->
+  FromList xs \subset S ->
+  In (f x) (map f xs) ->
+  In x xs.
+Proof.
+  destruct xs as [|x' xs]; [inversion 4|cbn; intros Hinj Hin Hsub [Hhere|Hthere]].
+  - apply Hinj in Hhere; [now left|normalize_sets; eauto with Ensembles_DB|auto].
+  - eapply injective_subdomain_In in Hthere; try eassumption; [now right|normalize_sets].
+    eapply Included_trans; [eauto with Ensembles_DB|eassumption].
+Qed.
+
+Fixpoint NoDup_strip (xs : list var) : NoDup xs -> NoDup ![xs].
+Proof.
+  destruct xs as [|[x] xs]; [constructor|cbn; intros Hdup; inv Hdup; constructor; auto].
+  intros Hoops; apply in_map with (f := mk_var) in Hoops;  now normalize_roundtrips.
+Qed.
+
+Fixpoint freshen_NoDup next next' next'' fds_base fds fs σ σ' :
+  (next', fs) = gensyms next (map fun_name fds_base) ->
+  set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+  name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+  next'' >= next' ->
+  NoDup (map fun_name fds) ->
+  NoDup [map (apply_r σ') ![map fun_name fds]]!.
+Proof.
+  destruct fds as [|[[f] [ft] xs e] fds]; [constructor|].
+  intros Hgen Hset Hsub Hge; cbn; intros Hdup; inv Hdup; constructor.
+  - intros Hoops; apply in_map with (f := un_var) in Hoops; cbn in Hoops.
+    change (map un_var) with strip_vars in Hoops; normalize_roundtrips.
+    apply injective_subdomain_In with (S := name_in_fundefs ![fds_base]) in Hoops.
+    + apply in_map with (f := mk_var) in Hoops; now normalize_roundtrips.
+    + rewrite name_in_fundefs_FromList; eapply set_NoDup_inj; eauto.
+      apply NoDup_strip; eapply gensyms_NoDup'; eauto.
+    + cbn in Hsub; eauto with Ensembles_DB.
+    + cbn in Hsub; eapply Included_trans; [|eassumption].
+      rewrite name_in_fundefs_FromList; eauto with Ensembles_DB.
+  - eapply freshen_NoDup; eauto.
+    cbn in Hsub; eapply Included_trans; eauto with Ensembles_DB.
+Qed.
+
 Definition freshen_uniq_names next next' next'' next''' fds_base fds fds' fs σ σ' :
-   (next', fs) = gensyms next (map fun_name fds_base) ->
-   set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
-   name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
-   next'' >= next' ->
-   unique_names ![fds] ->
-   (next''', fds') = freshen_fds next'' σ' fds ->
-   unique_names ![fds'].
+  (next', fs) = gensyms next (map fun_name fds_base) ->
+  set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
+  name_in_fundefs ![fds] \subset name_in_fundefs ![fds_base] ->
+  next'' >= next' ->
+  unique_names ![fds] ->
+  (next''', fds') = freshen_fds next'' σ' fds ->
+  unique_names ![fds'].
 Proof.
   intros Hgen Hset Hsub Hge Huniq Heq.
   rewrite unique_names_NoDup; rewrite unique_names_NoDup in Huniq.
   erewrite freshen_fds_names; eauto; cbn.
-  (* σ sends f ∈ fds to f' in fs.
-     NoDup fds (assumption) and NoDup fs (because fs were gensym'd), so NoDup σ(fds). *)
-  admit.
-Admitted.
+  eapply freshen_NoDup; eassumption.
+Qed.
+
+Ltac BV_oob :=
+  match goal with
+  | H : bound_var ?S \subset interval ?l ?r |- ~ bound_var ?S ?x =>
+    let Hoops := fresh "Hoops" in intros Hoops;
+    let Hoops' := fresh "Hoops" in
+    (assert (Hoops' : [set x] \subset interval l r)
+      by (eapply Included_trans; [|eassumption]; apply Singleton_Included, Hoops));
+    rewrite ?Singleton_predicate in Hoops';
+    unfold interval, Included, Ensembles.In in Hoops';
+    specialize (Hoops' x); lia
+  end.
 
 Lemma freshen_uniq :
   freshen_stmt
@@ -1054,43 +1160,82 @@ Proof.
   apply freshen_ind; intros; unbox_newtypes; cbn in *; normalize_roundtrips.
   - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
     constructor; auto.
-    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *)
+    apply freshen_exp_bounded in H; cbn in H; BV_oob.
   - rewrite unique_bindings_Ecase in *; auto.
   - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
-    constructor; auto.
-    + change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
-      rewrite unique_bindings_fundefs_decomp; split; [|split].
+    assert (name_in_fundefs ![fds'] \subset FromList ![fs'])
+      by (eapply freshen_bounded_names; try eassumption; try lia; eauto with Ensembles_DB).
+    assert (Hnext1 : next' >= next) by (eapply gensyms_upper1; eauto).
+    assert (Hnext2 : next'' >= next') by (eapply freshen_fds_increasing; eassumption).
+    assert (Hnext3 : next''' >= next'') by (eapply freshen_exp_increasing; eassumption).
+    constructor; auto; change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+    + rewrite unique_bindings_fundefs_decomp; split; [|split].
       * rewrite unique_bindings_fundefs_decomp in H9; intuition.
-      * eapply freshen_uniq_names; eauto with Ensembles_DB; try lia.
+      * clear Hnext1 Hnext2 Hnext3; eapply freshen_uniq_names; eauto with Ensembles_DB; try lia.
         rewrite unique_bindings_fundefs_decomp in H9; intuition.
       * (* names(fds') ⊆ fs' ⊆ [next, next') by freshen_bounded_names 
            (BV(fds') \ names(fds')) ⊆ [next', next'') by freshen_fds_bounded *)
-        admit.
-    + clear H2. (* BV(fds') ⊆ [next, next'') and BV(e') ⊆ [next'', next''') *) admit.
+        eapply Disjoint_Included_l; [eassumption|].
+        eapply Disjoint_Included_l; [eapply gensyms_bounded; eassumption|].
+        eapply Disjoint_Included_r; [eapply freshen_fds_bounded; eassumption|].
+        apply Disjoint_intervals; intros arb; lia.
+    + clear H2.
+      (* BV(fds') ⊆ [next, next'') and BV(e') ⊆ [next'', next''') *)
+      rewrite bound_var_no_names_Union.
+      eapply Disjoint_Included_l; [eapply freshen_exp_bounded; eassumption|].
+      eapply Union_Disjoint_r.
+      * eapply Disjoint_Included_r; [eapply freshen_fds_bounded; eassumption|].
+        apply Disjoint_intervals; intros arb; lia.
+      * rewrite name_in_fundefs_FromList in *.
+        eapply Disjoint_Included_r. {
+          eapply Included_trans; [eassumption|].
+          eapply gensyms_bounded; eassumption. }
+        apply Disjoint_intervals; intros arb; lia.
   - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
     constructor; auto.
-    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *)
+    apply freshen_exp_bounded in H; cbn in H; BV_oob.
   - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
     constructor; auto.
-    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *)
+    apply freshen_exp_bounded in H; cbn in H; BV_oob.
   - constructor.
   - repeat lazymatch goal with H : unique_bindings (_ _ _) |- _ => inv H end.
     constructor; auto.
-    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *) admit.
+    (* BV(e') ⊆ [next + 1, next') and next < next + 1 *)
+    apply freshen_exp_bounded in H; cbn in H; BV_oob.
   - constructor.
   - constructor.
   - repeat lazymatch goal with H : unique_bindings_fundefs (_ _ _) |- _ => inv H end.
+    assert (Hnext1 : next' >= next) by (eapply gensyms_upper1; eauto).
+    assert (Hnext2 : next'' >= next') by (eapply freshen_exp_increasing; eassumption).
+    assert (Hnext3 : next''' >= next'') by (eapply freshen_fds_increasing; eassumption).
     decompose [and] H5.
     repeat match goal with |- _ /\ _ => split; auto end.
-    + (* xs' was gensym'd *) admit.
-    + (* BV(e') ⊆ [next', next'') and xs' ⊆ [next, next') *) admit.
-    + (* (BV(fds') \ names(fds')) ⊆ [next'', next''') and xs' ⊆ [next, next') *) admit.
-    + (* BV(e') ⊆ [next', next'') and (BV(fds') \ names(fds')) ⊆ [next'', next''') *) admit.
+    + (* xs' was gensym'd *) apply NoDup_strip; eapply gensyms_NoDup'; eauto.
+    + (* BV(e') ⊆ [next', next'') and xs' ⊆ [next, next') *)
+      eapply Disjoint_Included_l; [eapply freshen_exp_bounded; eassumption|].
+      eapply Disjoint_Included_r; [eapply gensyms_bounded; eassumption|].
+      apply Disjoint_intervals; intros arb; lia.
+    + (* (BV(fds') \ names(fds')) ⊆ [next'', next''') and xs' ⊆ [next, next') *)
+      eapply Disjoint_Included_l; [eapply freshen_fds_bounded; eassumption|].
+      eapply Disjoint_Included_r; [eapply gensyms_bounded; eassumption|].
+      apply Disjoint_intervals; intros arb; lia.
+    + (* BV(e') ⊆ [next', next'') and (BV(fds') \ names(fds')) ⊆ [next'', next''') *)
+      eapply Disjoint_Included_l; [eapply freshen_exp_bounded; eassumption|].
+      eapply Disjoint_Included_r; [eapply freshen_fds_bounded; eassumption|].
+      apply Disjoint_intervals; intros arb; lia.
   - constructor.
   - repeat lazymatch goal with H : _ /\ _ |- _ => inv H end.
     repeat lazymatch goal with |- _ /\ _ => split end; auto.
-    (* BV(e') ⊆ [next, next') and BV(ces') ⊆ [next', next'') *) admit.
-Admitted.
+    (* BV(e') ⊆ [next, next') and BV(ces') ⊆ [next', next'') *)
+    assert (next' >= next) by (eapply freshen_exp_increasing; eauto).
+    assert (next'' >= next') by (eapply freshen_ces_increasing; eauto).
+    eapply Disjoint_Included_l; [eapply freshen_exp_bounded; eassumption|].
+    eapply Disjoint_Included_r; [eapply freshen_ces_bounded; eassumption|].
+    apply Disjoint_intervals; intros arb; lia.
+Qed.
 
 Corollary freshen_exp_uniq : forall σ next e next' e',
   (next', e') = freshen_exp next σ e -> unique_bindings ![e] -> unique_bindings ![e'].
@@ -1105,71 +1250,6 @@ Corollary freshen_fds_uniq : forall σ next fds next' fds',
   (next', fds') = freshen_fds next σ fds ->
   unique_bindings_no_names ![fds] -> unique_bindings_no_names ![fds'].
 Proof. apply freshen_uniq. Qed.
-
-(*
-Fixpoint set_gensyms_inj_fds next next' fnames fnames' fds fds' σ σ' {struct fnames} :
-  fresher_than next (used_vars_fundefs ![fds]) ->
-  (next', fnames') = gensyms next fnames ->
-  set_lists ![fnames] ![fnames'] σ = Some σ' -> forall xs,
-  xs = map fun_name fds ->
-  (forall x, In x xs -> In x fnames) ->
-  [map (apply_r σ') ![xs]]! = map fun_name fds' ->
-  construct_fundefs_injection (apply_r σ) ![fds] ![fds'] (apply_r σ').
-Proof.
-  destruct fnames as [|fname fnames], fnames' as [|fname' fnames']; unbox_newtypes; cbn; try congruence.
-  - intros Hfresh Heq1 Heq2 xs Hfnames Hsubset Hfnames'; inv Heq1; inv Heq2.
-    destruct fds as [|[[f] [ft] xs e] fds], fds' as [|[[f'][ft']xs' e']fds']; inv Hfnames'; [constructor|].
-    contradiction (Hsubset [f]!); now left.
-  - destruct (gensyms (next + 1) fnames) as [next0 fnames0] eqn:Hgen; symmetry in Hgen.
-    assert (next0 >= next + 1) by now eapply gensyms_upper1.
-    intros Hfresh Heq; inv Heq.
-    destruct (set_lists _ _ _) as [σ0|] eqn:Hσ; [|congruence]; intros Heq; inv Heq.
-    assert (Heq : (apply_r (@map_util.M.set cps.M.elt fname next σ0)) = (apply_r σ0) {fname ~> next}). {
-      apply FunctionalExtensionality.functional_extensionality; intros; now rewrite apply_r_set. }
-    intros xs Hxs Hsubset Hxs0;destruct fds as[|[[lf][lft]lxs le]lfds],fds' as[|[[rf][rft]rxs re]rfds].
-    rewrite Heq; inv Hxs; unfold apply_r at 1 in Hxs0; rewrite M.gss in Hxs0; inv Hxs0; constructor.
-    + eapply set_gensyms_inj_fds; eauto.
-      * normalize_images; solve_easy.
-      * 
-    Print construct_fundefs_injection.
-    apply construct_fundefs_injection_cons.
-      inversion Hxs; inversion Hxs0; subst lf rf; cbn in *; rewrite Heq; constructor.
-    + normalize_images.
-      specialize (set_gensyms_inj_fds (next + 1) next0 xs xs0 lfds rfds σ σ0).
-      eapply set_gensyms_inj_fds; auto; eapply fresher_than_monotonic; eauto; lia.
-    + unfold cps.var in *.
-      assert (HNoDup : NoDup xs0) by now eapply gensyms_NoDup'.
-      apply NoDup_var in HNoDup.
-      pose (Hinj := set_NoDup_inj ![xs] ![xs0] σ σ0 HNoDup Hσ); clearbody Hinj.
-      rewrite name_in_fundefs_FromList.
-      apply injective_subdomain_extend; [now subst|cbn].
-      intros [σnext [[Himage Hnot_x] Hσnext]].
-      assert (Hin : In next ![xs0]). {
-        unfold apply_r; unfold apply_r in Hσnext; subst xs xs0.
-        edestruct @set_lists_In_corresp as [σnext' [Hσnext' Hin]]; try exact Hσ; [apply Himage|].
-        rewrite Hσnext' in *; now subst σnext'. }
-      apply in_map with (f := mk_var) in Hin; normalize_roundtrips.
-      assert (![mk_var next] >= next + 1) by now eapply gensyms_increasing'.
-      cbn in *; normalize_roundtrips; lia.
-Qed. *)
-
-(* TODO
-Local Ltac freshen_facts :=
-  try match goal with
-  | H : (?next', _) = gensyms ?next _ |- _ =>
-    assert (next' >= next) by now eapply gensyms_upper1
-  end;
-  try match goal with
-  | H : (?next', _) = freshen_exp ?next _ _ |- _ =>
-    assert (next' >= next) by now eapply freshen_exp_increasing
-  end; try match goal with
-  | H : (?next', _) = freshen_ces ?next _ _ |- _ =>
-    assert (next' >= next) by now eapply freshen_ces_increasing
-  end; try match goal with
-  | H : (?next', _) = freshen_fds ?next _ _ |- _ =>
-    assert (next' >= next) by now eapply freshen_fds_increasing
-  end.
-*)
 
 Lemma map_ext_eq {A B} xs : forall (f g : A -> B) (Heq : forall x, In x xs -> f x = g x), map f xs = map g xs.
 Proof.
