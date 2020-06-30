@@ -920,7 +920,7 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                 xutfs))
             ty)
         (mkApps rw_for [univ_rty; tVar C; mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
-        xutfs)
+        (rev xutfs))
       xutfs)))
 )).
 Defined.
@@ -1251,7 +1251,7 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
     (tProd (nNamed e) (mkApps univD [t_univ])
     (tProd (nNamed r_C) (mkApps R_C [t_univ; tVar C]) 
     (tProd (nNamed s) (mkApps St [t_univ; tVar C; tVar e])
-    (fold_right fn (fn (fn <%Fallback%> (tVar R)) (tVar R)) applicable)))))))
+    (fold_right fn (fn (fn <%Fallback%> (tVar R)) (tVar R)) (rev applicable))))))))
 )).
 Defined.
 
