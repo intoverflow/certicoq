@@ -1337,6 +1337,82 @@ Proof.
   now apply Union_Included_r in Hsub.
 Qed.
 
+(* TODO: move to lemmas about intervals *)
+Lemma fresher_than_bounded x S : fresher_than x S -> S \subset interval 1 x.
+Proof.
+  unfold fresher_than, interval, Included, Ensembles.In; intros Hgt arb HS.
+  apply Hgt in HS; lia.
+Qed.
+
+Lemma notin_apply_r_set x y xs σ :
+  ~ In x xs ->
+  map (apply_r (M.set x y σ)) xs = map (apply_r σ) xs.
+Proof.
+  induction xs; auto; cbn; intros Hnotin.
+  apply Decidable.not_or in Hnotin.
+  destruct Hnotin as [Hne Hnotin].
+  rewrite IHxs; auto.
+  unfold apply_r; rewrite M.gso; auto.
+Qed.
+
+Fixpoint NoDup_construct_fundefs_injection σ σ' fs fds fds' {struct fds} :
+  NoDup (map fun_name fds) -> NoDup fs ->
+  Disjoint _ (FromList ![map fun_name fds]) (FromList ![fs]) ->
+  set_lists ![map fun_name fds] ![fs] σ = Some σ' ->
+  ![map fun_name fds'] = map (apply_r σ') ![map fun_name fds] ->
+  construct_fundefs_injection (apply_r σ) ![fds] ![fds'] (apply_r σ').
+Proof.
+  intros Hdup Hdup_fs Hdis Hset Hnames.
+  assert (Hlen : length ![map fun_name fds] = length ![fs]) by now eapply set_lists_length_eq.
+  assert (Hinj : injective_subdomain (name_in_fundefs ![fds]) (apply_r σ')). {
+    rewrite name_in_fundefs_FromList.
+    eapply set_NoDup_inj; eauto.
+    now apply NoDup_var. }
+  destruct fds as [|[[f] [ft] xs e] fds], fds' as [|[[f'] [ft'] xs' e'] fds']; try inv Hnames.
+  - destruct fs; try inv Hlen; inv Hset; constructor.
+  - destruct fs as [|[f'] fs']; try inv Hlen; cbn in *.
+    match type of Hset with
+    | match ?e with _ => _ end = _ =>
+      destruct e as [σ0|] eqn:Hσ0; inv Hset
+    end.
+    assert (Heq : (apply_r (@map_util.M.set cps.M.elt f f' σ0)) = (apply_r σ0) {f ~> f'}). {
+      apply FunctionalExtensionality.functional_extensionality.
+      intros; now rewrite apply_r_set. }
+    assert (Hf : apply_r (@map_util.M.set cps.M.elt f f' σ0) f = f') by (unfold apply_r; now rewrite M.gss).
+    rewrite Hf, Heq; constructor.
+    + inv Hdup; inv Hdup_fs.
+      specialize (NoDup_construct_fundefs_injection σ σ0 fs' fds fds').
+      apply NoDup_construct_fundefs_injection; auto.
+      * repeat normalize_sets.
+        apply Disjoint_Union_r in Hdis.
+        apply Disjoint_Union in Hdis; now destruct Hdis.
+      * (* f ∉ fds ==> σ[f ↦ f'] fds = σ fds *)
+        rewrite H1.
+        assert (~ In f ![map fun_name fds]). {
+          intros Hin.
+          apply in_map with (f := mk_var) in Hin; now normalize_roundtrips. }
+        now rewrite notin_apply_r_set by auto.
+    + now rewrite apply_r_set.
+Qed.
+
+Lemma set_lists_image xs ys S σ σ' :
+  set_lists xs ys σ = Some σ' ->
+  image (apply_r σ') S \subset FromList ys :|: image (apply_r σ) S.
+Proof.
+  intros Hset arb [x [HS Hσx]].
+  assert (Hin : Decidable.decidable (In x xs)). {
+    apply ListDec.In_decidable; unfold ListDec.decidable_eq.
+    intros x' y' ; destruct (Pos.eq_dec x' y'); [left|right]; auto. }
+  destruct Hin as [Hin|Hnotin].
+  - eapply set_lists_In_corresp in Hin; eauto.
+    destruct Hin as [y [Hget Hyin]].
+    unfold apply_r in Hσx; rewrite Hget in Hσx; subst arb; now left.
+  - unfold apply_r in Hσx.
+    erewrite <- set_lists_not_In in Hσx; eauto.
+    match type of Hσx with ?lhs = _ => change lhs with (apply_r σ x) in Hσx end.
+    right; unfold Ensembles.In, image; eexists; split; eauto.
+Qed.
+
 Lemma freshen_Alpha :
   freshen_stmt
     (fun σ next e next' e' =>
@@ -1368,7 +1444,12 @@ Proof.
     apply Alpha_Efun with (f' := apply_r σ'); try solve_easy.
     + (* names(fds') = fs' ⊆ [next, next')
          next is fresher than σ(FV(Efun fds e)) ∪ BV(Efun fds e) *)
-      admit.
+      eapply Disjoint_Included_l; [eapply freshen_bounded_names; eauto with Ensembles_DB; try lia|].
+      apply gensyms_bounded in H.
+      eapply Disjoint_Included_l; [eassumption|].
+      unfold used_vars, used_vars_fundefs in *. normalize_images.
+      repeat match goal with H : fresher_than _ _ |- _ => apply fresher_than_bounded in H end.
+      apply Union_Disjoint_r; (eapply Disjoint_Included_r; [eassumption|]; apply Disjoint_intervals; lia).
     + inv H5.
       rewrite unique_bindings_fundefs_decomp in H10.
       decompose [and] H10; clear H10.
@@ -1377,17 +1458,46 @@ Proof.
          NB: just an injection is not enough because construct_fundefs_injection starts with
          σ and builds bindings up as it goes along. This means that if fds contains duplicates
          then fds' <> map (apply_r σ) fds. *)
-      admit.
+      apply NoDup_construct_fundefs_injection with (fs := fs'); auto.
+      * eapply gensyms_NoDup'; eauto.
+      * apply gensyms_bounded in H.
+        rewrite <- name_in_fundefs_FromList.
+        eapply Disjoint_Included_r; [eassumption|].
+        normalize_images; unfold used_vars_fundefs in *; normalize_images.
+        repeat match goal with H : fresher_than _ _ |- _ => apply fresher_than_bounded in H end.
+        eapply Disjoint_Included_l; [apply name_in_fundefs_bound_var_fundefs|].
+        eapply Disjoint_Included_l; [eassumption|].
+        eapply Disjoint_intervals; lia.
+      * erewrite freshen_fds_names; eauto with Ensembles_DB; try lia.
+        now normalize_roundtrips.
     + rewrite Alpha_conv_fundefs_decomp; split.
       * eapply freshen_Alpha_names; eauto with Ensembles_DB; lia.
       * apply H2. { inv H5. now rewrite unique_bindings_fundefs_decomp in H10. }
+        normalize_images.
+        assert (next' >= next) by (eapply gensyms_upper1; eauto).
+        assert (next'' >= next') by (eapply freshen_fds_increasing; eauto).
+        assert (next''' >= next'') by (eapply freshen_exp_increasing; eauto).
+        apply fresher_than_Union; [solve_easy|].
         (* σ'(x) is either in fs' or in σ. 
            If in fs', next' fresher than fs'.
            If in σ, next' ≥ next and next fresher than σ(vars(fds)). *)
-        admit.
+        eapply fresher_than_antimon; [eapply set_lists_image; eauto|].
+        apply fresher_than_Union; [|solve_easy].
+        apply gensyms_bounded in H.
+        eapply fresher_than_antimon; [eassumption|].
+        unfold fresher_than; easy_interval.
     + apply H4; [now inv H5|]; auto.
-      (* Same argument as in previous case + the fact that next'' ≥ next'. *)
-      admit.
+      (* Same argument as in previous subcase + the fact that next'' ≥ next'. *)
+      normalize_images.
+      assert (next' >= next) by (eapply gensyms_upper1; eauto).
+      assert (next'' >= next') by (eapply freshen_fds_increasing; eauto).
+      assert (next''' >= next'') by (eapply freshen_exp_increasing; eauto).
+      apply fresher_than_Union; [solve_easy|].
+      eapply fresher_than_antimon; [eapply set_lists_image; eauto|].
+      apply fresher_than_Union; [|solve_easy].
+      apply gensyms_bounded in H.
+      eapply fresher_than_antimon; [eassumption|].
+      unfold fresher_than; easy_interval.
   - easy_case H0 H1.
   - easy_case H0 H1. 
   - constructor; auto; try solve_easy.
@@ -1398,21 +1508,38 @@ Proof.
     normalize_images; freshen_used_facts.
     exists (apply_r σ'); repeat match goal with |- _ /\ _ => split end; auto.
     + apply H4; auto. solve_easy.
-    + apply Union_Disjoint_r.
+    + unfold used_vars in *; normalize_images.
+      repeat match goal with H : fresher_than _ _ |- _ => apply fresher_than_bounded in H end.
+      apply Union_Disjoint_r.
       * (* xs' ⊆ [next, next') and next fresher than σ(FV(e)) *)
-        admit.
+        apply gensyms_bounded in H.
+        eapply Disjoint_Included_l; [eassumption|].
+        eapply Disjoint_Included_r; [eassumption|].
+        apply Disjoint_intervals; lia.
       * (* xs' ⊆ [next, next') and next fresher than BV(e) *)
-        admit.
+        apply gensyms_bounded in H.
+        eapply Disjoint_Included_l; [eassumption|].
+        eapply Disjoint_Included_r; [eassumption|].
+        apply Disjoint_intervals; lia.
     + eapply set_gensyms_inj; eauto.
     + apply H2; auto.
       apply fresher_than_Union; [solve_easy|].
       (* σ'(x) is either in xs' or in σ.
          If in xs', next' fresher than xs'
          If in σ, next' fresher than σ(vars(e)). *)
-      admit.
+      eapply fresher_than_antimon; [eapply set_lists_image; eauto|].
+      apply fresher_than_Union; [|solve_easy].
+       apply gensyms_bounded in H.
+       eapply fresher_than_antimon; [eassumption|].
+       unfold fresher_than; easy_interval.
   - constructor; auto; try solve_easy.
-  - admit.
-Admitted.
+  - decompose [and] H3; clear H3; normalize_images.
+    assert (next' >= next) by (eapply freshen_exp_increasing; eauto).
+    assert (next'' >= next') by (eapply freshen_ces_increasing; eauto).
+    constructor; cbn.
+    + split; auto; apply H0; auto; solve_easy.
+    + apply H2; auto; solve_easy.
+Qed.
 
 Corollary freshen_exp_Alpha : forall σ next e next' e',
   (next', e') = freshen_exp next σ e ->
@@ -1454,6 +1581,30 @@ Definition apply_r_list' σ (xs : list var) := map (apply_r' σ) xs.
 
 Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
   match e with
+  | Econstr x t ys e' => Econstr x t (apply_r_list' σ ys) (rename_all' σ e')
+  | Eprim x f ys e' => Eprim x f (apply_r_list' σ ys) (rename_all' σ e')
+  | Eletapp x f ft ys e' => Eletapp x (apply_r' σ f) ft (apply_r_list' σ ys)
+                                    (rename_all' σ e')
+  | Eproj v t n y e' => Eproj v t n (apply_r' σ y) (rename_all' σ e')
+  | Ecase v cl =>
+    Ecase (apply_r' σ v) (List.map (fun (p:ctor_tag*exp) => let (k, e) := p in
+                                                          (k, rename_all' σ e)) cl)
+  | Efun fl e' =>
+    let fs := all_fun_name ![fl] in
+    let rename_all_fun' σ fd :=
+      let 'Ffun v' t ys e := fd in
+      Ffun v' t ys (rename_all' σ e)
+    in
+    let fl' := map (rename_all_fun' σ) fl in
+    Efun fl' (rename_all' σ e')
+  | Eapp f t ys =>
+    Eapp (apply_r' σ f) t (apply_r_list' σ ys)
+  | Ehalt v => Ehalt (apply_r' σ v)
+  end.
+
+(*
+Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
+  match e with
   | Econstr x t ys e' => Econstr x t (apply_r_list' σ ys) (rename_all' (M.remove ![x] σ) e')
   | Eprim x f ys e' => Eprim x f (apply_r_list' σ ys) (rename_all' (M.remove ![x] σ) e')
   | Eletapp x f ft ys e' => Eletapp x (apply_r' σ f) ft (apply_r_list' σ ys)
@@ -1473,7 +1624,7 @@ Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
   | Eapp f t ys =>
     Eapp (apply_r' σ f) t (apply_r_list' σ ys)
   | Ehalt v => Ehalt (apply_r' σ v)
-  end.
+  end. *)
 
 Inductive inline_step : exp -> exp -> Prop :=
 (* Inlining for CPS *)
@@ -1735,13 +1886,166 @@ Require Import Coq.Strings.String.
 
 (** * Inlining as a recursive function *)
 
-(* For now, to allow extraction *)
-Axiom seems_legit : forall {A}, A.
-
 Definition log_msg s cdata :=
   let '{| next_var := x; nect_ctor_tag := c; next_ind_tag := t; next_fun_tag := ft;
           cenv := cenv; fenv := fenv; nenv := nenv; log := log |} := cdata in
   mkCompData x c t ft cenv fenv nenv (s :: log).
+
+Fixpoint In_ctx f ft xs e fds :
+  In (Ffun f ft xs e) fds ->
+  exists (C : frames_t exp_univ_exp exp_univ_list_fundef), fds = C ⟦ e ⟧.
+Proof.
+  destruct fds as [|[f' ft' xs' e'] fds]; [inversion 1|intros Hin; inv Hin].
+  - exists <[cons_fundef0 fds; Ffun3 f' ft' xs']>; now cbn.
+  - destruct (In_ctx f ft xs e fds H) as [C HC].
+    exists (<[cons_fundef1 (Ffun f' ft' xs' e')]> >++ C); subst fds; rewrite frames_compose_law; now cbn.
+Qed.
+
+Lemma known_in_ctx f ft xs e (C : frames_t exp_univ_exp _) lhs :
+  known_function f ft xs e C lhs ->
+  exists (D : frames_t exp_univ_exp _), C ⟦ lhs ⟧ = D ⟦ e ⟧.
+Proof.
+  unfold known_function.
+  intros [[D [fds [E [Heq Hin]]]] | [[D [fds1 [fds2 [E [Heq Hin]]]]] | []]].
+  - subst C; repeat rewrite frames_compose_law; cbn.
+    apply In_ctx in Hin; destruct Hin as [C HC]; subst fds.
+    exists (D >++ <[Efun0 (E ⟦ lhs ⟧)]> >++ C); rewrite !frames_compose_law; now cbn.
+  - subst C; rewrite !frames_compose_law; cbn.
+    assert (Hin' : In (Ffun f ft xs e) (rev fds1 ++ E ⟦ lhs ⟧ :: fds2)). {
+      apply in_app_or in Hin.
+      destruct Hin as [Hfds1|Hfds2]; apply in_or_app; [|right; now right].
+      left; apply in_rev; now rewrite rev_involutive. }
+    rewrite frames_compose_law with (fs := D).
+    rewrite ctx_of_fds_app.
+    apply In_ctx in Hin'; cbn in Hin'; destruct Hin' as [C HC].
+    rewrite HC; exists (D >++ C); now rewrite frames_compose_law.
+Qed.
+
+Fixpoint rename_all_bv σ e : bound_var ![e] <--> bound_var ![rename_all' σ e].
+Proof.
+  destruct e; unbox_newtypes; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
+  Guarded.
+  - induction ces as [|[[c] e] ces IHces]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
+    Guarded.
+  - induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
+    Guarded.
+    change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *; repeat normalize_bound_var.
+    rewrite <- (rename_all_bv σ e_body). Guarded.
+    repeat rewrite <- Union_assoc.
+    rewrite IHfds; clear rename_all_bv; eauto with Ensembles_DB.
+Qed.
+
+Lemma rename_all_bv_fds σ fds :
+  bound_var_fundefs ![fds] <-->
+  bound_var_fundefs ![map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' σ e)) fds].
+Proof.
+  assert (Hbundle : forall fds x, bound_var_fundefs ![fds] <--> bound_var ![Efun fds (Ehalt x)]). {
+    intros fds' [x]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB. }
+  rewrite (Hbundle _ (mk_var 1)), (Hbundle _ (mk_var (apply_r σ 1))).
+  change (Efun (map ?f fds) (Ehalt (mk_var (apply_r σ 1))))
+    with (rename_all' σ (Efun fds (Ehalt (mk_var 1)))).
+  apply rename_all_bv.
+Qed.
+
+Fixpoint rename_all_uniq σ e : unique_bindings ![e] -> unique_bindings ![rename_all' σ e].
+Proof.
+  destruct e; unbox_newtypes; cbn; try solve [
+    intros Huniq; inv Huniq; constructor; auto;
+    change (~ bound_var ?e ?x) with (~ x \in bound_var e); now rewrite <- rename_all_bv].
+  - change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
+    induction ces as [|[c e] ces IHces]; [constructor|unbox_newtypes; cbn].
+    intros Huniq; inv Huniq; constructor; auto. Guarded.
+    match goal with
+    | |- Disjoint _ _ (bound_var (cps.Ecase (?f ?x) (ces_of_proto (map ?g ?ces)))) =>
+      change (bound_var (cps.Ecase (f x) (ces_of_proto (map g ces))))
+       with (bound_var ![rename_all' σ (Ecase (mk_var x) ces)])
+    end.
+    repeat rewrite <- rename_all_bv; cbn.
+    now rewrite bound_var_Ecase in *.
+    Guarded.
+  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+    intros Huniq; inv Huniq; constructor; auto. 2: {
+      now rewrite <- rename_all_bv, <- rename_all_bv_fds. }
+    induction fds as [|[f ft xs e_body] fds IHfds]; [constructor|unbox_newtypes; cbn in *].
+    inv H2; constructor; 
+    change (~ bound_var ?e ?x) with (~ x \in bound_var e) in *;
+    change (~ bound_var_fundefs ?fds ?x) with (~ x \in bound_var_fundefs fds) in *;
+    try solve [auto|try rewrite <- rename_all_bv; try rewrite <- rename_all_bv_fds; easy].
+    apply IHfds; auto.
+    eapply Disjoint_Included_r; eauto.
+    repeat normalize_bound_var; eauto with Ensembles_DB.
+Qed.
+
+Definition image'' σ : Ensemble cps.var := fun y => exists x, M.get x σ = Some y.
+
+Lemma apply_r_vars σ x : [set apply_r σ x] \subset x |: image'' σ.
+Proof.
+  unfold apply_r.
+  destruct (cps.M.get x σ) as [y|] eqn:Hget; [|eauto with Ensembles_DB].
+  intros arb Harb; inv Harb; right; unfold image'', Ensembles.In; now exists x.
+Qed.
+  
+Lemma apply_r_list_vars σ xs :
+  FromList ![apply_r_list' σ xs] \subset FromList ![xs] :|: image'' σ.
+Proof.
+  induction xs as [|x xs IHxs]; [eauto with Ensembles_DB|unbox_newtypes; cbn in *].
+  repeat normalize_sets.
+  apply Union_Included.
+  - eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB.
+  - eapply Included_trans; [apply IHxs|]; eauto with Ensembles_DB.
+Qed.
+
+Fixpoint rename_all_used σ e {struct e} :
+  used_vars ![rename_all' σ e] \subset used_vars ![e] :|: image'' σ.
+Proof.
+  destruct e; unbox_newtypes; cbn in *; repeat normalize_used_vars.
+  Ltac solve_easy_rename_used IH :=
+    lazymatch goal with
+    | |- _ :|: _ \subset _ => apply Union_Included; solve_easy_rename_used IH
+    | |- [set apply_r _ _] \subset _ =>
+      clear IH; eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB
+    | |- FromList (strip_vars (apply_r_list' _ _)) \subset _ =>
+      clear IH; eapply Included_trans; [apply apply_r_list_vars|]; eauto with Ensembles_DB
+    | |- used_vars _ \subset _ => eapply Included_trans; [apply IH|]; eauto with Ensembles_DB
+    | |- _ => solve [eauto with Ensembles_DB]
+    end.
+  all: try solve [solve_easy_rename_used rename_all_used]. Guarded.
+  - rewrite used_vars_Ecase; apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    change (ces_of_proto' exp_of_proto) with ces_of_proto; induction ces as [|[[c] e] ces IHces]; cbn;
+    [eauto with Ensembles_DB|].
+    repeat normalize_used_vars.
+    apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    eapply Included_trans; [apply IHces|]; eauto with Ensembles_DB.
+  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto.
+    apply Union_Included; [|solve_easy_rename_used rename_all_used].
+    induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
+    repeat normalize_used_vars.
+    apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    eapply Included_trans; [apply IHfds|]; eauto with Ensembles_DB.
+Qed.
+
+Lemma empty_image : image'' (M.empty _) <--> Empty_set _.
+Proof.
+  unfold image'', Ensembles.In; split; intros x Hx; inv Hx.
+  now rewrite M.gempty in H.
+Qed.
+
+(* TODO: collect image'' facts together and move to functions.v *)
+Lemma set_lists_image'' xs ys σ σ' :
+  set_lists xs ys σ = Some σ' ->
+  image'' σ' \subset image'' σ :|: FromList ys.
+Proof.
+  revert ys σ σ'; induction xs as [|x xs IHxs]; destruct ys as [|y ys]; try solve [inversion 1].
+  - inversion 1; eauto with Ensembles_DB.
+  - intros σ σ' Hset; cbn in Hset.
+    destruct (set_lists xs ys σ) as [σ''|] eqn:Hσ''; inv Hset.
+    specialize (IHxs ys σ σ'' Hσ'').
+    intros arb [x' Hx']; specialize (IHxs arb); unfold Ensembles.In, codomain in *.
+    unfold apply_r in Hx'; change cps.M.get with M.get in *; change map_util.M.set with M.set in *.
+    destruct (Pos.eq_dec x' x) as [Heq|Hne]; [subst x'; rewrite M.gss in Hx'|rewrite M.gso in Hx' by auto].
+    + right; subst; now left.
+    + destruct IHxs as [Hσ|Hin_ys]; [eexists; eassumption|left|right; right]; auto.
+Qed.
 
 Definition rw_inline' : rewriter exp_univ_exp inline_step
   trivial_delay_t trivial_R_C (@S_inline).
@@ -1752,6 +2056,7 @@ Proof.
     intros _ R C f ft' ys _ _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq] success failure.
     (* Look up f in the map of known functions *)
     destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|cond_failure].
+    pose (Hρ' := Hρ); clearbody Hρ'.
     specialize (Hρ ![f] ft xs e Hget).
     specialize success with (ft := ft) (xs := xs) (e := e).
     (* Check the heuristic *)
@@ -1773,15 +2078,37 @@ Proof.
       rewrite Hid; eapply freshen_exp_Alpha; eauto.
       * (* for every known function (ft, xs, e), exists D s.t. C[f(ys)] = D[e].
            then UB(D[e]) ==> UB e by ub_app_ctx_f *)
-        exact seems_legit.
+        apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+        unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+        now apply ub_app_ctx_f in Huniq.
       * rewrite <- Hid, image_id, Union_idempotent.
         (* fresh > C[f(ys)] = D[e] for some D and then vars(D[e]) ⊇ vars(e) *)
-        exact seems_legit.
+        apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+        match type of Hfresh with
+        | fresher_than fresh (used_vars ![?e]) => change (used_vars ![e]) with (used e) in Hfresh
+        end.
+        rewrite HD, used_app in Hfresh.
+        eapply fresher_than_antimon; [|apply Hfresh]; eauto with Ensembles_DB.
     + eapply freshen_exp_uniq; eauto.
       (* UB(C[f(ys)] ==> UB(D[e]) ==> UB(e) by ub_app_ctx_f *)
-      exact seems_legit.
+      apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+      unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+      now apply ub_app_ctx_f in Huniq.
     + (* BV(e') ⊆ [fresh, fresh') by freshen_exp_bounded and fresh > vars(C[e]) *)
-      exact seems_legit.
+      apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+      apply fresher_than_bounded in Hfresh.
+      apply freshen_exp_bounded in Hfreshen.
+      change (used_vars ![?e]) with (used e); rewrite used_app.
+      eapply Disjoint_Included_r; [eassumption|].
+      apply Union_Disjoint_l.
+      * change (used_vars ![?e]) with (used e) in Hfresh; rewrite used_app in Hfresh.
+        eapply Disjoint_Included_l; [eapply Included_Union_l|].
+        eapply Disjoint_Included_l; [eassumption|].
+        apply Disjoint_intervals; lia.
+      * change (used_vars ![?e]) with (used e) in Hfresh; rewrite HD, used_app in Hfresh.
+        eapply Disjoint_Included_l; [eapply Included_Union_r|].
+        eapply Disjoint_Included_l; [eassumption|].
+        apply Disjoint_intervals; lia.
     + constructor.
     (* We must explain how to maintain all the intermediate state variables across the edit *)
     + unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
@@ -1793,22 +2120,43 @@ Proof.
         constructor; exact (IH.(update_App) f ft ys).
       * (* fresh' is a sufficiently fresh variable *)
         exists fresh'.
-        (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ codomain σ. then have 
+        (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ image σ (used_vars e). then have 
              vars(C[rename_all σ e'])
              = vars(C) ∪ vars(rename_all σ e')
-             ⊆ vars(C) ∪ used_vars e' ∪ codomain σ
+             ⊆ vars(C) ∪ used_vars e' ∪ image σ (used_vars e)
              = vars(C) ∪ used_vars e' ∪ ys
              ⊆ vars(C) ∪ used_vars e' ∪ vars(C[f(ys)])
              = used_vars e' ∪ vars(C[f(ys)])
              < fresh' *)
-        exact seems_legit.
+        change (used_vars ![?e]) with (used e); rewrite used_app; apply fresher_than_Union.
+        -- assert (fresh' >= fresh) by (eapply freshen_exp_increasing; eauto).
+           eapply fresher_than_monotonic; [eassumption|].
+           eapply fresher_than_antimon; [|eassumption].
+           change (used_vars ![?e]) with (used e); rewrite used_app; eauto with Ensembles_DB.
+        -- unfold Rec; eapply fresher_than_antimon; [apply rename_all_used|].
+           apply fresher_than_Union.
+           ++ eapply freshen_exp_used; try eassumption.
+              assert (Hid : f_eq (apply_r (M.empty cps.var)) id) by (intros x; apply apply_r_empty).
+              rewrite Hid, image_id, Union_idempotent.
+              apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+              rewrite HD in Hfresh; eapply fresher_than_antimon; [|eassumption].
+              change (used_vars ![D ⟦ e ⟧]) with (used (D ⟦ e ⟧)); rewrite used_app; eauto with Ensembles_DB.
+           ++ eapply fresher_than_antimon; [eapply set_lists_image''; eauto|].
+              rewrite empty_image; normalize_sets.
+              assert (fresh' >= fresh) by (eapply freshen_exp_increasing; eauto).
+              eapply fresher_than_monotonic; [eassumption|].
+              eapply fresher_than_antimon; [|eassumption].
+              change (used_vars ![?e]) with (used e); rewrite used_app.
+              unbox_newtypes; cbn; normalize_used_vars; eauto with Ensembles_DB.
       * (* The set of known functions remains the same *)
         exists ρ.
         (* For any known g:
            - If g was in an earlier bundle, it's still there
            - If g was in a bundle and we are in one of the bundle's definitions, we're still
              in that definition *)
-        exact seems_legit.
+        intros f0 ft0 xs0 e_body Hget_f0.
+        specialize (Hρ' f0 ft0 xs0 e_body Hget_f0); unfold known_function in Hρ'|-*.
+        now destruct Hρ' as [Habove | [Hwithin | []]].
       * (* Unique bindings is preserved *)
         rewrite app_exp_c_eq, isoBAB.
         rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
@@ -1816,12 +2164,26 @@ Proof.
            rewrite app_exp_c_eq, isoBAB in Huniq.
            rewrite (proj1 (ub_app_ctx_f _)) in Huniq.
            decompose [and] Huniq; clear Huniq; auto.
-        -- (* Follows from UB(e') because BV(e'') = BV(e') because xs ∩ BV(e') = ∅ *)
-           exact seems_legit.
+        -- (* Follows from UB(e') because rename_all' doesn't change bindings *)
+           unfold Rec.
+           apply rename_all_uniq.
+           apply known_in_ctx in Hρ; destruct Hρ as [D HD].
+           unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+           apply ub_app_ctx_f in Huniq; decompose [and] Huniq.
+           apply freshen_exp_uniq in Hfreshen; auto.
         -- (* Follows from vars(C[e]) ∩ BV(e') = ∅.
-                BV(e'') = BV(e') because xs ∩ BV(e') = ∅
+                BV(e'') = BV(e')
                 BV(C) ⊆ vars(C[e]) *)
-           exact seems_legit.
+           unfold Rec; rewrite <- rename_all_bv.
+           assert (bound_var_ctx ![C] \subset used_vars ![C ⟦ Eapp f ft' ys ⟧]). {
+             rewrite app_exp_c_eq, isoBAB; unfold used_vars.
+             rewrite bound_var_app_ctx; eauto with Ensembles_DB. }
+           apply fresher_than_bounded in Hfresh.
+           apply freshen_exp_bounded in Hfreshen.
+           eapply Disjoint_Included_l; [eassumption|].
+           eapply Disjoint_Included_l; [eassumption|].
+           eapply Disjoint_Included_r; [eassumption|].
+           apply Disjoint_intervals; lia.
 Defined.
 
 Definition rw_inline : rewriter exp_univ_exp inline_step
@@ -1846,8 +2208,11 @@ Definition inline_top (IH : InlineHeuristic) (c : comp_data) (e : exp) (H : uniq
     run_rewriter' rw_inline e tt (c, mk_IH _ _ _ IH, initial_fresh e, initial_fns e, H)
   in (e', cdata).
 
+(* For now, to allow extraction, these functions assume the inliner receives terms with 
+   unique bindings *)
+Axiom assume_unique_bindings : forall {A}, A.
 Definition inline_unsafe (IH : InlineHeuristic) (e : exp) (c : comp_data) : exp * comp_data :=
-  inline_top IH c e seems_legit.
+  inline_top IH c e assume_unique_bindings.
 
 (* d should be max argument size, perhaps passed through by uncurry *)
 Definition postuncurry_contract (e:exp) (s:M.t nat) (d:nat) :=
@@ -1902,4 +2267,4 @@ Definition test_term :=
 (* Compute run_rewriter rw_inline test_term tt *)
 (*    (mkCompData 1 1 1 1 (M.empty _) (M.empty _) (M.empty _) [], *)
 (*     mk_IH _ _ _ (InlineUncurried (M.empty _)), *)
-(*     initial_fresh test_term, initial_fns test_term, seems_legit). *)
+(*     initial_fresh test_term, initial_fns test_term, assume_unique_bindings). *)
