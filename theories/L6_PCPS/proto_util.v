@@ -1,7 +1,7 @@
 Require Import Coq.Strings.String Coq.Classes.Morphisms Coq.Relations.Relations.
 Require Import Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
 Require Import L6.identifiers L6.Prototype L6.cps_proto.
-Require Import L6.Ensembles_util.
+Require Import L6.Ensembles_util L6.shrink_cps L6.map_util.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -249,3 +249,215 @@ Definition S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
   unique_bindings ![C ⟦ e ⟧].
 Instance Preserves_S_S_uniq : Preserves_S _ exp_univ_exp (@S_uniq).
 Proof. constructor; intros; assumption. Defined.
+
+(* Additional facts about variables *)
+
+Fixpoint bound_var_ces (ces : list (cps.ctor_tag * cps.exp)) :=
+  match ces with
+  | [] => Empty_set _
+  | (c, e) :: ces => bound_var e :|: bound_var_ces ces
+  end.
+
+Lemma bound_var_Ecase x ces : bound_var (cps.Ecase x ces) <--> bound_var_ces ces.
+Proof.
+  induction ces as [|[c e] ces IHces].
+  - rewrite bound_var_Ecase_nil; now cbn.
+  - rewrite bound_var_Ecase_cons; cbn; rewrite IHces; eauto with Ensembles_DB.
+Qed.
+
+(* TODO: move to util *)
+
+Fixpoint used_vars_ces (ces : list (cps.ctor_tag * cps.exp)) :=
+  match ces with
+  | [] => Empty_set _
+  | (c, e) :: ces => used_vars e :|: used_vars_ces ces
+  end.
+
+Lemma used_vars_Ecase x ces : used_vars (cps.Ecase x ces) <--> x |: used_vars_ces ces.
+Proof.
+  induction ces as [|[c e] ces IHces].
+  - rewrite used_vars_Ecase_nil; cbn; now normalize_sets.
+  - rewrite used_vars_Ecase_cons; cbn; rewrite IHces; eauto with Ensembles_DB.
+Qed.
+
+(* Renaming *)
+
+Definition r_map : Set := M.tree cps.var.
+
+Definition fun_name : fundef -> var := fun '(Ffun f _ _ _) => f.
+
+Definition apply_r' (σ : r_map) (x : var) : var := [apply_r σ ![x]]!.
+Definition apply_r_list' σ (xs : list var) := map (apply_r' σ) xs.
+
+(* Assume UB(e) and dom(σ) ∩ BV(e) = ran(σ) ∩ BV(e) = ∅ *)
+Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
+  match e with
+  | Econstr x t ys e' => Econstr x t (apply_r_list' σ ys) (rename_all' σ e')
+  | Eprim x f ys e' => Eprim x f (apply_r_list' σ ys) (rename_all' σ e')
+  | Eletapp x f ft ys e' => Eletapp x (apply_r' σ f) ft (apply_r_list' σ ys)
+                                    (rename_all' σ e')
+  | Eproj v t n y e' => Eproj v t n (apply_r' σ y) (rename_all' σ e')
+  | Ecase v cl =>
+    Ecase (apply_r' σ v) (List.map (fun (p:ctor_tag*exp) => let (k, e) := p in
+                                                          (k, rename_all' σ e)) cl)
+  | Efun fl e' =>
+    let fs := map fun_name fl in
+    let rename_all_fun' σ fd :=
+      let 'Ffun v' t ys e := fd in
+      Ffun v' t ys (rename_all' σ e)
+    in
+    let fl' := map (rename_all_fun' σ) fl in
+    Efun fl' (rename_all' σ e')
+  | Eapp f t ys =>
+    Eapp (apply_r' σ f) t (apply_r_list' σ ys)
+  | Ehalt v => Ehalt (apply_r' σ v)
+  end.
+
+Fixpoint rename_all_bv σ e : bound_var ![e] <--> bound_var ![rename_all' σ e].
+Proof.
+  destruct e; unbox_newtypes; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
+  Guarded.
+  - induction ces as [|[[c] e] ces IHces]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
+    Guarded.
+  - induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
+    Guarded.
+    change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *; repeat normalize_bound_var.
+    rewrite <- (rename_all_bv σ e_body). Guarded.
+    repeat rewrite <- Union_assoc.
+    rewrite IHfds; clear rename_all_bv; eauto with Ensembles_DB.
+Qed.
+
+Lemma rename_all_bv_fds σ fds :
+  bound_var_fundefs ![fds] <-->
+  bound_var_fundefs ![map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' σ e)) fds].
+Proof.
+  assert (Hbundle : forall fds x, bound_var_fundefs ![fds] <--> bound_var ![Efun fds (Ehalt x)]). {
+    intros fds' [x]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB. }
+  rewrite (Hbundle _ (mk_var 1)), (Hbundle _ (apply_r' σ (mk_var 1))).
+  change (Efun (map ?f fds) (Ehalt (apply_r' σ (mk_var 1))))
+    with (rename_all' σ (Efun fds (Ehalt (mk_var 1)))).
+  apply rename_all_bv.
+Qed.
+
+Fixpoint rename_all_uniq σ e : unique_bindings ![e] -> unique_bindings ![rename_all' σ e].
+Proof.
+  destruct e; unbox_newtypes; cbn; try solve [
+    intros Huniq; inv Huniq; constructor; auto;
+    change (~ bound_var ?e ?x) with (~ x \in bound_var e); now rewrite <- rename_all_bv].
+  - change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
+    induction ces as [|[c e] ces IHces]; [constructor|unbox_newtypes; cbn].
+    intros Huniq; inv Huniq; constructor; auto. Guarded.
+    match goal with
+    | |- Disjoint _ _ (bound_var (cps.Ecase ?e (ces_of_proto (map ?g ?ces)))) =>
+      change (bound_var (cps.Ecase ?e (ces_of_proto (map g ces))))
+       with (bound_var ![rename_all' σ (Ecase (mk_var x) ces)])
+    end.
+    repeat rewrite <- rename_all_bv; cbn.
+    now rewrite bound_var_Ecase in *.
+    Guarded.
+  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+    intros Huniq; inv Huniq; constructor; auto. 2: {
+      now rewrite <- rename_all_bv, <- rename_all_bv_fds. }
+    induction fds as [|[f ft xs e_body] fds IHfds]; [constructor|unbox_newtypes; cbn in *].
+    inv H2; constructor; 
+    change (~ bound_var ?e ?x) with (~ x \in bound_var e) in *;
+    change (~ bound_var_fundefs ?fds ?x) with (~ x \in bound_var_fundefs fds) in *;
+    try solve [auto|try rewrite <- rename_all_bv; try rewrite <- rename_all_bv_fds; easy].
+    apply IHfds; auto.
+    eapply Disjoint_Included_r; eauto.
+    repeat normalize_bound_var; eauto with Ensembles_DB.
+Qed.
+
+Definition image'' σ : Ensemble cps.var := fun y => exists x, M.get x σ = Some y.
+
+Lemma apply_r_vars σ x : [set apply_r σ x] \subset x |: image'' σ.
+Proof.
+  unfold apply_r.
+  destruct (cps.M.get x σ) as [y|] eqn:Hget; [|eauto with Ensembles_DB].
+  intros arb Harb; inv Harb; right; unfold image'', Ensembles.In; now exists x.
+Qed.
+  
+Lemma apply_r_list_vars σ xs :
+  FromList ![apply_r_list' σ xs] \subset FromList ![xs] :|: image'' σ.
+Proof.
+  induction xs as [|x xs IHxs]; [eauto with Ensembles_DB|unbox_newtypes; cbn in *].
+  repeat normalize_sets.
+  apply Union_Included.
+  - eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB.
+  - eapply Included_trans; [apply IHxs|]; eauto with Ensembles_DB.
+Qed.
+
+Fixpoint rename_all_used σ e {struct e} :
+  used_vars ![rename_all' σ e] \subset used_vars ![e] :|: image'' σ.
+Proof.
+  destruct e; unbox_newtypes; cbn in *; repeat normalize_used_vars.
+  Ltac solve_easy_rename_used IH :=
+    lazymatch goal with
+    | |- _ :|: _ \subset _ => apply Union_Included; solve_easy_rename_used IH
+    | |- [set apply_r _ _] \subset _ =>
+      clear IH; eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB
+    | |- FromList (strip_vars (apply_r_list' _ _)) \subset _ =>
+      clear IH; eapply Included_trans; [apply apply_r_list_vars|]; eauto with Ensembles_DB
+    | |- used_vars _ \subset _ => eapply Included_trans; [apply IH|]; eauto with Ensembles_DB
+    | |- _ => solve [eauto with Ensembles_DB]
+    end.
+  all: try solve [solve_easy_rename_used rename_all_used]. Guarded.
+  - rewrite used_vars_Ecase; apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    change (ces_of_proto' exp_of_proto) with ces_of_proto; induction ces as [|[[c] e] ces IHces]; cbn;
+    [eauto with Ensembles_DB|].
+    repeat normalize_used_vars.
+    apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    eapply Included_trans; [apply IHces|]; eauto with Ensembles_DB.
+  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto.
+    apply Union_Included; [|solve_easy_rename_used rename_all_used].
+    induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
+    repeat normalize_used_vars.
+    apply Union_Included; [solve_easy_rename_used rename_all_used|].
+    eapply Included_trans; [apply IHfds|]; eauto with Ensembles_DB.
+Qed.
+
+Lemma empty_image : image'' (M.empty _) <--> Empty_set _.
+Proof.
+  unfold image'', Ensembles.In; split; intros x Hx; inv Hx.
+  now rewrite M.gempty in H.
+Qed.
+
+Lemma set_lists_image'' xs ys σ σ' :
+  set_lists xs ys σ = Some σ' ->
+  image'' σ' \subset image'' σ :|: FromList ys.
+Proof.
+  revert ys σ σ'; induction xs as [|x xs IHxs]; destruct ys as [|y ys]; try solve [inversion 1].
+  - inversion 1; eauto with Ensembles_DB.
+  - intros σ σ' Hset; cbn in Hset.
+    destruct (set_lists xs ys σ) as [σ''|] eqn:Hσ''; inv Hset.
+    specialize (IHxs ys σ σ'' Hσ'').
+    intros arb [x' Hx']; specialize (IHxs arb); unfold Ensembles.In, image'' in *.
+    unfold apply_r in Hx'; change cps.M.get with M.get in *; change map_util.M.set with M.set in *.
+    destruct (Pos.eq_dec x' x) as [Heq|Hne]; [subst x'; rewrite M.gss in Hx'|rewrite M.gso in Hx' by auto].
+    + right; subst; now left.
+    + destruct IHxs as [Hσ|Hin_ys]; [eexists; eassumption|left|right; right]; auto.
+Qed.
+
+Lemma fresher_than_Empty_set x : fresher_than x (Empty_set _).
+Proof. intros y []. Qed.
+
+(* Some passes maintain map of known functions *)
+
+Definition fun_map : Set := M.tree (fun_tag * list var * exp).
+
+Fixpoint add_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
+  match fds with
+  | Ffun f ft xs e :: fds => M.set ![f] (ft, xs, e) (add_fundefs fds ρ)
+  | [] => ρ
+  end.
+
+Fixpoint add_fundefs_Some f ft xs e ρ fds {struct fds} :
+  M.get f (add_fundefs fds ρ) = Some (ft, xs, e) ->
+  In (Ffun (mk_var f) ft xs e) fds \/ M.get f ρ = Some (ft, xs, e).
+Proof.
+  destruct fds as [|[[g] gt ys e'] fds]; [now right|cbn; intros Hget].
+  destruct (Pos.eq_dec f g); [subst; rewrite M.gss in Hget; now inv Hget|].
+  rewrite M.gso in Hget by auto.
+  specialize (add_fundefs_Some _ _ _ _ ρ fds Hget).
+  now destruct add_fundefs_Some as [Hin|Hin].
+Qed.

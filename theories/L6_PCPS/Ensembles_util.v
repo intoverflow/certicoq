@@ -1925,3 +1925,10 @@ Ltac normalize_sets :=
   | [ H : context[Setminus _ _ (Empty_set _)] |- _] =>
     rewrite Setminus_Empty_set_neut_r in H
   end.
+
+Lemma Disjoint_commut {A} S1 S2 : Disjoint A S1 S2 -> Disjoint A S2 S1.
+Proof. eauto with Ensembles_DB. Qed.
+
+Lemma Disjoint_Union {A} S1 S2 S3 :
+  Disjoint A S1 (S2 :|: S3) -> Disjoint A S1 S2 /\ Disjoint A S1 S3.
+Proof. eauto with Ensembles_DB. Qed.
