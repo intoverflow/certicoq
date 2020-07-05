@@ -430,6 +430,20 @@ Instance Preserves_S_S_plain (U : Set) `{Frame U} (Root : U) (S : Set) :
   Preserves_S _ Root (S_plain S).
 Proof. constructor; intros A B fs f x s; exact s. Defined.
 
+(* Composing two parameters *)
+
+Definition R_prod {U : Set} `{Frame U} {Root : U}
+           (R1 R2 : forall {A}, frames_t A Root -> Set) 
+           A (C : frames_t A Root) : Set :=
+  R1 C * R2 C.
+
+Instance Preserves_R_R_prod {U : Set} `{H : Frame U} {Root : U}
+         (R1 R2 : forall {A}, frames_t A Root -> Set) 
+         `{H1 : @Preserves_R U H Root (@R1)} 
+         `{H2 : @Preserves_R U H Root (@R2)} :
+  Preserves_R _ Root (R_prod (@R1) (@R2)).
+Proof. unfold R_prod; intros A B fs f [s1 s2]; split; now eapply @preserve_R. Defined.
+
 (* Composing two states *)
 
 Definition S_prod {U : Set} `{Frame U} {Root : U}
