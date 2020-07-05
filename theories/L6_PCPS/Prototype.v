@@ -1496,7 +1496,9 @@ Ltac mk_topdown_active r_C s :=
     [(* Success: switch to new env + state and apply the proper rule *)
      lazymatch goal with
      | H1 : _ , H2 : _ |- _ =>
-       clear r_C s; rename H1 into r_C, H2 into s;
+       let r_C_old := fresh "r_old" in
+       let s_old := fresh "s_old" in
+       rename r_C into r_C_old, s into s_old, H1 into r_C, H2 into s;
        eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity|exact r_C|exact s];
        eassumption
      end
@@ -1664,7 +1666,7 @@ Ltac mk_rewriter :=
          revert r_C' s';
          change (@rw_for univ _ root R R_C St _ C (delayD e d));
          apply (Htopdown (MkTopdown hole) _ C e d r_C s);
-         clear r_C s;
+         (* clear r_C s; *)
          lazymatch goal with
          (* Rule applications *)
          | Hrun : TopdownRunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
