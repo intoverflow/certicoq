@@ -14,13 +14,13 @@ Unset Strict Unquote Universe Mode.
 
 (** * Shrink rewrites *)
 
-(* Known constructor values *)
+(** Known constructor values *)
 
 (* (x ↦ Con c ys) ∈ C *)
 Definition known_ctor {A} x c ys (C : exp_c A exp_univ_exp) : Prop :=
   exists D E, C = D >:: Econstr3 x c ys >++ E.
 
-(* Occurrence counts *)
+(** Occurrence counts *)
 
 Definition count_var (x_in x : var) : nat := if (![x_in] =? ![x])%positive then 1 else 0.
 Definition total : list nat -> nat := fold_right plus 0.
@@ -106,11 +106,19 @@ Defined.
 
 Definition c_map : Set := M.tree positive.
 
+Section Census.
+
+Context
+  (* Update to occurrence counts *)
+  (upd : option positive -> option positive)
+  (* Delayed renaming *)
+  (σ : r_map).
+
 Definition census_var (x : var) (δ : c_map) : c_map :=
-  let x := ![x] in
-  match M.get x δ with
-  | Some n => M.set x (n + 1)%positive δ
-  | None => M.set x 1%positive δ
+  let x := ![apply_r' σ x] in
+  match upd (M.get x δ) with
+  | Some n => M.set x n δ
+  | None => M.remove x δ
   end.
 Definition census_list {A} (census : A -> c_map -> c_map) (xs : list A) (δ : c_map) :=
   fold_right census δ xs.
@@ -133,115 +141,283 @@ Fixpoint census_exp (e : exp) (δ : c_map) {struct e} : c_map :=
 Definition census_ces := census_ces' census_exp.
 Definition census_fds := census_fds' census_exp.
 
-(* [census] computes occurrence counts *)
+(** (census e δ)(x) = upd^(|σe|x)(δ(x)) *)
 
-Definition census_count (x : var) δ :=
-  match M.get ![x] δ with
-  | Some n => Pos.to_nat n
-  | None => 0
-  end.
-
-Lemma census_var_corresp x_in x n δ δ' :
-  δ' = census_var x_in δ ->
-  census_count x δ = n ->
-  census_count x δ' = n + count_var x x_in.
+Lemma iter_fuse {A} n m (f : A -> A) x : Nat.iter n f (Nat.iter m f x) = Nat.iter (n + m) f x.
 Proof.
-  intros Hmk Hold; unbox_newtypes; unfold census_count, census_var, count_var in *; cbn in *.
-  destruct (Pos.eqb_spec x x_in).
-  - subst. destruct (M.get x_in δ); rewrite M.gss; zify; lia.
-  - destruct (M.get x_in δ); subst; rewrite M.gso by auto; destruct (M.get x δ); zify; lia.
+  revert m; induction n as [|n IHn]; [reflexivity|intros; cbn].
+  change (nat_rect _ ?x (fun _ => ?f) ?n) with (Nat.iter n f x); now rewrite IHn.
 Qed.
 
-Fixpoint census_vars_corresp xs x n δ δ' :
-  δ' = census_vars xs δ ->
-  census_count x δ = n ->
-  census_count x δ' = n + count_vars x xs.
+Lemma census_var_corresp' x_in x δ :
+  M.get ![x] (census_var x_in δ) = Nat.iter (count_var x (apply_r' σ x_in)) upd (M.get ![x] δ).
 Proof.
-  destruct xs as [|x' xs].
-  - inversion 1; subst; cbn; zify; lia.
-  - cbn.
-    change (fold_right census_var δ xs) with (census_vars xs δ).
-    change (total (map (count_var x) xs)) with (count_vars x xs).
-    remember (census_vars xs δ) as δ'' eqn:Hδ''.
-    intros Hδ' Hx.
-    specialize (census_vars_corresp xs x n δ δ'' Hδ'' Hx).
-    eapply census_var_corresp in Hδ'; eauto; lia.
+  unbox_newtypes; unfold census_var, count_var in *; cbn in *.
+  destruct (Pos.eqb_spec x (apply_r σ x_in)); cbn in *.
+  - subst; destruct (upd (M.get (apply_r σ x_in) δ)) as [n|] eqn:Hn; now rewrite ?M.gss, ?M.grs.
+  - destruct (upd (M.get (apply_r σ x_in) δ)) as [n'|] eqn:Hn; now rewrite ?M.gso, ?M.gro by auto.
 Qed.
+
+Fixpoint census_vars_corresp' xs x δ :
+  M.get ![x] (census_vars xs δ) = Nat.iter (count_vars x (apply_r_list' σ xs)) upd (M.get ![x] δ).
+Proof.
+  destruct xs as [|x' xs]; [reflexivity|cbn].
+  change (fold_right census_var δ xs) with (census_vars xs δ).
+  change (total (map _ ?xs)) with (count_vars x xs).
+  change (nat_rect _ ?x (fun _ => ?f) ?n) with (Nat.iter n f x).
+  change (map (apply_r' σ) xs) with (apply_r_list' σ xs).
+  change (mk_var (apply_r σ (un_var x'))) with (apply_r' σ x').
+  now rewrite <- iter_fuse, <- census_vars_corresp', <- census_var_corresp'.
+Qed.
+
+(* TODO: move to proto_util *)
+Definition rename_all_ces' σ ces : list (ctor_tag * exp) :=
+  map (fun '(c, e) => (c, rename_all' σ e)) ces.
+Definition rename_all_fds' σ fds : list fundef :=
+  map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' σ e)) fds.
 
 Ltac collapse_primes :=
   change (count_ces' count_exp) with count_ces in *;
   change (count_fds' count_exp) with count_fds in *;
   change (census_ces' census_exp) with census_ces in *;
   change (census_fds' census_exp) with census_fds in *;
+  change (map (fun '(c, e) => (c, rename_all' ?σ e))) with (rename_all_ces' σ) in *;
+  change (map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' ?σ e))) with (rename_all_fds' σ) in *;
+  change (nat_rect _ ?x (fun _ => ?f) ?n) with (Nat.iter n f x);
+  change (mk_var (apply_r ?σ (un_var ?x))) with (apply_r' σ x);
+  change (total (map (fun '(_, e) => count_exp ?x e) ?ces)) with (count_ces x ces) in *;
+  change (total (map (fun '(Ffun _ _ _ e) => count_exp ?x e) ?fds)) with (count_fds x fds) in *;
   (* TODO: move to proto_util? *)
   change (ces_of_proto' exp_of_proto) with ces_of_proto in *;
   change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
 
-Fixpoint census_exp_corresp' x n e δ δ' {struct e} :
-  δ' = census_exp e δ ->
-  census_count x δ = n ->
-  census_count x δ' = n + count_exp x e.
+Fixpoint census_exp_corresp' e x δ {struct e} :
+  M.get ![x] (census_exp e δ) = Nat.iter (count_exp x (rename_all' σ e)) upd (M.get ![x] δ).
 Proof.
   destruct e; cbn; collapse_primes; try solve [
-    remember (census_exp e δ) as δ0 eqn:Hδ0;
-    intros Hδ' Hn; specialize (census_exp_corresp' x n e δ δ0 Hδ0 Hn);
-    (eapply census_vars_corresp in Hδ' + eapply census_var_corresp in Hδ');
-    eauto; lia]. Guarded.
-  - remember (census_ces ces δ) as δ0 eqn:Hδ0; intros Hδ' Hn.
-    enough (Hces : forall x n δ δ',
-             δ' = census_ces ces δ ->
-             census_count x δ = n ->
-             census_count x δ' = n + count_ces x ces).
-    { specialize (Hces x n δ δ0 Hδ0 Hn); eapply census_var_corresp in Hδ'; eauto; lia. }
+    now rewrite <- ?iter_fuse, <- ?census_exp_corresp', <- ?census_vars_corresp', <- ?census_var_corresp'].
+  - enough (Hces : forall x δ,
+             let count := count_ces x (rename_all_ces' σ ces) in
+             M.get ![x] (census_ces ces δ) = Nat.iter count upd (M.get ![x] δ)).
+    { now rewrite <- iter_fuse, <- Hces, <- census_var_corresp'. }
     clear - census_exp_corresp'.
-    induction ces as [|[c e] ces IHces]; [intros; cbn in *; subst; lia|cbn].
-    intros x n δ δ' Hδ' Hn.
-    change (fold_right _ _ _) with (census_ces ces δ) in *|-.
-    change (total _) with (count_ces x ces).
-    remember (census_ces ces δ) as δ0 eqn:Hδ0.
-    eapply IHces in Hδ0; eauto.
-    eapply census_exp_corresp' in Hδ'; eauto; lia. Guarded.
-  - remember (census_exp e δ) as δ0 eqn:Hδ0.
-    intros Hδ' Hn; specialize (census_exp_corresp' x n e δ δ0 Hδ0 Hn).
-    remember (census_vars ys δ0) as δ1 eqn:Hδ1.
-    eapply census_vars_corresp in Hδ1; eauto.
-    eapply census_var_corresp in Hδ'; eauto; lia.
-  - remember (census_exp e δ) as δ0 eqn:Hδ0; intros Hδ' Hn.
-    enough (Hfds : forall x n δ δ',
-             δ' = census_fds fds δ ->
-             census_count x δ = n ->
-             census_count x δ' = n + count_fds x fds).
-    { eapply census_exp_corresp' in Hδ0; eauto; specialize (Hfds x _ δ0 δ' Hδ' Hδ0); lia. }
+    induction ces as [|[c e] ces IHces]; [reflexivity|cbn; intros x δ; collapse_primes].
+    now rewrite <- iter_fuse, <- IHces, <- census_exp_corresp'.
+  - enough (Hfds : forall x δ,
+             let count := count_fds x (rename_all_fds' σ fds) in
+             M.get ![x] (census_fds fds δ) = Nat.iter count upd (M.get ![x] δ)).
+    { now rewrite <- iter_fuse, <- census_exp_corresp', <- Hfds. } 
     clear - census_exp_corresp'.
-    induction fds as [|[f ft xs e] fds IHfds]; [intros; cbn in *; subst; lia|cbn].
-    intros x n δ δ' Hδ' Hn.
-    change (fold_right _ _ _) with (census_fds fds δ) in *|-.
-    change (total _) with (count_fds x fds).
-    remember (census_fds fds δ) as δ0 eqn:Hδ0.
-    eapply IHfds in Hδ0; eauto.
-    eapply census_exp_corresp' in Hδ'; eauto; lia. Guarded.
-  - remember (census_vars xs δ) as δ0 eqn:Hδ0; intros Hδ' Hn.
-    eapply census_vars_corresp in Hδ0; eauto.
-    eapply census_var_corresp in Hδ'; eauto; lia.
-  - intros Hδ' Hn; eapply census_var_corresp in Hδ'; eauto; lia.
+    induction fds as [|[f ft xs e] fds IHfds]; [reflexivity|cbn; intros x δ; collapse_primes].
+    now rewrite <- iter_fuse, <- IHfds, <- census_exp_corresp'.
 Qed.
 
-Corollary census_exp_corresp e δ :
-  δ = census_exp e (M.empty _) ->
-  forall x, census_count x δ = count_exp x e.
+Lemma census_ces_corresp' ces : forall x δ,
+  M.get ![x] (census_ces ces δ) = Nat.iter (count_ces x (rename_all_ces' σ ces)) upd (M.get ![x] δ).
 Proof.
-  intros Hδ x; change (count_exp x e) with (0 + count_exp x e).
-  eapply census_exp_corresp'; eauto; unfold census_count; unbox_newtypes; cbn; now rewrite M.gempty.
+  induction ces as [|[c e] ces IHces]; [reflexivity|cbn; intros x δ; collapse_primes].
+  now rewrite <- iter_fuse, <- IHces, <- census_exp_corresp'.
 Qed.
 
-Ltac collapse_primes' :=
+End Census.
+
+Ltac collapse_primes :=
   change (count_ces' count_exp) with count_ces in *;
   change (count_fds' count_exp) with count_fds in *;
-  change (census_ces' census_exp) with census_ces in *;
-  change (census_fds' census_exp) with census_fds in *;
+  change (map (fun '(c, e) => (c, rename_all' ?σ e))) with (rename_all_ces' σ) in *;
+  change (map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' ?σ e))) with (rename_all_fds' σ) in *;
+  change (nat_rect _ ?x (fun _ => ?f) ?n) with (Nat.iter n f x);
+  change (mk_var (apply_r ?σ (un_var ?x))) with (apply_r' σ x);
+  change (total (map (fun '(_, e) => count_exp ?x e) ?ces)) with (count_ces x ces) in *;
+  change (total (map (fun '(Ffun _ _ _ e) => count_exp ?x e) ?fds)) with (count_fds x fds) in *;
+  change (map (apply_r' ?σ) ?xs) with (apply_r_list' σ xs) in *;
+  change (total (map (count_var ?x) ?xs)) with (count_vars x xs) in *;
   (* TODO: move to proto_util? *)
   change (ces_of_proto' exp_of_proto) with ces_of_proto in *;
   change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
+
+(** Some convenient specializations *)
+
+Definition succ_upd n :=
+  match n with
+  | Some n => Some (Pos.succ n)
+  | None => Some 1
+  end%positive.
+
+Definition pred_upd n :=
+  match n with
+  | Some 1 | None => None
+  | Some n => Some (Pos.pred n)
+  end%positive.
+
+Notation census_exp_succ := (census_exp succ_upd).
+Notation census_exp_pred := (census_exp pred_upd).
+Notation census_ces_succ := (census_ces succ_upd).
+Notation census_ces_pred := (census_ces pred_upd).
+
+Definition nat_of_count n :=
+  match n with
+  | Some n => Pos.to_nat n
+  | None => 0
+  end.
+
+Lemma nat_of_count_succ_upd n : nat_of_count (succ_upd n) = S (nat_of_count n).
+Proof. destruct n as [n|]; cbn; zify; lia. Qed.
+
+Lemma nat_of_count_iter_succ_upd n c : nat_of_count (Nat.iter n succ_upd c) = n + nat_of_count c.
+Proof.
+  induction n as [|n IHn]; [reflexivity|unfold Nat.iter in *; cbn].
+  now rewrite nat_of_count_succ_upd, IHn.
+Qed.
+
+Lemma nat_of_count_pred_upd n : nat_of_count (pred_upd n) = nat_of_count n - 1.
+Proof.
+  destruct n; cbn; [|auto].
+  destruct (Pos.eq_dec p 1)%positive; subst; [reflexivity|].
+  match goal with
+  | |- nat_of_count ?e = _ =>
+    assert (Heqn : e = Some (Pos.pred p)) by (now destruct p)
+  end.
+  rewrite Heqn; cbn; lia.
+Qed.
+
+Lemma nat_of_count_iter_pred_upd n c : nat_of_count (Nat.iter n pred_upd c) = nat_of_count c - n.
+Proof.
+  induction n as [|n IHn]; [cbn; lia|unfold Nat.iter in *; cbn].
+  now rewrite nat_of_count_pred_upd, IHn.
+Qed.
+
+Definition get_count (x : var) δ := nat_of_count (M.get ![x] δ).
+
+Lemma census_exp_succ_corresp e x σ δ :
+  get_count x (census_exp_succ σ e δ) = count_exp x (rename_all' σ e) + get_count x δ.
+Proof. unfold get_count; now rewrite census_exp_corresp', nat_of_count_iter_succ_upd. Qed.
+
+Lemma census_exp_pred_corresp e x σ δ :
+  get_count x (census_exp_pred σ e δ) = get_count x δ - count_exp x (rename_all' σ e).
+Proof. unfold get_count; now rewrite census_exp_corresp', nat_of_count_iter_pred_upd. Qed.
+
+Lemma census_ces_pred_corresp ces x σ δ :
+  get_count x (census_ces_pred σ ces δ) = get_count x δ - count_ces x (rename_all_ces' σ ces).
+Proof. unfold get_count; now rewrite census_ces_corresp', nat_of_count_iter_pred_upd. Qed.
+
+(** * Occurrence counts for one-hole contexts *)
+
+Definition count_frame {A B} (x_in : var) (f : exp_frame_t A B) : nat. refine(
+  match f with
+  | pair_ctor_tag_exp0 e => count_exp x_in e
+  | pair_ctor_tag_exp1 c => 0
+  | cons_prod_ctor_tag_exp0 ces => count_ces x_in ces
+  | cons_prod_ctor_tag_exp1 (_, e) => count_exp x_in e
+  | Ffun0 ft xs e => count_exp x_in e
+  | Ffun1 f xs e => count_exp x_in e
+  | Ffun2 f ft e => count_exp x_in e
+  | Ffun3 f ft xs => 0
+  | cons_fundef0 fds => count_fds x_in fds
+  | cons_fundef1 (Ffun f ft xs e) => count_exp x_in e
+  | Econstr0 c ys e => count_vars x_in ys + count_exp x_in e
+  | Econstr1 x ys e => count_vars x_in ys + count_exp x_in e
+  | Econstr2 x c e => count_exp x_in e
+  | Econstr3 x c ys => count_vars x_in ys
+  | Ecase0 ces => count_ces x_in ces
+  | Ecase1 x => count_var x_in x
+  | Eproj0 c n y e => count_var x_in y + count_exp x_in e
+  | Eproj1 x n y e => count_var x_in y + count_exp x_in e
+  | Eproj2 x c y e => count_var x_in y + count_exp x_in e
+  | Eproj3 x c n e => count_exp x_in e
+  | Eproj4 x c n y => count_var x_in y
+  | Eletapp0 f ft ys e => count_var x_in f + count_vars x_in ys + count_exp x_in e
+  | Eletapp1 x ft ys e => count_vars x_in ys + count_exp x_in e
+  | Eletapp2 x f ys e => count_var x_in f + count_vars x_in ys + count_exp x_in e
+  | Eletapp3 x f ft e => count_var x_in f + count_exp x_in e
+  | Eletapp4 x f ft ys => count_var x_in f + count_vars x_in ys
+  | Efun0 e => count_exp x_in e
+  | Efun1 fds => count_fds x_in fds
+  | Eapp0 ft xs => count_vars x_in xs
+  | Eapp1 f xs => count_var x_in f + count_vars x_in xs
+  | Eapp2 f ft => count_var x_in f
+  | Eprim0 p ys e => count_vars x_in ys + count_exp x_in e
+  | Eprim1 x ys e => count_vars x_in ys + count_exp x_in e
+  | Eprim2 x p e => count_exp x_in e
+  | Eprim3 x p ys => count_vars x_in ys
+  | Ehalt0 => 0
+  end).
+Defined.
+
+Fixpoint count_ctx {A B} (x_in : var) (C : exp_c A B) {struct C} : nat :=
+  match C with
+  | <[]> => 0
+  | C >:: f => count_ctx x_in C + count_frame x_in f
+  end.
+
+Definition count {A} x : univD A -> nat :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => fun '(_, e) => count_exp x e
+  | exp_univ_list_prod_ctor_tag_exp => fun ces => count_ces x ces
+  | exp_univ_fundef => fun '(Ffun _ _ _ e) => count_exp x e
+  | exp_univ_list_fundef => fun fds => count_fds x fds
+  | exp_univ_exp => fun e => count_exp x e
+  | exp_univ_var => fun y => count_var x y
+  | exp_univ_fun_tag => fun _ => 0
+  | exp_univ_ctor_tag => fun _ => 0
+  | exp_univ_prim => fun _ => 0
+  | exp_univ_N => fun _ => 0
+  | exp_univ_list_var => fun xs => count_vars x xs
+  end.
+
+(* TODO: Merge with uncurry_proto and move to util *)
+Local Ltac clearpose H x e :=
+  pose (x := e); assert (H : x = e) by (subst x; reflexivity); clearbody x.
+
+Lemma count_frame_app A B (f : exp_frame_t A B) e x :
+  match A with
+  | exp_univ_var
+  | exp_univ_fun_tag
+  | exp_univ_ctor_tag
+  | exp_univ_prim
+  | exp_univ_N
+  | exp_univ_list_var => True
+  | _ => count x (frameD f e) = count_frame x f + count x e
+  end.
+Proof.
+  clearpose HA' A' A; clearpose HB' B' B.
+  destruct A', f; try solve [discriminate|exact I];
+  destruct B'; try solve [discriminate|reflexivity].
+  - destruct e as [c e]; cbn. change (total _) with (count_ces x l); lia.
+  - destruct e as [f ft xs e]; cbn; change (total _) with (count_fds x l); lia.
+  - cbn; change (count_fds' count_exp) with count_fds; lia.
+Qed.
+
+Lemma count_ctx_app' : forall n A B (C : exp_c A B) e x,
+  frames_len C = n ->
+  match A with
+  | exp_univ_var
+  | exp_univ_fun_tag
+  | exp_univ_ctor_tag
+  | exp_univ_prim
+  | exp_univ_N
+  | exp_univ_list_var => True
+  | _ => count x (C ⟦ e ⟧) = count_ctx x C + count x e
+  end.
+Proof.
+  induction n as [n IHn] using lt_wf_ind; intros A B C e x Hlen.
+  clearpose HA' A' A; clearpose HB' B' B.
+  destruct C as [|A AB B f C]; [subst; cbn; now destruct A|].
+  clearpose HAB' AB' AB.
+  destruct A', f; try solve [discriminate|exact I]; destruct AB'; try discriminate;
+  cbn in Hlen; rewrite framesD_cons; assert (Hlt : frames_len C < n) by (cbn; lia);
+  specialize IHn with (m := frames_len C) (C := C) (x := x);
+  specialize (IHn Hlt); lazy iota in IHn; rewrite IHn by reflexivity;
+  match type of HA' with ?T = _ => rewrite (@count_frame_app T) end; cbn; lia.
+Qed.
+
+Corollary count_ctx_app : forall (C : exp_c exp_univ_exp exp_univ_exp) e x,
+  count_exp x (C ⟦ e ⟧) = count_ctx x C + count x e.
+Proof. intros; now apply (@count_ctx_app' (frames_len C) exp_univ_exp exp_univ_exp). Qed.
+
+Corollary count_ctx_fds_app : forall (C : exp_c exp_univ_list_fundef exp_univ_exp) fds x,
+  count_exp x (C ⟦ fds ⟧) = count_ctx x C + count x fds.
+Proof. intros; now apply (@count_ctx_app' (frames_len C) exp_univ_list_fundef exp_univ_exp). Qed.
 
 (** * State variable *)
 
@@ -252,7 +428,7 @@ Definition S_shrink {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := {
   (* The program has well-behaved bindings *)
   unique_bindings ![P] /\ Disjoint _ (bound_var ![P]) (occurs_free ![P]) /\
   (* δ holds valid occurrence counts *)
-  (forall x, census_count x δ = count_exp x P) }.
+  (forall x, get_count x δ = count_exp x P) }.
 
 Instance Preserves_S_shrink : Preserves_S _ exp_univ_exp (@S_shrink).
 Proof. constructor; intros A B fs f x δ; exact δ. Defined.
@@ -271,6 +447,7 @@ Proof.
   intros x [y Hxy]; now rewrite M.gempty in Hxy.
 Qed.
 
+(* TODO: move to proto_util *)
 Definition bound {A} : univD A -> Ensemble cps.var :=
   match A with
   | exp_univ_prod_ctor_tag_exp => fun '(_, e) => bound_var ![e]
@@ -341,17 +518,240 @@ Defined.
 
 (** * Functional definition *)
 
+(** Case folding helpers *)
+
 Fixpoint find_case (c : ctor_tag) (ces : list (ctor_tag * exp)) : option exp :=
   match ces with
   | [] => None
   | (c', e) :: ces => if ![c] =? ![c'] then Some e else find_case c ces
   end%positive.
 
-Fixpoint find_case_In c e ces : find_case c ces = Some e -> In (c, e) ces.
+Lemma find_case_spec c e ces :
+  find_case c ces = Some e -> exists ces1 ces2,
+  ~ In c (map fst ces1) /\ ces = ces1 ++ (c, e) :: ces2.
 Proof.
-  destruct ces as [|[c' e'] ces IHces]; [inversion 1|unbox_newtypes; cbn].
-  destruct (Pos.eqb_spec c c'); intros Heq; inv Heq; [now left|right; auto].
+  induction ces as [|[c' e'] ces IHces]; [inversion 1|unbox_newtypes; cbn].
+  destruct (Pos.eqb_spec c c'); intros Heq; [inv Heq|].
+  - exists [], ces; split; auto.
+  - destruct (IHces Heq) as [ces1 [ces2 [Hnotin Hces12]]].
+    exists ((mk_ctor_tag c', e') :: ces1), ces2; cbn; subst ces; split; auto.
+    intros [Heq'|Hin]; [now inv Heq'|auto].
 Qed.
+
+Lemma find_case_In c e ces : find_case c ces = Some e -> In (c, e) ces.
+Proof.
+  intros H; destruct (find_case_spec c e ces H) as [ces1 [ces2 [Hnotin Hces]]]; subst ces.
+  apply in_or_app; right; now left.
+Qed.
+
+Fixpoint census_case_pred σ (c : ctor_tag) (ces : list (ctor_tag * exp)) δ :=
+  match ces with
+  | [] => δ
+  | (c', e) :: ces =>
+    if (![c] =? ![c'])%positive
+    then census_ces pred_upd σ ces δ
+    else census_case_pred σ c ces (census_exp_pred σ e δ)
+  end.
+
+Lemma total_cons x xs : total (x :: xs) = x + total xs. Proof. reflexivity. Qed.
+Lemma total_app xs ys : total (xs ++ ys) = total xs + total ys.
+Proof. induction xs as [|x xs IHxs]; cbn; auto; rewrite IHxs; lia. Qed.
+
+(* TODO: move to proto_util *)
+Lemma In_ces_bound : forall c e ces, In (c, e) ces -> bound_var ![e] \subset bound_var_ces ![ces].
+Proof.
+  induction ces as [|[[c'] e'] ces IHces]; [inversion 1|].
+  destruct 1 as [Heq|Hne]; [inv Heq|]; cbn; eauto with Ensembles_DB.
+Qed.
+
+Fixpoint census_case_pred_spec n σ x δ ces ces1 c e ces2 {struct ces1} :
+  ~ In c (map fst ces1) ->
+  ces = ces1 ++ (c, e) :: ces2 ->
+  get_count x δ = n + count_ces x (rename_all_ces' σ ces) ->
+  get_count x (census_case_pred σ c ces δ) = n + count_exp x (rename_all' σ e).
+Proof.
+  destruct ces1 as [|[c' e'] ces1]; intros Hin Heq Hget; cbn in Heq; subst ces.
+  - unfold census_case_pred; fold census_case_pred. rewrite Pos.eqb_refl.
+    cbn in Hget; collapse_primes; rewrite census_ces_pred_corresp, Hget; lia.
+  - unfold count_ces, count_ces', rename_all_ces' in Hget.
+    repeat rewrite ?total_cons, ?total_app, ?map_cons, ?map_app in *; collapse_primes.
+    unfold census_case_pred; fold census_case_pred.
+    destruct (Pos.eqb_spec ![c] ![c']) as [Hc|Hc].
+    { unbox_newtypes; cbn in Hc; inv Hc; contradiction Hin; now left. }
+    rewrite census_case_pred_spec with (n := n) (ces1 := ces1) (e := e) (ces2 := ces2); auto.
+    + now cbn in Hin.
+    + unfold count_ces, count_ces', rename_all_ces'.
+      repeat rewrite ?total_cons, ?total_app, ?map_cons, ?map_app in *; collapse_primes.
+      rewrite census_exp_pred_corresp, Hget; lia.
+Qed.
+
+Notation census_var_pred := (census_var pred_upd).
+Lemma census_var_pred_corresp x_in x σ δ :
+  get_count x (census_var_pred σ x_in δ) = get_count x δ - count_var x (apply_r' σ x_in).
+Proof. unfold get_count; now rewrite census_var_corresp', nat_of_count_iter_pred_upd. Qed.
+
+Notation census_vars_pred := (census_vars pred_upd).
+Lemma census_vars_pred_corresp xs x σ δ :
+  get_count x (census_vars_pred σ xs δ) = get_count x δ - count_vars x (apply_r_list' σ xs).
+Proof. unfold get_count; now rewrite census_vars_corresp', nat_of_count_iter_pred_upd. Qed.
+
+(** Proj folding helpers *)
+
+(* Substitute y for x in δ *)
+Definition census_subst (y x : var) (δ : c_map) :=
+  let x := ![x] in
+  let y := ![y] in
+  match M.get x δ with
+  | None => δ
+  | Some n =>
+    match M.get y δ with
+    | None => M.set y n (M.remove x δ)
+    | Some m => M.set y (n + m)%positive (M.remove x δ)
+    end
+  end.
+
+(* TODO: move to Ensembles_util or identifiers *)
+Lemma occurs_free_Efun_nil : forall e, occurs_free (cps.Efun cps.Fnil e) <--> occurs_free e.
+Proof. intros; split; repeat (normalize_occurs_free || normalize_sets); eauto with Ensembles_DB. Qed.
+
+Lemma bound_var_Efun_nil : forall e, bound_var (cps.Efun cps.Fnil e) <--> bound_var e.
+Proof. intros; split; repeat (normalize_bound_var || normalize_sets); eauto with Ensembles_DB. Qed.
+
+Lemma census_subst_dom : forall (y x : var) (δ : c_map),
+  x <> y ->
+  get_count x (census_subst y x δ) = 0.
+Proof.
+  clear; intros y x δ Hne; unfold get_count, census_subst.
+  destruct (M.get ![x] δ) as [x'|] eqn:Hgetx; [|now rewrite Hgetx].
+  destruct (M.get ![y] δ) as [y'|] eqn:Hgety;
+   (rewrite M.gso by now (unbox_newtypes; cbn)); now rewrite M.grs.
+Qed.
+
+Lemma census_subst_ran : forall (y x : var) (δ : c_map),
+  x <> y ->
+  get_count y (census_subst y x δ) = get_count x δ + get_count y δ.
+Proof.
+  clear; intros y x δ Hne; unfold get_count, census_subst.
+  destruct (M.get ![x] δ) as [x'|] eqn:Hgetx; [|reflexivity].
+  destruct (M.get ![y] δ) as [y'|] eqn:Hgety;
+  rewrite M.gss; cbn; lia.
+Qed.
+
+Lemma census_subst_neither : forall (z y x : var) (δ : c_map),
+  x <> y -> z <> x -> z <> y ->
+  get_count z (census_subst y x δ) = get_count z δ.
+Proof.
+  clear; intros z y x δ Hne Hz1 Hz2; unfold get_count, census_subst.
+  destruct (M.get ![x] δ) as [x'|] eqn:Hgetx; [|reflexivity].
+  destruct (M.get ![y] δ) as [y'|] eqn:Hgety;
+    rewrite M.gso by (unbox_newtypes; now cbn); now rewrite M.gro by (unbox_newtypes; now cbn).
+Qed.
+
+Lemma count_var_subst_dom : forall (y x : var) (x_in : var),
+  x <> y -> count_var x (apply_r' (M.set ![x] ![y] (M.empty _)) x_in) = 0.
+Proof.
+  clear; intros y x x_in Hne; unfold apply_r', apply_r, count_var; unbox_newtypes; cbn.
+  (assert (x <> y) by congruence); destruct (Pos.eq_dec x_in x).
+  - subst; rewrite M.gss; now destruct (Pos.eqb_spec x y).
+  - rewrite M.gso by auto; rewrite M.gempty. now destruct (Pos.eqb_spec x x_in).
+Qed.
+
+Lemma count_vars_subst_dom : forall (xs : list var) (y x : var),
+  x <> y -> count_vars x (apply_r_list' (M.set ![x] ![y] (M.empty _)) xs) = 0. 
+Proof.
+  clear; induction xs as [|x xs IHxs]; [reflexivity|cbn; intros; collapse_primes].
+  rewrite count_var_subst_dom by auto; rewrite IHxs by auto; auto.
+Qed.
+
+Fixpoint count_exp_subst_dom (y x : var) (e : exp) {struct e} :
+  x <> y ->
+  count_exp x (rename_all' (M.set ![x] ![y] (M.empty _)) e) = 0.
+Proof.
+  intros Hne; destruct e; cbn; collapse_primes; repeat first
+    [rewrite count_exp_subst_dom by auto
+    |rewrite count_var_subst_dom by auto
+    |rewrite count_vars_subst_dom by auto]; auto.
+  - induction ces as [|[c e] ces IHces]; cbn in *; auto; collapse_primes.
+    now rewrite IHces, count_exp_subst_dom by auto.
+  - clear e; rewrite Nat.add_0_r; induction fds as [|[f ft xs e] fds IHfds]; cbn in *; auto; collapse_primes.
+    now rewrite IHfds, count_exp_subst_dom by auto.
+Qed.
+
+Lemma count_var_subst_ran : forall (y x : var) (x_in : var),
+  x <> y -> count_var y (apply_r' (M.set ![x] ![y] (M.empty _)) x_in) = count_var x x_in + count_var y x_in.
+Proof.
+  clear; intros y x x_in Hne; unfold apply_r', apply_r, count_var; unbox_newtypes; cbn.
+  (assert (x <> y) by congruence); destruct (Pos.eq_dec x_in x).
+  - subst; rewrite M.gss; cbn.
+    destruct (Pos.eqb_spec y y), (Pos.eqb_spec x x), (Pos.eqb_spec y x); subst; auto; congruence.
+  - rewrite M.gso by auto; rewrite M.gempty.
+    destruct (Pos.eqb_spec y x_in), (Pos.eqb_spec x x_in); subst; auto; congruence.
+Qed.
+
+Lemma count_vars_subst_ran : forall (xs : list var) (y x : var),
+  x <> y -> count_vars y (apply_r_list' (M.set ![x] ![y] (M.empty _)) xs) = count_vars x xs + count_vars y xs.
+Proof.
+  clear; induction xs as [|x xs IHxs]; [reflexivity|cbn; intros; collapse_primes].
+  rewrite count_var_subst_ran by auto; rewrite IHxs by auto; lia.
+Qed.
+
+Fixpoint count_exp_subst_ran (y x : var) (e : exp) {struct e} :
+  x <> y -> count_exp y (rename_all' (M.set ![x] ![y] (M.empty _)) e) = count_exp x e + count_exp y e.
+Proof.
+  intros Hne; destruct e; cbn; collapse_primes; repeat first
+    [rewrite count_exp_subst_ran by auto
+    |rewrite count_var_subst_ran by auto
+    |rewrite count_vars_subst_ran by auto]; auto; try lia.
+  - enough (Hces :
+      count_ces y (rename_all_ces' (@M.set cps.var (un_var x) (un_var y) (M.empty cps.var)) ces) =
+      count_ces x ces + count_ces y ces) by lia.
+    induction ces as [|[c e] ces IHces]; cbn in *; auto; collapse_primes.
+    now rewrite IHces, count_exp_subst_ran by auto.
+  - enough (Hfds :
+      count_fds y (rename_all_fds' (@M.set cps.var (un_var x) (un_var y) (M.empty cps.var)) fds) =
+      count_fds x fds + count_fds y fds) by lia.
+    clear e; induction fds as [|[f ft xs e] fds IHfds]; cbn in *; auto; collapse_primes.
+    now rewrite IHfds, count_exp_subst_ran by auto.
+Qed.
+
+Lemma count_var_subst_neither : forall (z y x : var) (x_in : var),
+  x <> y -> z <> x -> z <> y ->
+  count_var z (apply_r' (M.set ![x] ![y] (M.empty _)) x_in) = count_var z x_in.
+Proof.
+  clear; intros z y x x_in Hne Hz1 Hz2; unfold apply_r', apply_r, count_var; unbox_newtypes; cbn.
+  destruct (Pos.eq_dec x_in x).
+  - subst; rewrite M.gss; cbn; destruct (Pos.eqb_spec z y), (Pos.eqb_spec z x); subst; auto; congruence.
+  - rewrite M.gso by auto; now rewrite M.gempty.
+Qed.
+
+Lemma count_vars_subst_neither : forall (xs : list var) (z y x : var),
+  x <> y -> z <> x -> z <> y ->
+  count_vars z (apply_r_list' (M.set ![x] ![y] (M.empty _)) xs) = count_vars z xs.
+Proof.
+  clear; induction xs as [|x xs IHxs]; [reflexivity|cbn; intros; collapse_primes].
+  rewrite count_var_subst_neither by auto; rewrite IHxs by auto; lia.
+Qed.
+
+Fixpoint count_exp_subst_neither (z y x : var) (e : exp) {struct e} :
+  x <> y -> z <> x -> z <> y ->
+  count_exp z (rename_all' (M.set ![x] ![y] (M.empty _)) e) = count_exp z e.
+Proof.
+  intros Hne Hz1 Hz2; destruct e; cbn; collapse_primes; repeat first
+    [rewrite count_exp_subst_neither by auto
+    |rewrite count_var_subst_neither by auto
+    |rewrite count_vars_subst_neither by auto]; auto; try lia.
+  - f_equal; induction ces as [|[c e] ces IHces]; cbn in *; auto; collapse_primes.
+  - f_equal; clear e; induction fds as [|[f ft xs e] fds IHfds]; cbn in *; auto; collapse_primes.
+Qed.
+
+(* TODO: move to proto_util *)
+Lemma var_eq_dec : forall x y : var, {x = y} + {x <> y}.
+Proof. repeat decide equality. Defined.
+
+Lemma count_var_neq : forall (x y : var), x <> y -> count_var x y = 0. 
+Proof. unfold count_var; intros x y Hne; unbox_newtypes; cbn; destruct (Pos.eqb_spec x y); congruence. Qed.
+
+(** Shrink rewriter *)
 
 Definition rw_shrink' : rewriter exp_univ_exp shrink_step (@D_rename) (@R_shrink) (@S_shrink).
 Proof.
@@ -361,28 +761,33 @@ Proof.
     pose (x0 := apply_r' σ x); specialize success with (x0 := x0).
     destruct (M.get ![x0] ρ) as [[c ys]|] eqn:Hctor; [|cond_failure].
     pose (Hρ' := Hρ x0 c ys Hctor); specialize success with (c := c) (ys := ys).
-    destruct (find_case c ces) as [e|] eqn:Hfind; [|cond_failure]; apply find_case_In in Hfind.
+    destruct (find_case c ces) as [e|] eqn:Hfind; [|cond_failure]; apply find_case_spec in Hfind.
     specialize success with (e := e) (e0 := @rename exp_univ_exp σ e).
     specialize success with (ces0 := @rename exp_univ_list_prod_ctor_tag_exp σ ces).
     cond_success success; unshelve eapply success.
     + exists σ; clear - Hfind Hσ; destruct x as [x]; cbn in *; destruct Hσ as [Hdom Hran].
-      rewrite bound_var_Ecase in *; collapse_primes'.
-      (* TODO: hoist *)
-      assert (In_ces_bound : forall c e ces, In (c, e) ces -> bound_var ![e] \subset bound_var_ces ![ces]). {
-        clear; induction ces as [|[[c'] e'] ces IHces]; [inversion 1|].
-        destruct 1 as [Heq|Hne]; [inv Heq|]; cbn; eauto with Ensembles_DB. }
+      rewrite bound_var_Ecase in *.
+      assert (In (c, e) ces). { 
+        destruct Hfind as [ces1 [ces2 [Hnotin Hces]]]; subst ces.
+        apply in_or_app; right; now left. }
       split; (eapply Disjoint_Included_r; [eapply In_ces_bound; eauto|]; eauto).
-    + split; auto; apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind; now cbn in Hfind.
+    + split; auto.
+      destruct Hfind as [ces1 [ces2 [Hnotin Hces]]].
+      assert (Hfind' : In (c, e) ces) by (subst ces; apply in_or_app; right; now left).
+      apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind'; now cbn in Hfind'.
     + reflexivity. + reflexivity. + exact r.
-    + destruct s as [δ Hs] eqn:Hs_eq; unshelve eexists.
-      * (* Update counts *) admit.
-      * split; [|split].
-        -- (* UB(C[σ(Ecase x ces)]) ==> UB(C[σ(e)]) because (c, e) ∈ ces *)
-           admit.
-        -- (* BV(C[σ(e)]) ⊆ BV(C[σ(Ecase x ces)]) and ditto for FV
-              And already have BV(C[σ(Ecase x es)]) # FV(C[σ(Ecase x ces)]) *)
-           admit.
-        -- admit.
+    + destruct s as [δ Hs] eqn:Hs_eq; unshelve eexists; [|split; [|split]].
+      * (* Update counts *) exact (census_case_pred σ c ces (census_var pred_upd σ x δ)).
+      * (* UB(C[σ(Ecase x ces)]) ==> UB(C[σ(e)]) because (c, e) ∈ ces *)
+        admit.
+      * (* BV(C[σ(e)]) ⊆ BV(C[σ(Ecase x ces)]) and ditto for FV
+            And already have BV(C[σ(Ecase x es)]) # FV(C[σ(Ecase x ces)]) *)
+        admit.
+      * intros arb; rewrite count_ctx_app; unfold count, rename.
+        destruct Hfind as [ces1 [ces2 [Hnotin Hces]]].
+        eapply census_case_pred_spec; eauto.
+        rewrite census_var_pred_corresp.
+        destruct Hs as [Huniq [Hdis Hδ]]; rewrite Hδ, count_ctx_app; cbn; collapse_primes; lia.
   - (* Projection folding *) intros _ R C y t n x e d r s success failure.
     destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
     pose (x0 := apply_r' σ x); specialize success with (x0 := x0).
@@ -398,7 +803,8 @@ Proof.
     + split; auto; apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind; now cbn in Hfind.
     + reflexivity. + reflexivity. + exact r.
     + destruct s as [δ Hs] eqn:Hs_eq; unshelve eexists; [|split; [|split]].
-      * (* Update counts *) admit.
+      * (* Update counts *)
+        exact (census_var_pred σ x (census_subst y' y δ)).
       * (* UB(C[(σe)[y'/y]])
               ⟸ UB(C[σe]) (y ∉ BV(e))
               ⟸ UB(C[Eproj y t n (σx) (σe)])
@@ -417,9 +823,28 @@ Proof.
              = FV(C) ∪ (FV(σ(Eproj y t n x e)) \ BVstem(C))
              = FV(C[σ(Eproj y t n x e)])
            Lemma:
-             (x ↦ (c, ys)) ∈ C ⟹ y ∈ ys ⟹ {y} \ BVstem(C) ⊆ FV(C) *)
+             (x ↦ (c, ys)) ∈ C ⟹ y ∈ ys ⟹ {y} ⊆ FV(C) ∪ BVstem(C) *)
         admit.
-      * admit. (* TODO *)
+      * intros arb; rewrite count_ctx_app, census_var_pred_corresp.
+        assert (Hneq : y <> y'). {
+          admit. (* Follows from lemma that y' ⊆ FV(C) ∪ BVstem(C) and UB + FV#BV *) }
+        assert (Hy_notin_C : count_ctx y C = 0). { 
+          admit. (* Need lemma: UB(C[e]) ⟹ BV(e) # vars(C) *) }
+        unfold count, Rec, rename.
+        destruct Hs as [Huniq [Hdis Hδ]].
+        destruct (var_eq_dec arb y); [|destruct (var_eq_dec arb y')].
+        -- subst arb; rewrite census_subst_dom, count_exp_subst_dom, Hy_notin_C by auto; lia.
+        -- subst arb; rewrite census_subst_ran, count_exp_subst_ran by auto.
+           rewrite !Hδ, !count_ctx_app, Hy_notin_C; cbn; collapse_primes.
+           assert (Hyx : y <> apply_r' σ x). {
+             (* σ(x) occurs free, y occurs bound *)
+             (* TODO: lemma:
+                  UB(C[e]) ∧ (FV(C[e]) # BV(C[e])) ⟹
+                  UB(e) ∧ (FV(e) # BV(e)) *)
+             admit. }
+           rewrite count_var_neq at 1 by auto; lia.
+        -- rewrite census_subst_neither, count_exp_subst_neither, Hδ, count_ctx_app by auto.
+           cbn; collapse_primes; lia.
   - (* Top down dead constr *) intros _ R C x c ys e d r s success failure.
     destruct s as [δ [Huniq [Hdis Hδ]]] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
     destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
@@ -566,12 +991,6 @@ Proof.
     + (* Follows from Huniq *)
       admit.
     + clear - Hdis. rewrite !app_exp_c_eq, !isoBAB, !bound_var_app_ctx in *.
-      (* TODO: hoist *)
-      assert (occurs_free_Efun_nil : forall e, occurs_free (cps.Efun cps.Fnil e) <--> occurs_free e). {
-        intros; split; repeat (normalize_occurs_free || normalize_sets); eauto with Ensembles_DB. }
-      (* TODO: hoist *)
-      assert (bound_var_Efun_nil : forall e, bound_var (cps.Efun cps.Fnil e) <--> bound_var e). {
-        intros; split; repeat (normalize_bound_var || normalize_sets); eauto with Ensembles_DB. }
       rewrite occurs_free_exp_ctx; [|rewrite <- occurs_free_Efun_nil at 1; reflexivity].
       rewrite <- bound_var_Efun_nil; apply Hdis.
     + (* ∀ x, |C[Efun [] e]|x = |C[e]|x *) admit.
