@@ -1,7 +1,7 @@
 Require Import Coq.Strings.String.
 Require Import Coq.Sets.Ensembles Coq.ZArith.ZArith.
 Require Import L6.Ensembles_util L6.map_util L6.List_util.
-Require Import L6.state L6.alpha_conv L6.identifiers L6.functions L6.shrink_cps.
+Require Import L6.state L6.alpha_conv L6.identifiers L6.functions L6.shrink_cps L6.stemctx.
 Require Import L6.Prototype.
 Require Import L6.cps_proto L6.proto_util.
 
@@ -751,6 +751,403 @@ Proof. repeat decide equality. Defined.
 Lemma count_var_neq : forall (x y : var), x <> y -> count_var x y = 0. 
 Proof. unfold count_var; intros x y Hne; unbox_newtypes; cbn; destruct (Pos.eqb_spec x y); congruence. Qed.
 
+(*
+(* Bound/free variables in contexts 
+   TODO: move to cps_proto.v *)
+
+Definition bstem_frame {A B} (f : exp_frame_t A B) : Ensemble cps.var. refine(
+  match f with
+  | pair_ctor_tag_exp0 e => Empty_set _
+  | pair_ctor_tag_exp1 c => Empty_set _
+  | cons_prod_ctor_tag_exp0 ces => Empty_set _
+  | cons_prod_ctor_tag_exp1 (_, e) => Empty_set _
+  | Ffun0 ft xs e => Empty_set _
+  | Ffun1 f xs e => Empty_set _
+  | Ffun2 f ft e => Empty_set _
+  | Ffun3 f ft xs => ![f] |: FromList ![xs]
+  | cons_fundef0 fds => name_in_fundefs ![fds]
+  | cons_fundef1 (Ffun f ft xs e) => [set ![f]]
+  | Econstr0 c ys e => Empty_set _
+  | Econstr1 x ys e => Empty_set _
+  | Econstr2 x c e => Empty_set _
+  | Econstr3 x c ys => [set ![x]]
+  | Ecase0 ces => Empty_set _
+  | Ecase1 x => Empty_set _
+  | Eproj0 c n y e => Empty_set _
+  | Eproj1 x n y e => Empty_set _
+  | Eproj2 x c y e => Empty_set _
+  | Eproj3 x c n e => Empty_set _
+  | Eproj4 x c n y => [set ![x]]
+  | Eletapp0 f ft ys e => Empty_set _
+  | Eletapp1 x ft ys e => Empty_set _
+  | Eletapp2 x f ys e => Empty_set _
+  | Eletapp3 x f ft e => Empty_set _
+  | Eletapp4 x f ft ys => [set ![x]]
+  | Efun0 e => Empty_set _
+  | Efun1 fds => name_in_fundefs ![fds]
+  | Eapp0 ft xs => Empty_set _
+  | Eapp1 f xs => Empty_set _
+  | Eapp2 f ft => Empty_set _
+  | Eprim0 p ys e => Empty_set _
+  | Eprim1 x ys e => Empty_set _
+  | Eprim2 x p e => Empty_set _
+  | Eprim3 x p ys => [set ![x]]
+  | Ehalt0 => Empty_set _
+  end).
+Defined.
+
+Fixpoint bstem_ctx {A B} (C : exp_c A B) : Ensemble cps.var :=
+  match C with
+  | <[]> => Empty_set _
+  | C >:: f => bstem_ctx C :|: bstem_frame f
+  end.
+
+(* TODO: move to proto_util *)
+
+Fixpoint occurs_free_ces (ces : list (cps.ctor_tag * cps.exp)) :=
+  match ces with
+  | [] => Empty_set _
+  | (c, e) :: ces => occurs_free e :|: occurs_free_ces ces
+  end.
+
+Lemma occurs_free_Ecase x ces :
+  occurs_free (cps.Ecase x ces) <--> x |: occurs_free_ces ces.
+Proof.
+  induction ces as [|[c e] ces IHces]; cbn; repeat normalize_occurs_free; [eauto with Ensembles_DB|].
+  rewrite IHces; split; eauto 3 with Ensembles_DB.
+Qed.
+
+Definition free_frame {A B} (f : exp_frame_t A B) : Ensemble cps.var. refine(
+  match f with
+  | pair_ctor_tag_exp0 e => occurs_free ![e]
+  | pair_ctor_tag_exp1 c => Empty_set _
+  | cons_prod_ctor_tag_exp0 ces => occurs_free_ces ![ces]
+  | cons_prod_ctor_tag_exp1 (_, e) => occurs_free ![e]
+  | Ffun0 ft xs e => Empty_set _
+  | Ffun1 f xs e => Empty_set _
+  | Ffun2 f ft e => Empty_set _
+  | Ffun3 f ft xs => Empty_set _
+  | cons_fundef0 fds => occurs_free_fundefs ![fds]
+  | cons_fundef1 fd => occurs_free_fundefs ![[fd]]
+  | Econstr0 c ys e => Empty_set _
+  | Econstr1 x ys e => Empty_set _
+  | Econstr2 x c e => Empty_set _
+  | Econstr3 x c ys => FromList ![ys]
+  | Ecase0 ces => occurs_free_ces ![ces]
+  | Ecase1 x => [set ![x]]
+  | Eproj0 c n y e => Empty_set _
+  | Eproj1 x n y e => Empty_set _
+  | Eproj2 x c y e => Empty_set _
+  | Eproj3 x c n e => Empty_set _
+  | Eproj4 x c n y => [set ![y]]
+  | Eletapp0 f ft ys e => Empty_set _
+  | Eletapp1 x ft ys e => Empty_set _
+  | Eletapp2 x f ys e => Empty_set _
+  | Eletapp3 x f ft e => Empty_set _
+  | Eletapp4 x f ft ys => ![f] |: FromList ![ys]
+  | Efun0 e => occurs_free ![e]
+  | Efun1 fds => occurs_free_fundefs ![fds]
+  | Eapp0 ft xs => Empty_set _
+  | Eapp1 f xs => Empty_set _
+  | Eapp2 f ft => Empty_set _
+  | Eprim0 p ys e => Empty_set _
+  | Eprim1 x ys e => Empty_set _
+  | Eprim2 x p e => Empty_set _
+  | Eprim3 x p ys => FromList ![ys]
+  | Ehalt0 => Empty_set _
+  end).
+Defined.
+
+Fixpoint free_ctx {A B} (C : exp_c A B) : Ensemble cps.var :=
+  match C with
+  | <[]> => Empty_set _
+  | C >:: f => free_ctx C :|: free_frame f
+  end.
+
+Definition free {A} : univD A -> Ensemble cps.var :=
+  match A with
+  | exp_univ_prod_ctor_tag_exp => fun '(_, e) => occurs_free ![e]
+  | exp_univ_list_prod_ctor_tag_exp => fun ces => occurs_free_ces ![ces]
+  | exp_univ_fundef => fun fd => occurs_free_fundefs ![[fd]]
+  | exp_univ_list_fundef => fun fds => occurs_free_fundefs ![fds]
+  | exp_univ_exp => fun e => occurs_free ![e]
+  | exp_univ_var => fun x => [set ![x]]
+  | exp_univ_fun_tag => fun _ => Empty_set _
+  | exp_univ_ctor_tag => fun _ => Empty_set _
+  | exp_univ_prim => fun _ => Empty_set _
+  | exp_univ_N => fun _ => Empty_set _
+  | exp_univ_list_var => fun xs => FromList ![xs]
+  end.
+*)
+
+Lemma occurs_free_ctx_mut :
+  (forall (c : ctx.exp_ctx) (e e' : cps.exp),
+   occurs_free e \subset occurs_free e' ->
+   occurs_free (ctx.app_ctx_f c e) \subset occurs_free (ctx.app_ctx_f c e')) /\
+  (forall (B : ctx.fundefs_ctx) (e e' : cps.exp),
+   occurs_free e \subset occurs_free e' ->
+   occurs_free_fundefs (ctx.app_f_ctx_f B e) \subset occurs_free_fundefs (ctx.app_f_ctx_f B e')).
+Proof.
+  apply ctx.exp_fundefs_ctx_mutual_ind; intros; cbn; repeat normalize_occurs_free;
+  rewrite <- ?name_in_fundefs_ctx_ctx; eauto with Ensembles_DB.
+Qed.
+Corollary occurs_free_exp_ctx c e e' :
+  occurs_free e \subset occurs_free e' ->
+  occurs_free (ctx.app_ctx_f c e) \subset occurs_free (ctx.app_ctx_f c e').
+Proof. apply occurs_free_ctx_mut. Qed.
+Corollary occurs_free_fundefs_ctx B e e' :
+  occurs_free e \subset occurs_free e' ->
+  occurs_free_fundefs (ctx.app_f_ctx_f B e) \subset occurs_free_fundefs (ctx.app_f_ctx_f B e').
+Proof. apply occurs_free_ctx_mut. Qed.
+
+Fixpoint rename_all_preserves_bound σ e {struct e} :
+  bound_var ![rename_all' σ e] <--> bound_var ![e].
+Proof.
+  destruct e; unbox_newtypes; cbn; collapse_primes; repeat normalize_bound_var;
+  rewrite ?rename_all_preserves_bound; eauto with Ensembles_DB.
+  - rewrite bound_var_Ecase; collapse_primes.
+    induction ces as [|[c e] ces IHces]; unbox_newtypes; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
+  - enough (Hfds : bound_var_fundefs ![rename_all_fds' σ fds] <--> bound_var_fundefs ![fds]) by now rewrite Hfds.
+    clear e; induction fds as [|[f ft xs e] fds IHfds]; unbox_newtypes; cbn;
+      repeat normalize_bound_var; collapse_primes; eauto with Ensembles_DB.
+Qed.
+
+Definition well_scoped e := unique_bindings ![e] /\ Disjoint _ (bound_var ![e]) (occurs_free ![e]).
+Definition well_scoped_fds fds :=
+  unique_bindings_fundefs ![fds] /\ Disjoint _ (bound_var_fundefs ![fds]) (occurs_free_fundefs ![fds]).
+
+Lemma stem_not_free c e :
+  well_scoped [ctx.app_ctx_f c e]! ->
+  Disjoint _ (bound_stem_ctx c) (occurs_free (ctx.app_ctx_f c e)).
+Proof.
+  intros [_ Hdis]; rewrite !isoBAB in Hdis.
+  eapply Disjoint_Included_l; [|eassumption].
+  rewrite bound_var_app_ctx, bound_var_stem_or_not_stem; eauto with Ensembles_DB.
+Qed.
+
+(* TODO: Move to Ensembles_util.v *)
+Lemma Disjoint_Setminus_bal : forall {A} (S1 S2 S3 : Ensemble A),
+  Disjoint _ (S1 \\ S3) (S2 \\ S3) ->
+  Disjoint _ (S1 \\ S3) S2.
+Proof.
+  clear; intros A S1 S2 S3 [Hdis]; constructor; intros arb.
+  intros [arb' [HS1 HS3] HS2]; clear arb.
+  apply (Hdis arb'); constructor; constructor; auto.
+Qed.
+
+(* well_scoped(C[e]) ⟹ (BV(e) # vars(C)) ∧ (FV(e) ⊆ BVstem(C) ∪ FV(C[e]) *)
+Lemma well_scoped_mut' :
+  (forall (c : ctx.exp_ctx) (e : cps.exp),
+    well_scoped [ctx.app_ctx_f c e]! ->
+    Disjoint _ (bound_var e) (used_c [c]!) /\
+    occurs_free e \subset bound_stem_ctx c :|: occurs_free (ctx.app_ctx_f c e)) /\
+  (forall (B : ctx.fundefs_ctx) (e : cps.exp),
+    well_scoped_fds [ctx.app_f_ctx_f B e]! ->
+    Disjoint _ (bound_var e) (used_c [B]!) /\
+    occurs_free e \subset name_in_fundefs (ctx.app_f_ctx_f B e)
+                :|: bound_stem_fundefs_ctx B :|: occurs_free_fundefs (ctx.app_f_ctx_f B e)).
+Proof.
+  apply ctx.exp_fundefs_ctx_mutual_ind; unfold well_scoped.
+  - cbn; normalize_roundtrips; intros; eauto with Ensembles_DB.
+  - intros x c ys C IH e [Huniq Hdis]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdis.
+    cbn in *; rewrite !used_c_comp; cbn; inv Huniq.
+    revert Hdis; repeat (normalize_bound_var || normalize_occurs_free
+                         || normalize_sets || normalize_roundtrips); intros Hdis.
+    destruct IH as [IHdis IHfv]; [split; auto|split].
+    { apply Disjoint_Union in Hdis; destruct Hdis as [Hdis1 Hdis2].
+      apply Disjoint_commut, Disjoint_Union in Hdis2; destruct Hdis2 as [Hdis2 _].
+      eapply Disjoint_Included_r; [apply Included_Union_Setminus
+                                  |apply Union_Disjoint_r; [apply Disjoint_commut, Hdis2|]];
+      eauto with Decidable_DB Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdis].
+      * change (~ ?S ?x) with (~ x \in S) in *.
+        rewrite bound_var_app_ctx, Union_demorgan in H1.
+        now apply Disjoint_Singleton_r.
+      * rewrite bound_var_app_ctx in *.
+        eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdis]]; eauto with Ensembles_DB.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      repeat rewrite <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_assoc, (Union_commut [set x]), <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_commut; apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros x t n y C IH e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn; inv Huniq.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { apply Disjoint_Union in Hdisj; destruct Hdisj as [Hdisj1 Hdisj2].
+      apply Disjoint_commut, Disjoint_Union in Hdisj2; destruct Hdisj2 as [Hdisj2 _].
+      eapply Disjoint_Included_r; [apply Included_Union_Setminus
+                                  |apply Union_Disjoint_r; [apply Disjoint_commut, Hdisj2|]];
+      eauto with Decidable_DB Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * change (~ ?S ?x) with (~ x \in S) in *.
+        rewrite bound_var_app_ctx, Union_demorgan in H1.
+        now apply Disjoint_Singleton_r.
+      * rewrite bound_var_app_ctx in *.
+        eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      repeat rewrite <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_assoc, (Union_commut [set x]), <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_commut; apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros x f ft ys C IH e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn; inv Huniq.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { apply Disjoint_Union in Hdisj; destruct Hdisj as [Hdisj1 Hdisj2].
+      apply Disjoint_commut, Disjoint_Union in Hdisj2; destruct Hdisj2 as [Hdisj2 _].
+      eapply Disjoint_Included_r; [apply Included_Union_Setminus
+                                  |apply Union_Disjoint_r; [apply Disjoint_commut, Hdisj2|]];
+      eauto with Decidable_DB Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * change (~ ?S ?x) with (~ x \in S) in *.
+        rewrite bound_var_app_ctx, Union_demorgan in H1.
+        now apply Disjoint_Singleton_r.
+      * rewrite bound_var_app_ctx in *.
+        eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      repeat rewrite <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_assoc, (Union_commut [set x]), <- Union_assoc, (Union_assoc [set x]), (Union_commut [set x]),
+        <- Union_assoc.
+      do 2 apply Included_Union_preserv_r.
+      rewrite Union_commut; apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros x p ys C IH e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn; inv Huniq.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { apply Disjoint_Union in Hdisj; destruct Hdisj as [Hdisj1 Hdisj2].
+      apply Disjoint_commut, Disjoint_Union in Hdisj2; destruct Hdisj2 as [Hdisj2 _].
+      eapply Disjoint_Included_r; [apply Included_Union_Setminus
+                                  |apply Union_Disjoint_r; [apply Disjoint_commut, Hdisj2|]];
+      eauto with Decidable_DB Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * change (~ ?S ?x) with (~ x \in S) in *.
+        rewrite bound_var_app_ctx, Union_demorgan in H1.
+        now apply Disjoint_Singleton_r.
+      * rewrite bound_var_app_ctx in *.
+        eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      repeat rewrite <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_assoc, (Union_commut [set x]), <- Union_assoc; apply Included_Union_preserv_r.
+      rewrite Union_commut; apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros x ces1 ct C IH ces2 e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { admit. }
+    { apply Disjoint_Union in Hdisj; destruct Hdisj as [Hdisj1 Hdisj2].
+      eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj2]]; eauto with Ensembles_DB. }
+    + admit.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|]; eauto with Ensembles_DB.
+  - intros fds C IH e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in IH, Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { now inv Huniq. }
+    { inv Huniq. eapply Disjoint_Included_r;
+                   [apply Included_Union_Setminus with (s2 := name_in_fundefs fds); eauto with Decidable_DB|].
+      apply Union_Disjoint_r;
+        [eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]|]; eauto with Ensembles_DB.
+      eapply Disjoint_Included_r; [apply name_in_fundefs_bound_var_fundefs|]; auto. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * inv Huniq. rewrite bound_var_app_ctx in H3; eauto with Ensembles_DB.
+      * eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB.
+        rewrite bound_var_app_ctx; eauto with Ensembles_DB.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      rewrite (Union_commut (name_in_fundefs _)), <- Union_assoc.
+      rewrite (Union_assoc (name_in_fundefs _)), (Union_commut (name_in_fundefs _)), <- Union_assoc.
+      do 2 apply Included_Union_preserv_r; rewrite Union_commut.
+      apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros C IH e1 e [Huniq Hdisj]; specialize (IH e); rewrite !isoBAB in Huniq, Hdisj.
+    cbn in *; rewrite !used_c_comp; cbn.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free || normalize_roundtrips
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { cbn; normalize_roundtrips; now inv Huniq. }
+    { cbn; normalize_roundtrips.
+      eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * inv Huniq. rewrite bound_var_app_f_ctx in H3; eauto with Ensembles_DB.
+      * rewrite bound_var_app_f_ctx in *.
+        (* FV(e1) ⊆ (FV(e1)\names(C[e])) ∪ names(C[e])
+             BV(e) # (FV(e1)\names(C[e])) by Hdisj
+             BV(e) # names(C[e]) by UB(Efun (C[e]) e1) *)
+        admit.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      apply Union_Included; eauto with Ensembles_DB.
+      rewrite name_in_fundefs_ctx_ctx; eauto with Ensembles_DB.
+  - intros f ft xs C IH fds e [Huniq Hdisj]. specialize (IH e); cbn in *; normalize_roundtrips.
+    rewrite !used_c_comp; cbn.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free || normalize_roundtrips
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { now inv Huniq. }
+    { inv Huniq. change (~ ?S ?x) with (~ x \in S) in *.
+      erewrite <- (Setminus_Disjoint (bound_var (ctx.app_ctx_f C e)));
+        [|eapply Disjoint_Included_r; [apply name_in_fundefs_bound_var_fundefs|]; apply H8].
+      erewrite <- (Setminus_Disjoint (bound_var (ctx.app_ctx_f C e))); [|apply H6].
+      erewrite <- (Setminus_Disjoint (bound_var (ctx.app_ctx_f C e))); [|apply Disjoint_Singleton_r, H4].
+      rewrite !Setminus_Union.
+      apply Disjoint_Setminus_bal.
+      eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r; [|apply Union_Disjoint_r]|apply IHdisj].
+      * admit.
+      * inv Huniq. change (~ ?S ?x) with (~ x \in S) in *. rewrite bound_var_app_ctx, Union_demorgan in H4.
+        apply Disjoint_Singleton_In; eauto with Decidable_DB; easy.
+      * inv Huniq; rewrite bound_var_app_ctx in *. now apply Disjoint_Union_r in H6.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      eapply Included_trans with (s2 :=
+        (f |: FromList xs :|: name_in_fundefs fds) :|: 
+        (occurs_free (ctx.app_ctx_f C e) \\ (f |: (FromList xs :|: name_in_fundefs fds)))).
+      2: eauto with Ensembles_DB.
+      rewrite Union_commut, <- !Union_assoc.
+      apply Included_Union_Setminus; eauto with Decidable_DB.
+  - intros f ft xs e C IH e0 [Huniq Hdisj]; specialize (IH e0); rewrite !isoBAB in Hdisj, Huniq.
+    cbn in *; rewrite !used_c_comp; cbn.
+    revert Hdisj; repeat (normalize_bound_var || normalize_occurs_free || normalize_roundtrips
+                          || normalize_sets || normalize_roundtrips); intros Hdisj.
+    destruct IH as [IHdisj IHfv]; [split; auto|split].
+    { cbn; normalize_roundtrips; now inv Huniq. }
+    { inv Huniq; cbn in *; normalize_roundtrips. change (~ ?S ?x) with (~ x \in S) in *.
+      erewrite <- (Setminus_Disjoint (bound_var_fundefs (ctx.app_f_ctx_f C e0)));
+        [|eapply Disjoint_Included_r; [apply name_in_fundefs_bound_var_fundefs|]; apply H8].
+      erewrite <- (Setminus_Disjoint (bound_var_fundefs (ctx.app_f_ctx_f C e0))); [|apply H6].
+      erewrite <- (Setminus_Disjoint (bound_var_fundefs (ctx.app_f_ctx_f C e0))); [|apply Disjoint_Singleton_r, H4].
+      rewrite !Setminus_Union.
+      apply Disjoint_Setminus_bal.
+      eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB. }
+    { cbn; normalize_roundtrips.
+      eapply Disjoint_Included_l; [|eapply Disjoint_Included_r; [|apply Hdisj]]; eauto with Ensembles_DB. }
+    + apply Union_Disjoint_r; [apply Union_Disjoint_r|apply IHdisj].
+      * inv Huniq. rewrite bound_var_app_f_ctx in H3; eauto with Ensembles_DB.
+      * rewrite bound_var_app_f_ctx in *.
+        (* FV(e1) ⊆ (FV(e1)\names(C[e])) ∪ names(C[e])
+             BV(e) # (FV(e1)\names(C[e])) by Hdisj
+             BV(e) # names(C[e]) by UB(Efun (C[e]) e1) *)
+        admit.
+    + normalize_bound_stem_ctx'; eapply Included_trans; [apply IHfv|].
+      apply Union_Included; eauto with Ensembles_DB.
+      apply Union_Included; eauto with Ensembles_DB.
+      rewrite name_in_fundefs_ctx_ctx; eauto with Ensembles_DB.
+      apply 
+      SearchAbout Setminus iff.
+      apply Union_Included; eauto with Ensembles_DB.
+      rewrite name_in_fundefs_ctx_ctx; eauto with Ensembles_DB.
+
+Lemma known_ctor_in_used_c {A} x c ys (C : exp_c A _) : known_ctor x c ys C -> ![x] \in used_c C.
+Proof.
+  SearchAbout bound_var ctx.app_ctx_f.
+SearchAbout used_vars ctx.app_ctx_f.
 (** Shrink rewriter *)
 
 Definition rw_shrink' : rewriter exp_univ_exp shrink_step (@D_rename) (@R_shrink) (@S_shrink).
@@ -806,14 +1203,20 @@ Proof.
       * (* Update counts *)
         exact (census_var_pred σ x (census_subst y' y δ)).
       * (* UB(C[(σe)[y'/y]])
-              ⟸ UB(C[σe]) (y ∉ BV(e))
+              ⟸ UB(C[σe]) (BV((σe)[y'/y]) = BV(σe) by rename_all_preserves_bound)
               ⟸ UB(C[Eproj y t n (σx) (σe)])
               ⟸ UB(C[σ(Eproj y t n x e)]) *)
         admit.
       * (* BV(C[(σe)[y'/y]])
-             ⊆ BV(C[σe]) because y ∉ BV(σe)
-             ⊆ BV(C[σ(Eproj y t n x e)])
-           FV(C[(σe)[y'/y]])
+             = BV(C) ∪ BV((σe)[y'/y]) (bound_var_app_ctx)
+             = BV(C) ∪ BV(σe) (rename_all_preserves_bound)
+             ⊆ BV(C) ∪ BV(σ(Eproj y t n x e))
+           FV(C[(σe)[y'/y]]) ⊆ FV(C[σ(proj y t n x e)])
+             y' ∈ vars(C)
+               FV(C) ⊆ FV(C[σ(Eproj y t n x e)])
+               BV(C) = BVstem(C) ∪ BVnotstem(C)
+             FV((σe)[y'/y]) ⊆ FV(σe) ∪ {y'}
+             = FV(C[(σe)[y'/y]]) (TODO: use occurs_free_exp_ctx)
              = FV(C) ∪ (FV((σe)[y'/y]) \ BVstem(C))
              = FV(C) ∪ (((FV(σe) \ {y}) ∪ {y'}) \ BVstem(C))
              = FV(C) ∪ (FV(σe) \ {y} \ BVstem(C)) ∪ ({y'} \ BVstem(C))
@@ -829,7 +1232,7 @@ Proof.
         assert (Hneq : y <> y'). {
           admit. (* Follows from lemma that y' ⊆ FV(C) ∪ BVstem(C) and UB + FV#BV *) }
         assert (Hy_notin_C : count_ctx y C = 0). { 
-          admit. (* Need lemma: UB(C[e]) ⟹ BV(e) # vars(C) *) }
+          admit. (* Need lemma: UB(C[e]) ∧ (FV(C[e]) # BV(C[e])) ⟹ BV(e) # vars(C) *) }
         unfold count, Rec, rename.
         destruct Hs as [Huniq [Hdis Hδ]].
         destruct (var_eq_dec arb y); [|destruct (var_eq_dec arb y')].
