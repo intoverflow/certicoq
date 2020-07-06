@@ -294,7 +294,7 @@ Definition const_fun {A B} (x : A) (y : B) : B := y.
 Inductive R' : exp -> exp -> Prop :=
 | R'0 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ys ys' e,
     ys' = ys ++ ys ->
-    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys' (Rec (const_fun tt e))⟧)
+    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys' (Rec (const_fun tt e))⟧) . (*
 | R'1 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c y ys ys' e,
     #|ys| = 4%nat /\
     (forall D : frames_t exp_univ_exp exp_univ_exp, D >++ C = D >++ C) /\
@@ -312,7 +312,12 @@ Inductive R' : exp -> exp -> Prop :=
     #|xs| = 0%nat /\
     xs ++ [x] = xs' /\
     C = C ->
-    BottomUp (R' (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)).
+    BottomUp (R' (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)). *)
+
+Goal True.
+  ltac1:(
+  parse_rel 0 R' ltac:(fun rules n => idtac rules n)).
+Abort.
 
 Definition rw_R' : rewriter exp_univ_exp R' (@opaque_delay_t) (@R_C) (@St).
 Proof.
@@ -339,16 +344,6 @@ Proof.
   { cbn; intros; ltac1:(cond_success success).
     eapply success; eauto.
     constructor > [exact O|reflexivity]. }
-  { clear; intros; ltac1:(cond_failure). }
-  { clear; intros; ltac1:(cond_success success); cbn in *.
-    eapply success; eauto; constructor > [exact O|reflexivity]. }
-  { clear; intros. destruct (PeanoNat.Nat.eq_dec #|xs| 0) > [|ltac1:(cond_failure)].
-    ltac1:(cond_success success); eapply success; eauto.
-    constructor > [exact O|reflexivity]. }
-  { clear; intros. destruct (PeanoNat.Nat.eq_dec #|xs| 0) > [|ltac1:(cond_failure)].
-    ltac1:(cond_success success); eapply success; eauto.
-    constructor > [exact O|reflexivity]. }
-  { exists tt. reflexivity. }
 Defined.
 
 Definition rw_R'' : 
@@ -733,21 +728,21 @@ Proof.
     destruct (cpConses (d x)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (find_arm c ces) as [e|] eqn:Hc > [|ltac1:(cond_failure)].
     ltac1:(cond_success success).
-    specialize (success (d x) (map (subst_arm d) ces) e d c (subst_exp d e)).
+    specialize (success e d (d x) (map (subst_arm d) ces) c (subst_exp d e)).
     apply success; auto; split.
     + edestruct HConses as [D [E Hctx]]; eauto.
     + apply find_arm_In in Hc; destruct Hc as [l [r_arms Hlr]].
       exists (map (subst_arm d) l), (map (subst_arm d) r_arms); subst ces.
       now rewrite !map_app.
   - (* Projection folding *)
-    clear; intros _ R C x y n e d r s success failure.
+    clear; intros _ R C e x y n d r s success failure.
     destruct r as [cpConses HConses] eqn:Hr.
     destruct (cpConses (d y)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (nth_error ys n) as [y'|] eqn:Hn > [|ltac1:(cond_failure)].
-    ltac1:(cond_success success); apply (success (d x) (d y) n (subst_exp d e) d y' ys); auto; split; auto.
-    edestruct HConses as [D [E Hctx]]; eauto.
-  - (* Prove the fusion law *)
-    eexists. simpl. rewrite <- subst_exp_comp. reflexivity.
+    ltac1:(cond_success success); apply (success (subst_exp d e) (fun e => one_renaming (d x) y' (d e))
+                                                 (d x) (d y) n y' ys); auto.
+    + edestruct HConses as [D [E Hctx]]; eauto.
+    + now rewrite <- subst_exp_comp.
 Defined.
 
 Check rw_cp.
