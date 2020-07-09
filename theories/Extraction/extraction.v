@@ -86,6 +86,24 @@ Extract Inlined Constant Fappli_IEEE.B2R => "fun _ -> assert false".
 Extract Inlined Constant Fappli_IEEE.round_mode => "fun _ -> assert false".
 Extract Inlined Constant Fcalc_bracket.inbetween_loc => "fun _ -> assert false". *)
 
+(*
+Extract Inductive L6.cps_proto_metacoq.exp_frame_t => "unit"
+  [ "(fun _ -> ())" "(fun _ -> ())"
+    "(fun _ -> ())" "(fun _ -> ())"
+    "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())"
+    "(fun _ -> ())" "(fun _ -> ())"
+    "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())"
+    "(fun _ -> ())" "(fun _ -> ())"
+    "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())"
+    "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())" "(fun _ _ _ _ -> ())"
+    "(fun _ -> ())" "(fun _ -> ())"
+    "(fun _ _ -> ())" "(fun _ _ -> ())" "(fun _ _ -> ())"
+    "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())" "(fun _ _ _ -> ())"
+    "()"
+  ]
+  "(fun _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> assert false)".
+*)
+
 Cd "Extraction".
 Separate Extraction
          Ctypes.merge_attributes Ctypes.remove_attributes Ctypes.build_composite_env

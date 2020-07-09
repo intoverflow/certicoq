@@ -5,8 +5,8 @@ From CertiCoq Require Import
      L6.cps L6.cps_util L6.state L6.eval L6.shrink_cps.
 (* From CertiCoq Require Import L6.inline. *)
 From CertiCoq Require Import L6.inline_proto.
-From CertiCoq Require Import L6.uncurry.
-(* From CertiCoq Require Import L6.uncurry_proto. *)
+(* From CertiCoq Require Import L6.uncurry. *)
+From CertiCoq Require Import L6.uncurry_proto.
 From CertiCoq Require Import L6.L4_to_L6_anf.
 From CertiCoq Require Import L6.L5_to_L6.
 From CertiCoq Require Import L6.closure_conversion L6.hoisting L6.dead_param_elim L6.lambda_lifting.
@@ -123,9 +123,9 @@ Definition L6_pipeline  (opt cps : bool) (args : nat) (no_push : nat) (t : L6_Fu
   in
   let res : error (exp * comp_data):=
       (* uncurring *)
-      (* let '(e_pure, s, c_data) := uncurry_top cps 100 c_data [shrink_cps.shrink_top e0]! in *)
-      (* let e_err1 := compM.Ret ![e_pure] in *)
-      let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in
+      let '(e_pure, s, c_data) := uncurry_top cps 100 c_data [shrink_cps.shrink_top e0]! in
+      let e_err1 := compM.Ret ![e_pure] in
+      (* let '(e_err1, s, c_data) := uncurry_fuel cps 100 (shrink_cps.shrink_top e0) c_data in *)
       (* inlining *)
       e1 <- e_err1 ;;
       let (e2, c_data) := inline_uncurry [e1]! s 10 10 c_data in

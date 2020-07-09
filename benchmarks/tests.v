@@ -89,7 +89,6 @@ Definition list_sum := List.fold_left plus (List.repeat 1 100) 0.
 CertiCoq Show IR -ext "_cps" list_sum.
 (* CertiCoq Compile -anf list_sum. *)
 
-(*
 Definition vs_easy :=
   match vs.main with
   | Valid => true
@@ -105,7 +104,10 @@ Definition vs_hard :=
 (* CertiCoq Compile -ext "_cps" -time vs_easy. *)
 (* CertiCoq Compile -anf  vs_easy. *)
 (* CertiCoq Show IR -anf vs_easy. *)
+(* CertiCoq Show IR -ext "_cps" -time vs_easy. *)
+CertiCoq Show IR -ext "_cps" -time vs_hard.
 
+(*
 (* Zoe: Compiling with the CPS pipeline takes much longer for vs_easy.
    The overhead seems to come from the C translation: (maybe has to do with dbg/error messages?)
 

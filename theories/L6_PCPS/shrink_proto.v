@@ -1843,7 +1843,7 @@ Qed.
 
 Definition rw_shrink' : rewriter exp_univ_exp shrink_step (@D_rename) (@R_shrink) (@S_shrink).
 Proof.
-  mk_rw. try lazymatch goal with |- ExtraVars _ -> _ => clear | |- ConstrDelay _ -> _ => clear end.
+  mk_rw; try lazymatch goal with |- ExtraVars _ -> _ => clear | |- ConstrDelay _ -> _ => clear end.
   - (* Case folding *) intros _ R C x ces d r s success failure.
     destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
     pose (x0 := apply_r' σ x); specialize success with (x0 := x0).
