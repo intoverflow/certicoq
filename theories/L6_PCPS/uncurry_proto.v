@@ -286,16 +286,9 @@ Proof.
   exact x.
 Defined.
 
-Extract Inductive L6.Rewriting.frames_t' => "unit"
-  [ "(fun _ -> ())"
-    "(fun _ -> ())"
-  ]
-  "(fun _ _ _ -> assert false)".
-
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
 Recursive Extraction rw_uncurry.
-(* - uncurry is directly recursive (no fixpoint combinator) *)
-(* - the context parameter C looks dead by induction *)
+(* rw_uncurry is directly recursive (no fixpoint combinator), and context parameter is dead by induction *)
 
 Lemma uncurry_one (cps : bool) (ms : S_misc) (e : exp) (s : S_fresh <[]> e)
   : option (result exp_univ_exp uncurry_step (@S) <[]> e).
