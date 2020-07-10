@@ -1951,8 +1951,17 @@ Proof.
   let x := eval unfold rw_inline', Fuel_Fix, rw_chain, rw_id, rw_base in rw_inline' in
   let x := eval unfold delayD, Delayed_trivial_delay_t in x in
   let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_prod, Preserves_S_S_plain, Preserves_R_R_plain, preserve_R in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_IH in x in
+  let x := eval lazy beta iota zeta in x in
+  let x := eval unfold Preserves_S_S_fresh, delayD, Delayed_trivial_delay_t in x in
+  let x := eval lazy beta iota zeta in x in
   exact x.
 Defined.
+
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
+Recursive Extraction rw_inline.
 
 Definition initial_fns (e : exp) : S_fns <[]> e.
 Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
