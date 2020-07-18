@@ -29,7 +29,7 @@ Unset Strict Unquote Universe Mode.
 
 (* ---------- Example ---------- *)
 
-Instance Frame_exp_inj : Frame_inj exp_univ.
+Instance Frame_exp_inj : @Frame_inj exp_univ _.
 Proof. unfold Frame_inj; destruct f; simpl; ltac1:(congruence). Defined.
 
 Ltac EqDec_auto := try solve [now left|right; congruence].
@@ -81,14 +81,16 @@ with used_vars_fundef (fd : fundef) :=
 Definition used_vars_arm := used_vars_arm' used_vars_exp.
 
 (* Example: commonly want to track max used vars for fresh name generation *)
-Definition used_vars_prop {A : exp_univ} (C : frames_t A exp_univ_exp) (e : univD A) : Set :=
-  {x : var | ~ In x (used_vars_exp (C ⟦ e ⟧))}.
+Definition used_vars_prop {A : exp_univ} (C : frames_t A exp_univ_exp) (e : univD A) (x : var) : Prop :=
+  ~ In x (used_vars_exp (C ⟦ e ⟧)).
 
 (* When just moving up and down, next fresh var doesn't need to be updated *)
 
-Definition Preserves_S_exp' : Preserves_S exp_univ exp_univ_exp (@used_vars_prop).
-Proof. constructor; destruct f; unfold used_vars_prop; simpl; intros; assumption. Defined.
-Instance Preserves_S_exp : Preserves_S exp_univ exp_univ_exp (@used_vars_prop) := Preserves_S_exp'.
+Instance Preserves_S_dn_exp : Preserves_S_dn (@used_vars_prop).
+Proof. intros A B C C_ok f x; destruct f; unfold used_vars_prop; simpl; intros; assumption. Defined.
+
+Instance Preserves_S_up_exp : Preserves_S_up (@used_vars_prop).
+Proof. intros A B C C_ok f x; destruct f; unfold used_vars_prop; simpl; intros; assumption. Defined.
 
 (* ---------- Mock relation + state for testing ---------- *)
 
@@ -113,25 +115,18 @@ Inductive R : exp -> exp -> Prop :=
     C = C ->
     BottomUp (R (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)).
 
-Record R_C {A} (C : frames_t A exp_univ_exp) : Set := {
-  envVal : nat;
-  envPrf : C = C }.
+Definition I_R {A} (C : frames_t A exp_univ_exp) (n : nat) : Prop := C = C.
 
-Record St {A} (C : frames_t A exp_univ_exp) (x : univD A) : Set := {
-  stVal : nat;
-  stPrf : C⟦x⟧ = C⟦x⟧ }.
+Definition I_S {A} (C : frames_t A exp_univ_exp) (x : univD A) (n : nat) : Prop := C⟦x⟧ = C⟦x⟧.
 
-Instance Preserves_R_R_C : Preserves_R exp_univ exp_univ_exp (@R_C).
-Proof. constructor; destruct f; intros; simpl; constructor. Defined.
+Instance Preserves_R_R_C : Preserves_R (@I_R).
+Proof. intros A B C C_ok f [n _]; exists n; unerase; reflexivity. Defined.
 
-Instance Preserves_S_St : Preserves_S exp_univ exp_univ_exp (@St).
-Proof. constructor; destruct f; intros; simpl; constructor > [exact O|auto]. Defined.
+Instance Preserves_S_dn_St : Preserves_S_dn (@I_S).
+Proof. intros A B C C_ok f x [n _]; exists n; unerase; reflexivity. Defined.
 
-Definition D_unit {A : exp_univ} (e : univD A) := unit.
-Instance Delayed_D_unit : Delayed (@D_unit) := {
-  delayD _ x _ := x;
-  delay_id _ _ := tt;
-  delay_id_law _ _ := eq_refl }.
+Instance Preserves_S_up_St : Preserves_S_up (@I_S).
+Proof. intros A B C C_ok f x [n _]; exists n; unerase; reflexivity. Defined.
 
 (* Run TemplateProgram (tmPrint =<< parse_rel R). *) (* For some reason, this hangs.. *)
 
@@ -142,86 +137,130 @@ Abort.
 
 Goal True.
   ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    delay_t <- tmQuote (@D_unit) ;;
-    delayD <- tmQuote (@delayD exp_univ Frame_exp (@D_unit) (@Delayed_D_unit)) ;;
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (delay_t, delayD, R_C, St)) ltac:(fun pack =>
-  match pack with
-  | (?delay_t, ?delayD, ?R_C, ?St) =>
-    runGM n (
-      let! delay_t' := named_of [] delay_t in
-      let! delayD' := named_of [] delayD in
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
-      gen_extra_vars_tys exp_aux_data delay_t' delayD' R_C' St' rules) ltac:(fun guard_impl_tys n =>
-      (* match guard_impl_tys with *)
-      (* | [_; ?R2] => idtac R2 *)
-      (* end) *)
-      run_template_program (
-        guard_impl_tys' <- monad_map tmUnquote guard_impl_tys ;;
-        tmPrint guard_impl_tys') ltac:(fun x => idtac))
-  end))).
+    parse_rel 0 R ltac:(fun rules n =>
+    run_template_program (
+      D' <- tmQuote unit ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
+      R' <- tmQuote nat ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote nat ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+    lazymatch pack with
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+      runGM n (
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
+        let! delayD' := named_of [] delayD in
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_extra_vars_tys AuxData_exp rules D'' I_D'' R'' I_R'' S'' I_S'' delayD') ltac:(fun qobs n =>
+        run_template_program (
+          (* tmPrint qobs ;; *)
+          (* tmReturn tt) *)
+          obs' <- monad_map tmUnquote qobs ;;
+          tmPrint obs')
+          ltac:(fun x => idtac))
+    end))).
 Abort.
 
 Goal True.
   ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (R_C, St)) ltac:(fun R_C_St =>
-  match R_C_St with
-  | (?R_C, ?St) =>
-    runGM n (
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
-      gen_run_rule_tys R_C' St' rules) ltac:(fun tys n =>
-      run_template_program (
-        tys' <- monad_map tmUnquote tys ;;
-        tmPrint tys') ltac:(fun x => idtac))
-  end))).
-Abort.
-
-Goal True. ltac1:(
-  run_template_program (
-    delay_t <- tmQuote (@D_unit) ;;
-    delayD <- tmQuote (@delayD exp_univ Frame_exp (@D_unit) (@Delayed_D_unit)) ;;
-    ret (delay_t, delayD)) ltac:(fun misc =>
-  match misc with
-  | (?delay_t, ?delayD) =>
-    runGM 0 (
-      let! delay_t' := named_of [] delay_t in
-      let! delayD' := named_of [] delayD in
-      gen_constr_delay_tys delay_t delayD exp_aux_data) ltac:(fun delay_c_tys n =>
-      run_template_program (
-        delay_c_tys' <- monad_map tmUnquote delay_c_tys ;;
-        tmPrint delay_c_tys')
-        (* tmPrint delay_c_tys) *)
-      ltac:(fun x => idtac))
-  end)).
+    parse_rel 0 R ltac:(fun rules n =>
+    run_template_program (
+      D' <- tmQuote unit ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
+      R' <- tmQuote nat ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote nat ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+    lazymatch pack with
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+      runGM n (
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
+        let! delayD' := named_of [] delayD in
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_run_rule_tys rules R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
+        run_template_program (
+          (* tmPrint qobs ;; *)
+          (* tmReturn tt) *)
+          obs' <- monad_map tmUnquote qobs ;;
+          tmPrint obs')
+          ltac:(fun x => idtac))
+    end))).
 Abort.
 
 Goal True.
   ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (R_C, St)) ltac:(fun R_C_St =>
-  match R_C_St with
-  | (?R_C, ?St) =>
-    runGM n (
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
-      gen_smart_constr_tys exp_aux_data R_C' St' rules) ltac:(fun cong_tys n =>
-      (* idtac cong_tys) *)
-      run_template_program (
-        cong_tys' <- monad_map tmUnquote cong_tys ;;
-        tmPrint cong_tys') ltac:(fun x => idtac))
-  end))).
+    parse_rel 0 R ltac:(fun rules n =>
+    run_template_program (
+      D' <- tmQuote unit ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
+      R' <- tmQuote nat ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote nat ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+    lazymatch pack with
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+      runGM n (
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
+        let! delayD' := named_of [] delayD in
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_constr_delay_tys rules D'' I_D'' delayD' AuxData_exp) ltac:(fun qobs n =>
+        run_template_program (
+          (* tmPrint qobs ;; *)
+          (* tmReturn tt) *)
+          obs' <- monad_map tmUnquote qobs ;;
+          tmPrint obs')
+          ltac:(fun x => idtac))
+    end))).
+Abort.
+
+Goal True.
+  ltac1:(
+    parse_rel 0 R ltac:(fun rules n =>
+    run_template_program (
+      D' <- tmQuote unit ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
+      R' <- tmQuote nat ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote nat ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+    lazymatch pack with
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+      runGM n (
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
+        let! delayD' := named_of [] delayD in
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_smart_constr_tys AuxData_exp rules R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
+        run_template_program (
+          (* tmPrint qobs ;; *)
+          (* tmReturn tt) *)
+          obs' <- monad_map tmUnquote qobs ;;
+          tmPrint obs')
+          ltac:(fun x => idtac))
+    end))).
 Abort.
 
 Definition test_case_tree (pat pat_ty ret_ty success failure : term) : TemplateMonad unit :=
@@ -258,31 +297,37 @@ Run TemplateProgram (test_case_tree
 
 Goal True.
   ltac1:(
-  parse_rel 0 R ltac:(fun rules n =>
-  run_template_program (
-    delay_t <- tmQuote (@D_unit) ;;
-    delayD <- tmQuote (@delayD exp_univ Frame_exp (@D_unit) (@Delayed_D_unit)) ;;
-    R_C <- tmQuote (@R_C) ;;
-    St <- tmQuote (@St) ;;
-    ret (delay_t, delayD, R_C, St)) ltac:(fun pack =>
-  match pack with
-  | (?delay_t, ?delayD, ?R_C, ?St) =>
-    runGM n (
-      let! delay_t' := named_of [] delay_t in
-      let! delayD' := named_of [] delayD in
-      let! R_C' := named_of [] R_C in
-      let! St' := named_of [] St in
-      gen_inspect_tys exp_aux_data delay_t' delayD' R_C' St' rules) ltac:(fun pack n =>
-      run_template_program (
-        let '(topdown, bottomup) := pack in
-        topdown' <- monad_map tmUnquote topdown ;;
-        bottomup' <- monad_map tmUnquote bottomup ;;
-        tmPrint "-------------------- topdown --------------------" ;;
-        tmPrint topdown' ;;
-        tmPrint "-------------------- bottomup --------------------" ;;
-        tmPrint bottomup')
-        ltac:(fun x => idtac))
-  end))).
+    parse_rel 0 R ltac:(fun rules n =>
+    run_template_program (
+      D' <- tmQuote unit ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
+      R' <- tmQuote nat ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote nat ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+    lazymatch pack with
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+      runGM n (
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
+        let! delayD' := named_of [] delayD in
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_inspect_tys AuxData_exp rules D'' I_D'' R'' I_R'' S'' I_S'' delayD') ltac:(fun qobs n =>
+        run_template_program (
+          let '(topdown, bottomup) := qobs in
+          topdown' <- monad_map tmUnquote topdown ;;
+          bottomup' <- monad_map tmUnquote bottomup ;;
+          tmPrint "-------------------- topdown --------------------" ;;
+          tmPrint topdown' ;;
+          tmPrint "-------------------- bottomup --------------------" ;;
+          tmPrint bottomup')
+          ltac:(fun x => idtac))
+    end))).
 Abort.
 
 (* Context (opaque_delay_t : forall {A : exp_univ}, univD A -> Set) *)
@@ -319,7 +364,7 @@ Goal True.
   parse_rel 0 R' ltac:(fun rules n => idtac rules n)).
 Abort.
 
-Definition rw_R' : rewriter exp_univ_exp R' (@opaque_delay_t) (@R_C) (@St).
+Definition rw_R' : fueled_rewriter exp_univ_exp R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
 Proof.
   ltac1:(mk_rw';
     try lazymatch goal with

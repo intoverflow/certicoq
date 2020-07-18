@@ -241,17 +241,15 @@ Definition rename (σ : Map string string) : term -> term :=
 (* -------------------- Generation of helper function types -------------------- *)
 
 (* The type of fueled rewriters (AuxData and typeclass instances needed by generator) *)
-Definition fueled_rewriter {U} `{H : Frame U} (Root : U) {A} `{AuxData U}
+Definition fueled_rewriter {U} `{H : Frame U} `{AuxData U} (Root : U)
            (Rstep : relation (univD Root))
            (D : Set) (I_D : forall (A : U), univD A -> D -> Prop)
+           `{@Delayed _ H _ I_D}
            (R : Set) (I_R : forall (A : U), frames_t A Root -> R -> Prop)
            (S : Set) (I_S : forall (A : U), frames_t A Root -> univD A -> S -> Prop)
-           `{@Delayed _ H _ I_D}
            `{@Preserves_R _ H _ _ I_R}
            `{@Preserves_S_dn _ H _ _ I_S}
            `{@Preserves_S_up _ H _ _ I_S}
-           (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A)
-           (d : Delay I_D e)
   : Type := fueled_rewriter' Rstep (I_D:=I_D) I_R I_S.
 
 (* ---------- Flags to aid in proof saerch ---------- *)
@@ -385,7 +383,10 @@ Record rule_t := mk_rule {
   rArity : nat;
   rDir : rule_direction;
   rHoleU : nat; (* index into the inductive type rw_univ *)
-  rΓ : named_ctx;
+  rΓ : named_ctx; (* 
+   C can only be used to construct Props.
+   - C : A replaced by C : erased A.
+   - Each assumption H : P where C ∈ FV(P) replaced by H : «e_map (fun C => P) C». *)
   rC : term;
   rLhs : term;
   rRhs : term;
@@ -413,7 +414,7 @@ Fixpoint is_var (x : term) : option string :=
   end.
 
 (* Rec (f .. x) *)
-(* TODO: this is a hack and depends on the _CoqProject file+name of this file *)
+(* NOTE: This is a hack and depends on the _CoqProject file+name of this file *)
 Compute <%@Rec%>.
 Definition prefix := "CertiCoq.L6.Rewriting.". 
 Definition rec_rhs_vars_of : term -> Map string (option term).
@@ -447,6 +448,46 @@ Definition rec_rhs_vars_of : term -> Map string (option term).
 )).
 Defined.
 
+(* Does x occur in non-binding position? *)
+Fixpoint has_var (x : BasicAst.ident) (e : term) {struct e} : bool. ltac1:(refine(
+  match e with
+  | tRel n => false
+  | tVar x' => x ==? x'
+  | tEvar ev args => anyb (has_var x) args
+  | tSort s => false
+  | tCast t kind v => has_var x t || has_var x v
+  | tProd na ty body => has_var x ty || has_var x body
+  | tLambda na ty body => has_var x ty || has_var x body
+  | tLetIn na def def_ty body => has_var x def || has_var x def_ty || has_var x body
+  | tApp f args => has_var x f || anyb (has_var x) args
+  | tConst c u => false
+  | tInd ind u => false
+  | tConstruct ind idx u => false
+  | tCase ind_and_nbparams type_info discr branches =>
+    has_var x type_info || has_var x discr || anyb (fun '(_, e) => has_var x e) branches
+  | tProj proj t => has_var x t
+  | tFix mfix idx => anyb (fun d => has_var x d.(dtype) || has_var x d.(dbody)) mfix
+  | tCoFix mfix idx => anyb (fun d => has_var x d.(dtype) || has_var x d.(dbody)) mfix
+  end%bool
+)).
+Defined.
+
+Definition erase_ctx (C : BasicAst.ident) (Cdecl : context_decl) (Γ : named_ctx) : named_ctx. ltac1:(refine(
+  map (fun '(C', d) =>
+   if C ==? C' then
+     (C, mkdecl d.(decl_name) d.(decl_body) (mkApps <%erased%> [d.(decl_type)]))
+   else if has_var C d.(decl_type) : bool then
+     let erased_ty :=
+       mkApps <%recover%> [mkApps <%@e_map%> [
+         Cdecl.(decl_type); <%Prop%>;
+         tLambda (nNamed C) Cdecl.(decl_type) d.(decl_type);
+         tVar C]]
+     in
+     (C', mkdecl d.(decl_name) d.(decl_body) erased_ty)
+   else (C', d)) Γ
+)).
+Defined.
+
 Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
   let '(name, ctor_ty, arity) := ind_ctor in
   let! ctor_ty :=
@@ -459,32 +500,29 @@ Definition rule_of_ind_ctor (ind_ctor : ctor_ty) : GM rule_t. ltac1:(refine(
   (* Topdown rule *)
   | tApp (tVar _) [
       tApp (tConst framesD1 []) [
-        _univ; _HFrame; tConstruct _univ_ind hole_ut []; _root_univ_ty; tVar _ as C; lhs];
+        _univ; _HFrame; tConstruct _univ_ind hole_ut []; _root_univ_ty; tVar C_var as C; lhs];
       tApp (tConst framesD2 []) [_; _; _; _; _; rhs]] =>
     let lhs_vars := vars_of lhs in
     let rec_vars := rec_rhs_vars_of rhs in
     let special_vars := rec_vars in (*∩ lhs_vars in*)
-    ret (mk_rule name ctor_ty arity dTopdown hole_ut Γ C lhs rhs
+    let! Cdecl := findM C_var Γ in
+    ret (mk_rule name ctor_ty arity dTopdown hole_ut (erase_ctx C_var Cdecl Γ) C lhs rhs
       lhs_vars rec_vars special_vars)
   (* Bottomup rule *)
   | tApp (tConst _BottomUp []) [_; tApp (tVar _) [
       tApp (tConst _framesD []) [
-        _univ; _HFrame; tConstruct _univ_ind hole_ut []; _root_univ_ty; C; lhs];
+        _univ; _HFrame; tConstruct _univ_ind hole_ut []; _root_univ_ty; tVar C_var as C; lhs];
       tApp (tConst _ []) [_; _; _; _; _; rhs]]] =>
     let lhs_vars := vars_of lhs in
     let rec_vars := rec_rhs_vars_of rhs in
     let special_vars := rec_vars ∩ lhs_vars in
-    ret (mk_rule name ctor_ty arity dBottomup hole_ut Γ C lhs rhs
+    let! Cdecl := findM C_var Γ in
+    ret (mk_rule name ctor_ty arity dBottomup hole_ut (erase_ctx C_var Cdecl Γ) C lhs rhs
       lhs_vars rec_vars special_vars)
   | rty => raise ("rule_of_ind_ctor: " +++ string_of_term rty)
   end
 )).
 Defined.
-
-(* TODO:
-   Check that C is only used to construct Props.
-   - Replace C : A with C : erased A.
-   - Replace each assumption H : P where C ∈ FV(P) with H : «e_map (fun C => P) C». *)
 
 Definition parse_rel_pure (ind : inductive) (mbody : mutual_inductive_body)
            (body : one_inductive_body) : GM rules_t. ltac1:(refine(
@@ -498,9 +536,11 @@ Definition parse_rel_pure (ind : inductive) (mbody : mutual_inductive_body)
   | {| rΓ := Γ; rC := tVar C |} :: _ =>
     let! Cty := findM C Γ in
     match Cty.(decl_type) with
-    | tApp (tConst _frames_t []) [tInd univ []; HFrame; _hole; tConstruct _univ root []] =>
+    | tApp (tConst _erased []) [
+        tApp (tConst _frames_t []) [
+          tInd univ []; HFrame; _hole; tConstruct _univ root []]] =>
       ret (mk_rules ind rules univ root HFrame)
-    | _ => raise "parse_rel: C's type illformed"
+    | _ => raise ("parse_rel: C's type illformed: " +++ string_of_term Cty.(decl_type))
     end
   | _ :: _ => raise "parse_rel: C not tRel"
   end
@@ -568,7 +608,7 @@ Context
   (mk_univ := fun n => tConstruct rw_univ n []).
 Context
   (D I_D R I_R S I_S : term)
-  (Delay := mkApps <%@Delay%> [tInd rw_univ []; HFrame; mk_univ root; D; I_D])
+  (Delay := mkApps <%@Delay%> [tInd rw_univ []; HFrame; D; I_D])
   (Param := mkApps <%@Param%> [tInd rw_univ []; HFrame; mk_univ root; R; I_R])
   (State := mkApps <%@State%> [tInd rw_univ []; HFrame; mk_univ root; S; I_S]).
 Context (delayD : term) (* specialized to forall {A} (e : univD A), Delay e -> univD A *).
@@ -759,7 +799,15 @@ End GoalGeneration.
 Section GoalGeneration.
 
 Context
-  (delay_t : term)
+  (rules : rules_t)
+  (rw_univ := rules.(rUniv))
+  (HFrame := rules.(rHFrame))
+  (root := rules.(rRootU))
+  (mk_univ := fun n => tConstruct rw_univ n []).
+Context
+  (D I_D : term)
+  (Delay := mkApps <%@Delay%> [tInd rw_univ []; HFrame; D; I_D]).
+Context
   (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *)
   (aux_data : aux_data_t)
   (typename := aux_data.(aTypename)) (g := aux_data.(aGraph))
@@ -785,18 +833,18 @@ Definition gen_constr_delay_ty (c : string) : GM term. ltac1:(refine(
         ret (tyname, old, new, ty, univ, atomic))
       children
   in
-  let! R := gensym "R" in
+  let! Ans := gensym "Ans" in
   let! d := gensym "d" in
   let ctr_ty := fold_right (fun '(_, _, _, ty, _, _) res => fn ty res) rty children in 
   let before_delayD := mkApps ctr (map (fun '(_, old, _, _, _, _) => tVar old) children) in
-  ret (fn (mkApps <%@ConstrDelay%> [ctr_ty; ctr]) (tProd (nNamed R) type0
+  ret (fn (mkApps <%@ConstrDelay%> [ctr_ty; ctr]) (tProd (nNamed Ans) type0
     (fold_right
       (fun '(_, old, _, ty, _, _) res => tProd (nNamed old) ty res)
-      (tProd (nNamed d) (mkApps delay_t [univ; before_delayD])
+      (tProd (nNamed d) (mkApps Delay [univ; before_delayD])
       (fn
         (fold_right
           (fun '(_, old, new, ty, univ, atomic) res =>
-            tProd (nNamed new) (if (atomic : bool) then ty else mkApps delay_t [univ; tVar old]) res)
+            tProd (nNamed new) (if (atomic : bool) then ty else mkApps Delay [univ; tVar old]) res)
           (fn
             (mkApps <%@eq%> [rty;
                mkApps delayD [univ; before_delayD; tVar d];
@@ -808,9 +856,9 @@ Definition gen_constr_delay_ty (c : string) : GM term. ltac1:(refine(
                      let univ := tConstruct (mkInd univ_name 0) (N.to_nat n) [] in
                      mkApps delayD [univ; tVar old; tVar new])
                  children)])
-            (tVar R))
+            (tVar Ans))
           children)
-        (tVar R)))
+        (tVar Ans)))
       children)))
 )).
 Defined.
@@ -840,40 +888,28 @@ Context
   (univ_of_tyname := aux_data.(aUnivOfTyname))
   (frames_of_constr := aux_data.(aFramesOfConstr)).
 Context
-  (R_C St : term) (rules : rules_t)
+  (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
   (rw_univ_i := rules.(rUniv))
   (rw_univ := tInd rules.(rUniv) [])
   (mk_univ := fun n => tConstruct rw_univ_i n [])
   (HFrame := rules.(rHFrame))
-  (root := mk_univ rules.(rRootU))
-  (* specialize to univD rw_univ -> univD rw_univ -> Set *)
+  (root := mk_univ rules.(rRootU)).
+Context
+  (R I_R S I_S : term)
+  (Param := mkApps <%@Param%> [tInd rw_univ_i []; HFrame; root; R; I_R])
+  (State := mkApps <%@State%> [tInd rw_univ_i []; HFrame; root; S; I_S]).
+Context
+  (* specialize to rw_univ -> rw_univ -> Set *)
   (frames_t := mkApps <%@frames_t%> [rw_univ; HFrame])
   (* specialize to rw_univ -> Set *)
   (univD := mkApps <%@univD%> [rw_univ; HFrame]) 
-  (* specialize to forall A, frames_t A root -> univD A -> Set *)
-  (result := mkApps <%@result%> [rw_univ; HFrame; root; rw_rel; St])
-  (* specialize to forall A (C : frames_t A root) (e : univD A),
-       (resTree : univD A), St A C resTree ->
-       C⟦e⟧ R* C⟦resTree⟧ -> result root R St C e *)
-  (mk_result := mkApps <%@mk_result%> [rw_univ; HFrame; root; rw_rel; St])
-  (* specialize to forall A (C : frames_t A root) (e : univD A),
-       result root R St C e -> univD A *)
-  (resTree := mkApps <%@resTree%> [rw_univ; HFrame; root; rw_rel; St])
-  (* specialize to forall A (C : frames_t A root) (e : univD A)
-       (r : result root R St C e), St A C (resTree root R St C e r) *)
-  (resState := mkApps <%@resState%> [rw_univ; HFrame; root; rw_rel; St])
-  (* specialize to forall A (C : frames_t A root) (e : univD A)
-       (r : result root R St C e), C⟦e⟧ R* C⟦resTree root R St C e r⟧ *)
-  (resProof := mkApps <%@resProof%> [rw_univ; HFrame; root; rw_rel; St])
-  (* specialize to forall A, frames_t A root -> univD A -> Set *)
-  (rw_for := mkApps <%@rw_for%> [
-    rw_univ; HFrame; root; rw_rel; R_C; St])
+  (* specialize to forall A, erased (frames_t A root) -> univD A -> Set *)
+  (frw_for := mkApps <%@frw_for%> [rw_univ; HFrame; root; rw_rel; R; I_R; S; I_S])
   (frame_ind := mkInd (typename +++ "_frame_t") 0)
   (frame_t := tInd frame_ind [])
   (frame_cons := fun n => tConstruct frame_ind n [])
   (univ_ind := mkInd (typename +++ "_univ") 0)
-  (univ_t := tInd frame_ind [])
   (univ_cons := fun n => tConstruct univ_ind n [])
   (* Specialized to forall A B C, frame_t A B -> frames_t B C -> frames_t A C *)
   (frames_cons := mkApps <%@frames_cons%> [rw_univ; frame_t]).
@@ -903,9 +939,12 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
       (combine n_frames (holes_of xtys))
   in
   let! C := gensym "C" in
+  let! C_ok := gensym "C_ok" in
+  let C_ty := mkApps frames_t [univ_rty; root] in
   let constr_ty := fold_right (fun '(_, _, ty, _, _, _) res => fn ty res) rty_term xutfs in 
   ret (fn (mkApps <%@SmartConstr%> [constr_ty; constr])
-    (tProd (nNamed C) (mkApps frames_t [univ_rty; root]) 
+    (tProd (nNamed C) (mkApps <%erased%> [C_ty])
+    (tProd (nNamed C_ok) (mkApps <%@e_ok%> [C_ty; tVar C])
     (fold_right
       (fun '(x, _, t, _, _, _) ty => tProd (nNamed x) t ty)
       (fold_right
@@ -918,16 +957,20 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                   mkApps f (map tVar (lxs ++ rxs)); tVar x]])
               (fold_right
                 (fun '(x', _, t, _, _, _) ty => if x ==? x' then ty else tProd (nNamed x') t ty)
-                  (mkApps rw_for [
-                    u; mkApps frames_cons [
-                      u; univ_rty; root; 
-                      mkApps f (map tVar (lxs ++ rxs)); tVar C];
-                    tVar x])
+                (let mk_ctx_t u := mkApps frames_t [u; root] in
+                 mkApps frw_for [
+                   u; mkApps <%@e_map%> [
+                     mk_ctx_t univ_rty; mk_ctx_t u;
+                     tLambda (nNamed C) (mk_ctx_t univ_rty) (mkApps frames_cons [
+                       u; univ_rty; root; 
+                       mkApps f (map tVar (lxs ++ rxs)); tVar C]);
+                     tVar C];
+                   tVar x])
                 xutfs))
             ty)
-        (mkApps rw_for [univ_rty; tVar C; mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
+        (mkApps frw_for [univ_rty; tVar C; mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
         (rev xutfs))
-      xutfs)))
+      xutfs))))
 )).
 Defined.
 
@@ -1056,10 +1099,8 @@ Context
   (graph := aux_data.(aGraph))
   (univ_of_tyname := aux_data.(aUnivOfTyname))
   (frames_of_constr := aux_data.(aFramesOfConstr)).
-Context (delay_t : term)
-        (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *).
 Context
-  (R_C St : term) (rules : rules_t)
+  (rules : rules_t)
   (rw_rel := tInd rules.(rR) [])
   (rw_univ_i := rules.(rUniv))
   (rw_univ := tInd rw_univ_i [])
@@ -1070,6 +1111,12 @@ Context
   (frames_t := mkApps <%@frames_t%> [rw_univ; HFrame])
   (* specialize to rw_univ -> Set *)
   (univD := mkApps <%@univD%> [rw_univ; HFrame]).
+Context
+  (D I_D R I_R S I_S : term)
+  (Delay := mkApps <%@Delay%> [tInd rw_univ_i []; HFrame; D; I_D])
+  (Param := mkApps <%@Param%> [tInd rw_univ_i []; HFrame; root; R; I_R])
+  (State := mkApps <%@State%> [tInd rw_univ_i []; HFrame; root; S; I_S]).
+Context (delayD : term) (* specialized to forall {A} (e : univD A), Delay e -> univD A *).
 
 Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let n_univs := mfold (fun u n m => insert n u m) empty univ_of_tyname in
@@ -1077,11 +1124,12 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let t_univ_i := N.to_nat t_univ_i in
   let! t_ty := findM' t_tyname graph.(mgTypes) "t_tyname" in
   let! '(ind, pars) := decompose_ind t_ty in
+  let! Ans := gensym "Ans" in
   let! d := gensym "d" in
-  let! R := gensym "R" in
   let! C := gensym "C" in
+  let! C_ok := gensym "C_ok" in
   let! e := gensym (abbreviate t_tyname) in
-  let! r_C := gensym "r_C" in
+  let! r := gensym "r" in
   let! s := gensym "s" in
   let t_univ := mk_univ t_univ_i in
   let! constrs := findM' t_tyname graph.(mgConstrs) "t_tyname" in
@@ -1117,7 +1165,7 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
             (fun '(md, x, x', t, u) ty =>
               tProd (nNamed x) t
               (match md with
-               | Some d => tProd (nNamed d) (mkApps delay_t [u; tVar x]) ty
+               | Some d => tProd (nNamed d) (mkApps Delay [u; tVar x]) ty
                | None => tProd (nNamed x') t ty
                end))
             (fn
@@ -1134,7 +1182,7 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
                 (mkApps <%@eq%> [rty; 
                   tVar e;
                   mkApps constr (map (fun '(md, x, x', t, u) => tVar x) xts)])
-                (tVar R)))
+                (tVar Ans)))
             xts))))
       constrs
   in
@@ -1185,7 +1233,7 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
             (fun '(x, fn_call, x', md', xty, u) ty =>
               tProd (nNamed x') xty
               (match md' with
-               | Some d' => tProd (nNamed d') (mkApps delay_t [u; tVar x']) ty
+               | Some d' => tProd (nNamed d') (mkApps Delay [u; tVar x']) ty
                | None => ty
                end))
             (fn (mkApps <%@eq%> [mkApps univD [t_univ]; mkApps delayD [t_univ; tVar e; tVar d]; r.(rLhs)])
@@ -1203,18 +1251,21 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
                 | None => ty
                 end)
               (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; old_lhs])
-              (fn (mkApps R_C [t_univ; tVar C]) (fn (mkApps St [t_univ; tVar C; r.(rRhs)]) (tVar R))))
+              (fn (mkApps Param [t_univ; tVar C]) (fn (mkApps State [t_univ; tVar C; r.(rRhs)]) (tVar Ans))))
               extra_vars))
             extra_vars)))))
       applicable
   in
+  let ctx_ty := mkApps frames_t [t_univ; root] in
   ret (fn (mkApps <%@Topdown%> [rw_univ; t_univ])
-    (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [t_univ; root])
+    (tProd (nNamed Ans) type0 
+    (tProd (nNamed C) (mkApps <%erased%> [ctx_ty])
+    (tProd (nNamed C_ok) (mkApps <%@e_ok%> [ctx_ty; tVar C])
     (tProd (nNamed e) (mkApps univD [t_univ])
-    (tProd (nNamed d) (mkApps delay_t [t_univ; tVar e])
-    (tProd (nNamed r_C) (mkApps R_C [t_univ; tVar C]) 
-    (tProd (nNamed s) (mkApps St [t_univ; tVar C; mkApps delayD [t_univ; tVar e; tVar d]])
-    (fold_right fn (fold_right fn (tVar R) congruences) applicable))))))))
+    (tProd (nNamed d) (mkApps Delay [t_univ; tVar e])
+    (tProd (nNamed r) (mkApps Param [t_univ; tVar C]) 
+    (tProd (nNamed s) (mkApps State [t_univ; tVar C; mkApps delayD [t_univ; tVar e; tVar d]])
+    (fold_right fn (fold_right fn (tVar Ans) congruences) applicable)))))))))
 )).
 Defined.
 
@@ -1224,10 +1275,11 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let t_univ_i := N.to_nat t_univ_i in
   let! t_ty := findM' t_tyname graph.(mgTypes) "t_tyname" in
   let! '(ind, pars) := decompose_ind t_ty in
-  let! R := gensym "R" in
+  let! Ans := gensym "Ans" in
   let! C := gensym "C" in
+  let! C_ok := gensym "C_ok" in
   let! e := gensym (abbreviate t_tyname) in
-  let! r_C := gensym "r_C" in
+  let! r := gensym "r" in
   let! s := gensym "s" in
   let t_univ := mk_univ t_univ_i in
   let! constrs := findM' t_tyname graph.(mgConstrs) "t_tyname" in
@@ -1256,15 +1308,18 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
         ret (fn (mkApps <%InspectCaseRule%> [quote_string r.(rName)]) (fn header
           (it_mkProd_or_LetIn (drop_names rΓ)
           (fn (mkApps <%@eq%> [mkApps univD [t_univ]; tVar e; r.(rLhs)])
-          (fn (mkApps St [t_univ; tVar C; r.(rRhs)]) (tVar R)))))))
+          (fn (mkApps State [t_univ; tVar C; r.(rRhs)]) (tVar Ans)))))))
       applicable
   in
+  let ctx_ty := mkApps frames_t [t_univ; root] in
   ret (fn (mkApps <%@Bottomup%> [rw_univ; t_univ])
-    (tProd (nNamed R) type0 (tProd (nNamed C) (mkApps frames_t [t_univ; root])
+    (tProd (nNamed Ans) type0 
+    (tProd (nNamed C) (mkApps <%erased%> [ctx_ty])
+    (tProd (nNamed C_ok) (mkApps <%@e_ok%> [ctx_ty; tVar C])
     (tProd (nNamed e) (mkApps univD [t_univ])
-    (tProd (nNamed r_C) (mkApps R_C [t_univ; tVar C]) 
-    (tProd (nNamed s) (mkApps St [t_univ; tVar C; tVar e])
-    (fold_right fn (fn (fn <%Fallback%> (tVar R)) (tVar R)) (rev applicable))))))))
+    (tProd (nNamed r) (mkApps Param [t_univ; tVar C]) 
+    (tProd (nNamed s) (mkApps State [t_univ; tVar C; tVar e])
+    (fold_right fn (fn (fn <%Fallback%> (tVar Ans)) (tVar Ans)) (rev applicable)))))))))
 )).
 Defined.
 
@@ -1298,20 +1353,20 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
-Context (aux : aux_data_t) (delay_t delayD R_C St : term) (rules : rules_t).
+Context (aux : aux_data_t) (rules : rules_t) (D I_D R I_R S I_S delayD : term).
 
 Definition gen_all : GM (RwObligations term). ltac1:(refine(
-  let! extra_vars := gen_extra_vars_tys aux delay_t delayD R_C St rules in
-  let! run_rules := gen_run_rule_tys R_C St rules in
-  let! constr_delays := gen_constr_delay_tys delay_t delayD aux in
-  let! smart_constrs := gen_smart_constr_tys aux R_C St rules in
-  let! '(topdowns, bottomups) := gen_inspect_tys aux delay_t delayD R_C St rules in
+  let! extra_vars := gen_extra_vars_tys aux rules D I_D R I_R S I_S delayD in
+  let! run_rules := gen_run_rule_tys rules R I_R S I_S in
+  let! constr_delays := gen_constr_delay_tys rules D I_D delayD aux in
+  let! smart_constrs := gen_smart_constr_tys aux rules R I_R S I_S in
+  let! '(topdowns, bottomups) := gen_inspect_tys aux rules D I_D R I_R S I_S delayD in
   ret (mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups)
 )).
 Defined.
 
-(* Danger: once invoked [unquote_all] generates universe constraints between the things inside each
-   typed_term and pretty common monomorphic types like [list], [pair], [option], etc.
+(* Danger: defining [unquote_all] as a function generates universe constraints between the things inside 
+   each typed_term and pretty common monomorphic types like [list], [pair], [option], etc.
    It's safer to unquote each term in obs with ltac. *)
 Definition unquote_all (obs : RwObligations term)
  : TemplateMonad (RwObligations typed_term). ltac1:(refine(
@@ -1326,7 +1381,7 @@ Definition unquote_all (obs : RwObligations term)
   bottomups <- monad_map tmUnquote bottomups ;;
   ret (mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups)
 )).
-Defined.
+Abort.
 
 End GoalGeneration.
 
@@ -1353,24 +1408,29 @@ Ltac unquote_and_assert_obs obs k :=
 
 Ltac mk_rw_obs k :=
   lazymatch goal with
-  | |- @rewriter ?U ?HFrame ?HAux ?root ?R ?D ?HDelay ?R_C ?St _ _ =>
-    parse_rel 0 R ltac:(fun rules n =>
+  | |- @fueled_rewriter ?U ?HFrame ?HAux ?root ?Rstep ?D ?I_D ?HDelay ?R ?I_R ?S ?I_S _ _ _ =>
+    parse_rel 0 Rstep ltac:(fun rules n =>
     run_template_program (
-      delay_t <- tmQuote D ;;
-      delayD <- tmQuote (@delayD U HFrame D HDelay) ;;
-      R_C' <- tmQuote (@R_C) ;;
-      St' <- tmQuote (@St) ;;
-      ret (delay_t, delayD, R_C', St')) ltac:(fun pack =>
+      D' <- tmQuote D ;;
+      I_D' <- tmQuote I_D ;;
+      R' <- tmQuote (@R) ;;
+      I_R' <- tmQuote (@I_R) ;;
+      S' <- tmQuote (@S) ;;
+      I_S' <- tmQuote (@I_S) ;;
+      delayD <- tmQuote (@delayD U HFrame D I_D HDelay) ;;
+      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?delay_t, ?delayD, ?R_C', ?St') =>
+    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
-        let! delay_t' := named_of [] delay_t in
+        let! D'' := named_of [] D' in
+        let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
-        let! R_C'' := named_of [] R_C' in
-        let! St'' := named_of [] St' in
-        gen_all HAux delay_t' delayD' R_C'' St'' rules) ltac:(fun qobs n =>
+        let! R'' := named_of [] R' in
+        let! I_R'' := named_of [] I_R' in
+        let! S'' := named_of [] S' in
+        let! I_S'' := named_of [] I_S' in
+        gen_all HAux rules D'' I_D'' R'' I_R'' S'' I_S'' delayD') ltac:(fun qobs n =>
         unquote_and_assert_obs qobs k)
-        (* run_template_program (unquote_all qobs) k) *)
     end))
   end.
 
@@ -1407,8 +1467,8 @@ Ltac mk_smart_constr :=
    let s := fresh "s" in
    intros _ C; intros;
    lazymatch goal with
-   | |- @rw_for _ _ ?root _ ?R_C ?St _ _ _ =>
-     unfold rw_for in *; intros r_C s;
+   | |- @frw_for _ _ ?root _ ?R_C ?St _ _ _ =>
+     unfold frw_for in *; intros r_C s;
      mk_smart_constr_children root R_C St s false None
    end.
 
@@ -1429,7 +1489,7 @@ Ltac mk_run_rule :=
     let s := fresh "s" in
     let Hnext := fresh "Hnext" in
     lazymatch goal with H1 : _, H2 : _, H3 : _ |- _ => revert H1 H2 H3 end;
-    unfold rw_for; intros r_C s Hnext _ _;
+    unfold frw_for; intros r_C s Hnext _ _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1452,7 +1512,7 @@ Ltac mk_run_rule :=
     let s := fresh "s" in
     let Hnext := fresh "Hnext" in
     lazymatch goal with H1 : _, H2 : _ |- _ => revert H1 H2 end;
-    unfold rw_for; intros s Hnext r_C _;
+    unfold frw_for; intros s Hnext r_C _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1582,7 +1642,7 @@ Ltac next_action e k_rec k_constr k_atom :=
 Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
   let rec go _ :=
     lazymatch goal with
-    | |- @rw_for _ _ _ _ _ _ _ _ ?e =>
+    | |- @frw_for _ _ _ _ _ _ _ _ ?e =>
       next_action e 
         (* Recursive calls: *)
         ltac:(fun e' =>
@@ -1596,19 +1656,19 @@ Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
           (* ...and recursively expand each child *)
           intros; go tt)
         (* Atoms: just return the atom *)
-        ltac:(fun e => apply (@rw_id univ HFrame root R R_C St))
+        ltac:(fun e => apply (@frw_id univ HFrame root R R_C St))
     end
   in go tt.
 
 Ltac mk_rewriter :=
   lazymatch goal with
-  | |- @rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
-    unfold rewriter;
+  | |- @fueled_rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
+    unfold fueled_rewriter;
     lazymatch goal with
     | |- Rewriting.Fuel -> ?T =>
       let recur := fresh "recur" in
       let A := fresh "A" in
-      apply (@FixFuel T); [apply (@rw_base univ _ root _ delay_t HD R_C St)|];
+      apply (@FixFuel T); [apply (@frw_base univ _ root _ delay_t HD R_C St)|];
       intros recur A; destruct A;
       lazymatch goal with
       (* Nonatomic children *)
@@ -1617,7 +1677,7 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        eapply (@rw_chain univ HFrame root R delay_t HD R_C St);
+        eapply (@frw_chain univ HFrame root R delay_t HD R_C St);
         [(* Topdown *)
          let r_C := fresh "r_C" in
          let s := fresh "s" in
@@ -1629,7 +1689,7 @@ Ltac mk_rewriter :=
          (assert (r_C' : r_Cty) by exact r_C);
          (assert (s' : sty) by exact s);
          revert r_C' s';
-         change (@rw_for univ _ root R R_C St _ C (delayD e d));
+         change (@frw_for univ _ root R R_C St _ C (delayD e d));
          apply (Htopdown (MkTopdown hole) _ C e d r_C s);
          (* clear r_C s; *)
          lazymatch goal with
@@ -1651,11 +1711,11 @@ Ltac mk_rewriter :=
            intros;
            lazymatch goal with
            (* If child is nonatomic (has call to delayD), recur *)
-           | |- @rw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
+           | |- @frw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
              apply recur
            (* Otherwise, just return it *)
-           | |- @rw_for _ _ _ _ _ _ _ _ _ =>
-             apply (@rw_id univ HFrame root R R_C St)
+           | |- @frw_for _ _ _ _ _ _ _ _ _ =>
+             apply (@frw_id univ HFrame root R R_C St)
            end
          end
         |(* Bottomup *)
@@ -1672,7 +1732,7 @@ Ltac mk_rewriter :=
            (assert (r_C' : r_Cty) by exact r_C);
            (assert (s' : sty) by exact s);
            revert r_C' s';
-           change (@rw_for univ _ root R R_C St _ C e);
+           change (@frw_for univ _ root R R_C St _ C e);
            apply (Hbottomup (MkBottomup hole) _ C e r_C s);
            clear r_C s;
            lazymatch goal with
@@ -1686,11 +1746,11 @@ Ltac mk_rewriter :=
              eapply (Hrun (MkBottomupRunRule rule));
              [idtac..|exact s''|idtac];
              (* ...and then just return the modified tree *)
-             [try eassumption..|apply (@rw_id univ HFrame root R R_C St)]
+             [try eassumption..|apply (@frw_id univ HFrame root R R_C St)]
            (* Fallback (just return the child) *)
            | |- Fallback -> _ =>
              intros _;
-             apply (@rw_id univ HFrame root R R_C St)
+             apply (@frw_id univ HFrame root R R_C St)
            end
          end]
       (* Atomic children: just run the delayed computation *)
@@ -1699,11 +1759,10 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        apply (@rw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
+        apply (@frw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
       end
     end
   end.
-
 
 (* Like mk_rw', but apply the default automation and only leave behind nontrivial goals *)
 Ltac mk_rw :=
