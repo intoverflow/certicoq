@@ -82,45 +82,13 @@ Print thingy.
 Recursive Extraction thingy.
 End Example.
 
-(* -------------------- Fixpoint combinators -------------------- *)
-
-Require Import Lia.
-Section FuelBased.
-
-Definition Fuel := positive.
-
-Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
-
-Definition FixFuel {A} (d : A) (f : A -> A) : Fuel -> A.
-Proof.
-  apply (@Fix positive Pos.lt Coqlib.Plt_wf (fun _ => A)); intros n rec.
-  destruct n as [n'|n'|] eqn:Hn > [| |exact d]; ltac1:(refine (f (rec (Pos.pred n) _)); lia).
-Defined.
-
-End FuelBased.
-
-Ltac unfold_FixFuel wrapper term :=
-  let x := eval unfold wrapper, FixFuel in term in exact x.
-
-Module FixFuelExample.
-
-Definition plus' : Fuel -> nat -> nat -> nat.
-Proof.
-  apply (@FixFuel (nat -> nat -> nat) (fun _ _ => 0)); intros rec n m.
-  destruct n as [|n] > [exact m|].
-  exact (S (rec n m)).
-Defined.
-
-Definition plus n m := ltac:(unfold_FixFuel plus' (plus' lots_of_fuel n m)).
-
-End FixFuelExample.
-Recursive Extraction FixFuelExample.plus.
+(* -------------------- Fixpoint combinator -------------------- *)
 
 (* Equations and Program Fixpoint use a fixpoint combinator which has the following type when
    specialized to a particular measure [measure]:
      [forall arg_pack, (forall arg_pack', measure arg_pack' < measure arg_pack -> P arg_pack') -> P arg_pack]
    This requires wrapping and unwrapping [arg_pack]s. Instead we'll make
-     [forall (cost : erased nat), e_ok cost -> (forall cost', e_ok cost' -> cost' < cost -> Q cost') -> Q cost']
+     [forall (cost : erased nat), e_ok cost -> (forall cost', e_ok cost' -> cost' < cost -> Q cost') -> Q cost]
    which can achieve the same thing without arg packs by setting
      [Q := fun cost => arg1 -> ‥ -> arg_n -> cost = measure(arg1, ‥, arg_n) -> P (arg1, ‥, arg_n)].
 
@@ -134,15 +102,13 @@ Recursive Extraction FixFuelExample.plus.
 Require Import Coq.Arith.Wf_nat.
 Section WellfoundedRecursion.
 
+(* Modelled after https://coq.inria.fr/library/Coq.Init.Wf.html#Acc *)
 Section AccS.
 
   Context (A : Type) (B : A -> Prop) (R : forall x, B x -> forall y, B y -> Prop).
 
   Inductive AccS (x : A) (Hx : B x) : Prop :=
     AccS_intro : (forall (y : A) (Hy : B y), R Hy Hx -> @AccS y Hy) -> AccS Hx.
-
-  Definition AccS_inv (x : A) (Hx : B x) (H : AccS Hx) : forall (y : A) (Hy : B y), R Hy Hx -> AccS Hy :=
-    let 'AccS_intro H := H in H.
 
   Definition well_foundedS := forall (x : A) (Hx : B x), AccS Hx.
 
@@ -154,7 +120,8 @@ Section AccS.
       (F : forall (x : A) (Hx : B x), (forall (y : A) (Hy : B y), R Hy Hx -> P y) -> P x).
 
     Fixpoint FixS_F (x : A) (Hx : B x) (H : AccS Hx) {struct H} : P x :=
-      F (fun (y : A) (Hy : B y) (Hyx : R Hy Hx) => FixS_F (AccS_inv H Hyx)).
+      F (fun (y : A) (Hy : B y) (Hyx : R Hy Hx) =>
+          FixS_F (let 'AccS_intro H := H in H y Hy Hyx)).
 
     Definition FixS (x : A) (Hx : B x) : P x := FixS_F (Rwf Hx).
 
@@ -212,11 +179,6 @@ Recursive Extraction FixENExample.plus.
 
 (* -------------------- 1-hole contexts built from frames -------------------- *)
 
-Class Frame_inj (U : Set) `{Frame U} :=
-  frame_inj :
-    forall {A B : U} (f : frame_t A B) (x y : univD A),
-    frameD f x = frameD f y -> x = y.
-
 (* A 1-hole context made out of frames F *)
 Inductive frames_t' {U : Set} {F : U -> U -> Set} : U -> U -> Set :=
 | frames_nil : forall {A}, frames_t' A A
@@ -264,6 +226,11 @@ Lemma frames_compose_law {U : Set} `{Frame U} {A B C} :
   forall (fs : frames_t B C) (gs : frames_t A B) (x : univD A),
   (fs >++ gs) ⟦ x ⟧ = fs ⟦ gs ⟦ x ⟧ ⟧.
 Proof. intros fs gs; revert fs; induction gs; simpl; auto. Defined.
+
+Class Frame_inj (U : Set) `{Frame U} :=
+  frame_inj :
+    forall {A B : U} (f : frame_t A B) (x y : univD A),
+    frameD f x = frameD f y -> x = y.
 
 Fixpoint frames_inj {U : Set} `{Frame U} `{Frame_inj U} {A B} (fs : frames_t A B) :
   forall (x y : univD A), fs ⟦ x ⟧ = fs ⟦ y ⟧ -> x = y.
@@ -555,9 +522,8 @@ Fixpoint cong_retype {U : Set} `{H : Frame U} (A B : U) (fs gs : @uframes_t U H)
   fs = gs -> retype A B fs Hfs = retype A B gs Hgs.
 Proof. intros; subst gs; ltac1:(assert (Hfs = Hgs) by apply unique_typings); now subst. Defined.
 
-(* -------------------- State variables, parameters, and delayed computations -------------------- *)
-
-Section Bookkeeping.
+(* -------------------- Rewriters -------------------- *)
+Section Rewriters.
 
 Context
   (* Types the rewriter will encounter + type of 1-hole contexts *)
@@ -565,6 +531,7 @@ Context
   (* The type of trees being rewritten *)
   (Root : U).
 
+(* State variables, parameters, and delayed computations *)
 Section Strategies.
 
 Context
@@ -602,7 +569,7 @@ Extraction Inline delayD delay_id preserve_R preserve_S_up preserve_S_dn.
 
 End Strategies.
 
-(* -------------------- Handy instances -------------------- *)
+(* Handy instances *)
 
 (* Structures with no invariants *)
 
@@ -704,12 +671,49 @@ Extraction Inline Preserves_S_up_prod Preserves_S_dn_prod.
 
 End S_prod.
 
+Section FuelAndMetric.
+
+Definition Fuel (fueled : bool) := if fueled then positive else unit.
+
+Definition is_empty (fueled : bool) : Fuel fueled -> bool :=
+  match fueled with
+  | true => fun fuel => match fuel with xH => true | _ => false end
+  | false => fun 'tt => false
+  end.
+
+Definition fuel_dec (fueled : bool) : Fuel fueled -> Fuel fueled :=
+  match fueled with
+  | true => fun fuel => Pos.pred fuel
+  | false => fun fuel => fuel
+  end.
+
+Extraction Inline is_empty fuel_dec.
+
+Definition Metric (fueled : bool) :=
+  if fueled then unit
+  else Fuel fueled -> forall A, frames_t A Root -> univD A -> nat.
+
+Definition run_metric (fueled : bool) (metric : Metric fueled)
+           (fuel : Fuel fueled) A (C : frames_t A Root) (e : univD A) : nat :=
+  match fueled return Fuel fueled -> Metric fueled -> nat with
+  | true => fun fuel 'tt => Pos.to_nat fuel
+  | false => fun fuel metric => metric fuel A C e
+  end fuel metric.
+
+End FuelAndMetric.
+
 (* The type of the rewriter *)
-Section Rewriters.
+Section Rewriter.
 
 Context
+  (* Fueled rewriters use [positive] as fuel parameter *)
+  (fueled : bool)
+  (Fuel := Fuel fueled)
+  (metric : Metric fueled)
+  (run_metric := run_metric fueled metric)
   (* One rewriting step *)
   (Rstep : relation (univD Root))
+  (* Delayed computation, parameter, and state variable *)
   (D : Set) (I_D : forall (A : U), univD A -> D -> Prop)
   (R : Set) (I_R : forall (A : U), frames_t A Root -> R -> Prop)
   (S : Set) (I_S : forall (A : U), frames_t A Root -> univD A -> S -> Prop)
@@ -721,57 +725,37 @@ Record result A (C : erased (frames_t A Root)) (e : univD A) : Set := mk_result 
   resState : State I_S C resTree;
   resProof : «e_map (fun C => clos_refl_trans _ Rstep (C ⟦ e ⟧) (C ⟦ resTree ⟧)) C» }.
 
-(* Rewriters with fuel parameter *)
-Section FueledRewriters.
-
-Definition frw_for A (C : erased (frames_t A Root)) (e : univD A) :=
-  Param I_R C -> State I_S C e -> result C e.
-Definition fueled_rewriter' :=
-  Fuel -> forall A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e),
-  frw_for C (delayD d).
-
-Definition frw_id A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) : frw_for C e.
-Proof. intros r s; econstructor > [exact s|unerase; apply rt_refl]. Defined.
-
-Definition frw_base A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e) :
-  frw_for C (delayD d).
-Proof. intros r s; econstructor > [exact s|unerase; apply rt_refl]. Defined.
-
-(* Extend rw1 with rw2 *)
-Definition frw_chain
-  A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e)
-  (rw1 : frw_for C (delayD d)) (rw2 : forall e, frw_for C e)
-  : frw_for C (delayD d).
-Proof.
-  intros r s.
-  destruct (rw1 r s) as [e' s' Hrel]; clear s.
-  destruct (rw2 e' r s') as [e'' s'' Hrel']; clear s'.
-  econstructor > [exact s''|unerase; eapply rt_trans; eauto].
-Defined.
-
-Extraction Inline frw_id frw_base frw_chain.
-
-End FueledRewriters.
-
-(* Rewriters with termination metric *)
-Section FuelFreeRewriters.
-
-Definition metric_t := forall A, frames_t A Root -> univD A -> R -> S -> nat.
-
-Context (metric : metric_t).
-
-Definition rw_for n A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) :=
+Definition rw_for n (fuel : Fuel) A (C : erased (frames_t A Root)) (e : univD A) :=
   forall (r : Param I_R C) (s : State I_S C e),
-  «e_map (fun n => «e_map (fun C => n = metric C e (proj1_sig r) (proj1_sig s)) C») n» ->
+  «e_map (fun n => «e_map (fun C => n = run_metric fuel C e) C») n» ->
   result C e.
 
-Definition rewriter' (metric : metric_t) :=
-  forall (n : erased nat) `{Hn : e_ok _ n} A (C : erased (frames_t A Root)) `{e_ok _ C}
-    (e : univD A) (d : Delay I_D e),
-  rw_for (C:=C) n (delayD d).
+Definition rewriter' :=
+  forall (n : erased nat) `{Hn : e_ok _ n},
+  forall (fuel : Fuel) A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e),
+  rw_for n fuel C (delayD d).
 
-End FuelFreeRewriters.
+Definition rw_id n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) : rw_for n fuel C e.
+Proof. intros r s _; econstructor > [exact s|unerase; apply rt_refl]. Defined.
+
+Definition rw_base n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e) :
+  rw_for n fuel C (delayD d).
+Proof. intros r s _; econstructor > [exact s|unerase; apply rt_refl]. Defined.
+
+(* Extend rw1 with rw2 *)
+Definition rw_chain n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e)
+           (rw1 : rw_for n fuel C (delayD d)) (rw2 : forall n e, rw_for n fuel C e)
+  : rw_for n fuel C (delayD d).
+Proof.
+  intros r s Hfuel.
+  destruct (rw1 r s Hfuel) as [e' s' Hrel]; clear s.
+  destruct (rw2 (e_map (fun C => run_metric fuel _ C e') C) e' r s') as [e'' s'' Hrel']; clear s'.
+  - unerase; reflexivity.
+  - econstructor > [exact s''|unerase; eapply rt_trans; eauto].
+Defined.
+
+Extraction Inline rw_id rw_base rw_chain.
+
+End Rewriter.
 
 End Rewriters.
-
-End Bookkeeping.

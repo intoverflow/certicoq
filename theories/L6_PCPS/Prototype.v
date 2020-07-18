@@ -240,8 +240,9 @@ Definition rename (σ : Map string string) : term -> term :=
 
 (* -------------------- Generation of helper function types -------------------- *)
 
-(* The type of fueled rewriters (AuxData and typeclass instances needed by generator) *)
-Definition fueled_rewriter {U} `{H : Frame U} `{AuxData U} (Root : U)
+(* The type of rewriters (AuxData and typeclass instances needed by generator) *)
+Definition rewriter {U} `{H : Frame U} `{AuxData U} (Root : U) (fueled : bool)
+           (metric : Metric Root fueled)
            (Rstep : relation (univD Root))
            (D : Set) (I_D : forall (A : U), univD A -> D -> Prop)
            `{@Delayed _ H _ I_D}
@@ -250,7 +251,7 @@ Definition fueled_rewriter {U} `{H : Frame U} `{AuxData U} (Root : U)
            `{@Preserves_R _ H _ _ I_R}
            `{@Preserves_S_dn _ H _ _ I_S}
            `{@Preserves_S_up _ H _ _ I_S}
-  : Type := fueled_rewriter' Rstep (I_D:=I_D) I_R I_S.
+  : Type := rewriter' fueled metric Rstep (I_D:=I_D) I_R I_S.
 
 (* ---------- Flags to aid in proof saerch ---------- *)
 
@@ -764,14 +765,17 @@ Context
   (mk_univ := fun n => tConstruct rw_univ_i n [])
   (HFrame := rules.(rHFrame))
   (root := mk_univ rules.(rRootU)).
+Context (fueled metric : term).
 Context
   (R I_R S I_S : term)
   (Param := mkApps <%@Param%> [tInd rw_univ_i []; HFrame; root; R; I_R])
   (State := mkApps <%@State%> [tInd rw_univ_i []; HFrame; root; S; I_S])
-  (* specialize to forall A, erased (frames_t A root) -> univD A -> Set *)
-  (frw_for := mkApps <%@frw_for%> [rw_univ; HFrame; root; rw_rel; R; I_R; S; I_S]).
+  (* specialize to erased nat -> Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
+  (rw_for := mkApps <%@rw_for%> [rw_univ; HFrame; root; fueled; metric; rw_rel; R; I_R; S; I_S]).
 
-Definition gen_run_rule_ty (r : rule_t) : term. ltac1:(refine(
+Definition gen_run_rule_ty (r : rule_t) : GM term. ltac1:(refine(
+  let! emetric := gensym "emetric" in
+  let! fuel := gensym "fuel" in
   let hole := mk_univ r.(rHoleU) in
   let run_rule :=
     match r.(rDir) with
@@ -779,18 +783,21 @@ Definition gen_run_rule_ty (r : rule_t) : term. ltac1:(refine(
     | dBottomup => <%BottomupRunRule%>
     end
   in
-  fn (mkApps run_rule [quote_string r.(rName)])
-  (it_mkProd_or_LetIn (drop_names r.(rΓ))
-  (* TODO: why is this different for topdown vs bottomup? *)
-  ((match r.(rDir) with dTopdown => fn (mkApps Param [hole; r.(rC)]) | dBottomup => id end)
-  (fn (mkApps State [hole; r.(rC); r.(rRhs)])
-  (fn (mkApps frw_for [hole; r.(rC); r.(rRhs)])
-  (mkApps frw_for [hole; r.(rC); r.(rLhs)])))))
+  ret
+    (fn (mkApps run_rule [quote_string r.(rName)])
+    (tProd (nNamed emetric) <%erased nat%>
+    (tProd (nNamed fuel) (mkApps <%Fuel%> [fueled])
+    (it_mkProd_or_LetIn (drop_names r.(rΓ))
+    (* TODO: why is this different for topdown vs bottomup? *)
+    ((match r.(rDir) with dTopdown => fn (mkApps Param [hole; r.(rC)]) | dBottomup => id end)
+    (fn (mkApps State [hole; r.(rC); r.(rRhs)])
+    (fn (mkApps rw_for [tVar emetric; tVar fuel; hole; r.(rC); r.(rRhs)])
+    (mkApps rw_for [tVar emetric; tVar fuel; hole; r.(rC); r.(rLhs)]))))))))
 )).
 Defined.
 
 Definition gen_run_rule_tys : GM (list term) :=
-  mapM (fun t => indices_of [] (gen_run_rule_ty t)) rules.(rRules).
+  mapM (fun t => let! t := gen_run_rule_ty t in indices_of [] t) rules.(rRules).
 
 End GoalGeneration.
 
@@ -798,6 +805,10 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
+Context
+  (aux_data : aux_data_t)
+  (typename := aux_data.(aTypename)) (g := aux_data.(aGraph))
+  (univ_of_tyname := aux_data.(aUnivOfTyname)).
 Context
   (rules : rules_t)
   (rw_univ := rules.(rUniv))
@@ -808,10 +819,7 @@ Context
   (D I_D : term)
   (Delay := mkApps <%@Delay%> [tInd rw_univ []; HFrame; D; I_D]).
 Context
-  (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *)
-  (aux_data : aux_data_t)
-  (typename := aux_data.(aTypename)) (g := aux_data.(aGraph))
-  (univ_of_tyname := aux_data.(aUnivOfTyname)).
+  (delayD : term) (* specialized to forall {A}, univD A -> delay_t -> univD A *).
 
 Definition gen_constr_delay_ty (c : string) : GM term. ltac1:(refine(
   let! '(n, children, rtyname) := findM c g.(mgChildren) in
@@ -895,6 +903,7 @@ Context
   (mk_univ := fun n => tConstruct rw_univ_i n [])
   (HFrame := rules.(rHFrame))
   (root := mk_univ rules.(rRootU)).
+Context (fueled metric : term).
 Context
   (R I_R S I_S : term)
   (Param := mkApps <%@Param%> [tInd rw_univ_i []; HFrame; root; R; I_R])
@@ -904,8 +913,8 @@ Context
   (frames_t := mkApps <%@frames_t%> [rw_univ; HFrame])
   (* specialize to rw_univ -> Set *)
   (univD := mkApps <%@univD%> [rw_univ; HFrame]) 
-  (* specialize to forall A, erased (frames_t A root) -> univD A -> Set *)
-  (frw_for := mkApps <%@frw_for%> [rw_univ; HFrame; root; rw_rel; R; I_R; S; I_S])
+  (* specialize to erased nat -> Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
+  (rw_for := mkApps <%@rw_for%> [rw_univ; HFrame; root; fueled; metric; rw_rel; R; I_R; S; I_S])
   (frame_ind := mkInd (typename +++ "_frame_t") 0)
   (frame_t := tInd frame_ind [])
   (frame_cons := fun n => tConstruct frame_ind n [])
@@ -938,11 +947,15 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
         ret (x, univ, ty_term, frame_cons n, lxs, rxs))
       (combine n_frames (holes_of xtys))
   in
+  let! emetric := gensym "emetric" in
+  let! fuel := gensym "fuel" in
   let! C := gensym "C" in
   let! C_ok := gensym "C_ok" in
   let C_ty := mkApps frames_t [univ_rty; root] in
   let constr_ty := fold_right (fun '(_, _, ty, _, _, _) res => fn ty res) rty_term xutfs in 
   ret (fn (mkApps <%@SmartConstr%> [constr_ty; constr])
+    (tProd (nNamed emetric) <%erased nat%>
+    (tProd (nNamed fuel) (mkApps <%Fuel%> [fueled])
     (tProd (nNamed C) (mkApps <%erased%> [C_ty])
     (tProd (nNamed C_ok) (mkApps <%@e_ok%> [C_ty; tVar C])
     (fold_right
@@ -958,7 +971,8 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
               (fold_right
                 (fun '(x', _, t, _, _, _) ty => if x ==? x' then ty else tProd (nNamed x') t ty)
                 (let mk_ctx_t u := mkApps frames_t [u; root] in
-                 mkApps frw_for [
+                 mkApps rw_for [
+                   tVar emetric; tVar fuel;
                    u; mkApps <%@e_map%> [
                      mk_ctx_t univ_rty; mk_ctx_t u;
                      tLambda (nNamed C) (mk_ctx_t univ_rty) (mkApps frames_cons [
@@ -968,9 +982,12 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                    tVar x])
                 xutfs))
             ty)
-        (mkApps frw_for [univ_rty; tVar C; mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
+        (mkApps rw_for [
+          tVar emetric; tVar fuel;
+          univ_rty; tVar C; 
+          mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
         (rev xutfs))
-      xutfs))))
+      xutfs))))))
 )).
 Defined.
 
@@ -1353,13 +1370,13 @@ End GoalGeneration.
 
 Section GoalGeneration.
 
-Context (aux : aux_data_t) (rules : rules_t) (D I_D R I_R S I_S delayD : term).
+Context (aux : aux_data_t) (rules : rules_t) (fueled metric D I_D R I_R S I_S delayD : term).
 
 Definition gen_all : GM (RwObligations term). ltac1:(refine(
   let! extra_vars := gen_extra_vars_tys aux rules D I_D R I_R S I_S delayD in
-  let! run_rules := gen_run_rule_tys rules R I_R S I_S in
-  let! constr_delays := gen_constr_delay_tys rules D I_D delayD aux in
-  let! smart_constrs := gen_smart_constr_tys aux rules R I_R S I_S in
+  let! run_rules := gen_run_rule_tys rules fueled metric R I_R S I_S in
+  let! constr_delays := gen_constr_delay_tys aux rules D I_D delayD in
+  let! smart_constrs := gen_smart_constr_tys aux rules fueled metric R I_R S I_S in
   let! '(topdowns, bottomups) := gen_inspect_tys aux rules D I_D R I_R S I_S delayD in
   ret (mk_obs extra_vars run_rules constr_delays smart_constrs topdowns bottomups)
 )).
@@ -1408,9 +1425,11 @@ Ltac unquote_and_assert_obs obs k :=
 
 Ltac mk_rw_obs k :=
   lazymatch goal with
-  | |- @fueled_rewriter ?U ?HFrame ?HAux ?root ?Rstep ?D ?I_D ?HDelay ?R ?I_R ?S ?I_S _ _ _ =>
+  | |- @rewriter ?U ?HFrame ?HAux ?root ?fueled ?metric ?Rstep ?D ?I_D ?HDelay ?R ?I_R ?S ?I_S _ _ _ =>
     parse_rel 0 Rstep ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote fueled ;;
+      metric' <- tmQuote metric ;;
       D' <- tmQuote D ;;
       I_D' <- tmQuote I_D ;;
       R' <- tmQuote (@R) ;;
@@ -1418,10 +1437,12 @@ Ltac mk_rw_obs k :=
       S' <- tmQuote (@S) ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD U HFrame D I_D HDelay) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -1429,7 +1450,7 @@ Ltac mk_rw_obs k :=
         let! I_R'' := named_of [] I_R' in
         let! S'' := named_of [] S' in
         let! I_S'' := named_of [] I_S' in
-        gen_all HAux rules D'' I_D'' R'' I_R'' S'' I_S'' delayD') ltac:(fun qobs n =>
+        gen_all HAux rules fueled'' metric'' D'' I_D'' R'' I_R'' S'' I_S'' delayD') ltac:(fun qobs n =>
         unquote_and_assert_obs qobs k)
     end))
   end.
@@ -1467,8 +1488,8 @@ Ltac mk_smart_constr :=
    let s := fresh "s" in
    intros _ C; intros;
    lazymatch goal with
-   | |- @frw_for _ _ ?root _ ?R_C ?St _ _ _ =>
-     unfold frw_for in *; intros r_C s;
+   | |- @rw_for _ _ ?root _ ?R_C ?St _ _ _ =>
+     unfold rw_for in *; intros r_C s;
      mk_smart_constr_children root R_C St s false None
    end.
 
@@ -1489,7 +1510,7 @@ Ltac mk_run_rule :=
     let s := fresh "s" in
     let Hnext := fresh "Hnext" in
     lazymatch goal with H1 : _, H2 : _, H3 : _ |- _ => revert H1 H2 H3 end;
-    unfold frw_for; intros r_C s Hnext _ _;
+    unfold rw_for; intros r_C s Hnext _ _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1512,7 +1533,7 @@ Ltac mk_run_rule :=
     let s := fresh "s" in
     let Hnext := fresh "Hnext" in
     lazymatch goal with H1 : _, H2 : _ |- _ => revert H1 H2 end;
-    unfold frw_for; intros s Hnext r_C _;
+    unfold rw_for; intros s Hnext r_C _;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
@@ -1642,7 +1663,7 @@ Ltac next_action e k_rec k_constr k_atom :=
 Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
   let rec go _ :=
     lazymatch goal with
-    | |- @frw_for _ _ _ _ _ _ _ _ ?e =>
+    | |- @rw_for _ _ _ _ _ _ _ _ ?e =>
       next_action e 
         (* Recursive calls: *)
         ltac:(fun e' =>
@@ -1656,19 +1677,20 @@ Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
           (* ...and recursively expand each child *)
           intros; go tt)
         (* Atoms: just return the atom *)
-        ltac:(fun e => apply (@frw_id univ HFrame root R R_C St))
+        ltac:(fun e => apply (@rw_id univ HFrame root R R_C St))
     end
   in go tt.
 
+(*
 Ltac mk_rewriter :=
   lazymatch goal with
-  | |- @fueled_rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
-    unfold fueled_rewriter;
+  | |- @rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
+    unfold rewriter;
     lazymatch goal with
     | |- Rewriting.Fuel -> ?T =>
       let recur := fresh "recur" in
       let A := fresh "A" in
-      apply (@FixFuel T); [apply (@frw_base univ _ root _ delay_t HD R_C St)|];
+      apply (@FixFuel T); [apply (@rw_base univ _ root _ delay_t HD R_C St)|];
       intros recur A; destruct A;
       lazymatch goal with
       (* Nonatomic children *)
@@ -1677,7 +1699,7 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        eapply (@frw_chain univ HFrame root R delay_t HD R_C St);
+        eapply (@rw_chain univ HFrame root R delay_t HD R_C St);
         [(* Topdown *)
          let r_C := fresh "r_C" in
          let s := fresh "s" in
@@ -1689,7 +1711,7 @@ Ltac mk_rewriter :=
          (assert (r_C' : r_Cty) by exact r_C);
          (assert (s' : sty) by exact s);
          revert r_C' s';
-         change (@frw_for univ _ root R R_C St _ C (delayD e d));
+         change (@rw_for univ _ root R R_C St _ C (delayD e d));
          apply (Htopdown (MkTopdown hole) _ C e d r_C s);
          (* clear r_C s; *)
          lazymatch goal with
@@ -1711,11 +1733,11 @@ Ltac mk_rewriter :=
            intros;
            lazymatch goal with
            (* If child is nonatomic (has call to delayD), recur *)
-           | |- @frw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
+           | |- @rw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
              apply recur
            (* Otherwise, just return it *)
-           | |- @frw_for _ _ _ _ _ _ _ _ _ =>
-             apply (@frw_id univ HFrame root R R_C St)
+           | |- @rw_for _ _ _ _ _ _ _ _ _ =>
+             apply (@rw_id univ HFrame root R R_C St)
            end
          end
         |(* Bottomup *)
@@ -1732,7 +1754,7 @@ Ltac mk_rewriter :=
            (assert (r_C' : r_Cty) by exact r_C);
            (assert (s' : sty) by exact s);
            revert r_C' s';
-           change (@frw_for univ _ root R R_C St _ C e);
+           change (@rw_for univ _ root R R_C St _ C e);
            apply (Hbottomup (MkBottomup hole) _ C e r_C s);
            clear r_C s;
            lazymatch goal with
@@ -1746,11 +1768,11 @@ Ltac mk_rewriter :=
              eapply (Hrun (MkBottomupRunRule rule));
              [idtac..|exact s''|idtac];
              (* ...and then just return the modified tree *)
-             [try eassumption..|apply (@frw_id univ HFrame root R R_C St)]
+             [try eassumption..|apply (@rw_id univ HFrame root R R_C St)]
            (* Fallback (just return the child) *)
            | |- Fallback -> _ =>
              intros _;
-             apply (@frw_id univ HFrame root R R_C St)
+             apply (@rw_id univ HFrame root R R_C St)
            end
          end]
       (* Atomic children: just run the delayed computation *)
@@ -1759,7 +1781,7 @@ Ltac mk_rewriter :=
         let e := fresh "e" in
         let d := fresh "d" in
         intros C e d;
-        apply (@frw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
+        apply (@rw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
       end
     end
   end.
@@ -1794,3 +1816,4 @@ Ltac cond_success name :=
   | Hs : Success ?rule -> _, Hf : Failure ?rule -> _ |- ?R =>
     specialize (Hs (MkSuccess rule)); clear Hf; rename Hs into name
   end.
+*)

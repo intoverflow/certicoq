@@ -139,6 +139,9 @@ Goal True.
   ltac1:(
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote true ;;
+      metric' <- tmQuote tt ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       D' <- tmQuote unit ;;
       I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       R' <- tmQuote nat ;;
@@ -146,10 +149,12 @@ Goal True.
       S' <- tmQuote nat ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -171,6 +176,9 @@ Goal True.
   ltac1:(
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote true ;;
+      metric' <- tmQuote tt ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       D' <- tmQuote unit ;;
       I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       R' <- tmQuote nat ;;
@@ -178,10 +186,12 @@ Goal True.
       S' <- tmQuote nat ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -189,7 +199,7 @@ Goal True.
         let! I_R'' := named_of [] I_R' in
         let! S'' := named_of [] S' in
         let! I_S'' := named_of [] I_S' in
-        gen_run_rule_tys rules R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
+        gen_run_rule_tys rules fueled'' metric'' R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
         run_template_program (
           (* tmPrint qobs ;; *)
           (* tmReturn tt) *)
@@ -203,6 +213,9 @@ Goal True.
   ltac1:(
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote true ;;
+      metric' <- tmQuote tt ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       D' <- tmQuote unit ;;
       I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       R' <- tmQuote nat ;;
@@ -210,10 +223,12 @@ Goal True.
       S' <- tmQuote nat ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -221,7 +236,7 @@ Goal True.
         let! I_R'' := named_of [] I_R' in
         let! S'' := named_of [] S' in
         let! I_S'' := named_of [] I_S' in
-        gen_constr_delay_tys rules D'' I_D'' delayD' AuxData_exp) ltac:(fun qobs n =>
+        gen_constr_delay_tys AuxData_exp rules D'' I_D'' delayD') ltac:(fun qobs n =>
         run_template_program (
           (* tmPrint qobs ;; *)
           (* tmReturn tt) *)
@@ -235,6 +250,9 @@ Goal True.
   ltac1:(
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote true ;;
+      metric' <- tmQuote tt ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       D' <- tmQuote unit ;;
       I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       R' <- tmQuote nat ;;
@@ -242,10 +260,12 @@ Goal True.
       S' <- tmQuote nat ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -253,7 +273,7 @@ Goal True.
         let! I_R'' := named_of [] I_R' in
         let! S'' := named_of [] S' in
         let! I_S'' := named_of [] I_S' in
-        gen_smart_constr_tys AuxData_exp rules R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
+        gen_smart_constr_tys AuxData_exp rules fueled'' metric'' R'' I_R'' S'' I_S'') ltac:(fun qobs n =>
         run_template_program (
           (* tmPrint qobs ;; *)
           (* tmReturn tt) *)
@@ -299,6 +319,9 @@ Goal True.
   ltac1:(
     parse_rel 0 R ltac:(fun rules n =>
     run_template_program (
+      fueled' <- tmQuote true ;;
+      metric' <- tmQuote tt ;;
+      I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       D' <- tmQuote unit ;;
       I_D' <- tmQuote (@I_D_plain exp_univ Frame_exp unit) ;;
       R' <- tmQuote nat ;;
@@ -306,10 +329,12 @@ Goal True.
       S' <- tmQuote nat ;;
       I_S' <- tmQuote (@I_S) ;;
       delayD <- tmQuote (@delayD exp_univ Frame_exp unit (@I_D_plain exp_univ Frame_exp unit) _) ;;
-      ret (D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
+      ret (fueled', metric', D', I_D', R', I_R', S', I_S', delayD)) ltac:(fun pack =>
     lazymatch pack with
-    | (?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
+    | (?fueled', ?metric', ?D', ?I_D', ?R', ?I_R', ?S', ?I_S', ?delayD) =>
       runGM n (
+        let! fueled'' := named_of [] fueled' in
+        let! metric'' := named_of [] metric' in
         let! D'' := named_of [] D' in
         let! I_D'' := named_of [] I_D' in
         let! delayD' := named_of [] delayD in
@@ -364,8 +389,10 @@ Goal True.
   parse_rel 0 R' ltac:(fun rules n => idtac rules n)).
 Abort.
 
-Definition rw_R' : fueled_rewriter exp_univ_exp R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
+Definition rw_R' : rewriter exp_univ_exp true tt R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
 Proof.
+  ltac1:(mk_rw').
+
   ltac1:(mk_rw';
     try lazymatch goal with
     | |- SmartConstr _ -> _ => mk_smart_constr
