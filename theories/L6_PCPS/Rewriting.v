@@ -21,6 +21,195 @@ Ltac inv_ex :=
 
 Require Export CertiCoq.L6.Frame.
 
+Set Implicit Arguments.
+
+(* -------------------- Annotations -------------------- *)
+
+Definition Rec {A} (rhs : A) : A := rhs.
+Definition BottomUp {A} (rhs : A) : A := rhs.
+
+(* -------------------- Erased values -------------------- *)
+
+(* An erased value of type [A] is a value which can only be used to construct Props.
+   We can represent erased values [x] in CPS with answer type Prop, as functions of
+   the form [fun k => k x]: *)
+Definition erased A := (A -> Prop) -> Prop.
+Class e_ok {A} (x : erased A) := erased_ok : exists (y : A), x = (fun k => k y).
+(* These two items are carried separately so that they can both be erased during extraction.
+   Bundling them together in a dependent pair type would erase to a pair type [box × box] *)
+
+(* Erasing a value *)
+Definition erase {A} : A -> erased A := fun x k => k x.
+Instance erase_ok {A} (x : A) : e_ok (erase x). Proof. exists x; reflexivity. Qed.
+
+(* Erased values can always be used to construct other erased values *)
+Definition e_map {A B} (f : A -> B) (x : erased A) : erased B := fun k => x (fun x => k (f x)).
+Instance e_map_ok {A B} (f : A -> B) (x : erased A) `{H : e_ok _ x} : e_ok (e_map f x).
+Proof. destruct H as [y Hy]; subst x; unfold e_map; now exists (f y). Qed.
+
+(* Only proofs can be unerased *)
+Definition recover (x : erased Prop) : Prop := x (fun x => x).
+Notation "'«' P '»'" := (recover P).
+
+(* Remove all erased operators from a goal using e_ok hypotheses *)
+Ltac unerase :=
+  repeat match goal with
+  | H : e_ok ?x |- _ => 
+    let x' := fresh x in
+    rename x into x';
+    destruct H as [x H];
+    subst x'
+  end;
+  unfold recover, e_map, erase in *.
+
+Ltac2 unerase () := ltac1:(unerase).
+Ltac2 Notation "unerase" := unerase ().
+
+(* Example *)
+Require Import Lia.
+Require Extraction.
+Module Example.
+
+Fixpoint thingy (n : erased nat) `{Hn : e_ok _ n} (m p : nat) (Hmp : «e_map (fun n => n + m = p) n») {struct m} : nat.
+Proof.
+  destruct m as [|m] > [exact p|].
+  specialize (thingy (e_map S n) _ m p); apply thingy; clear thingy.
+  ltac1:(unerase; lia).
+Defined.
+
+Print thingy.
+(* Since n and its proof are carried separately, both are erased entirely *)
+Recursive Extraction thingy.
+End Example.
+
+(* -------------------- Fixpoint combinators -------------------- *)
+
+Require Import Lia.
+Section FuelBased.
+
+Definition Fuel := positive.
+
+Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
+
+Definition FixFuel {A} (d : A) (f : A -> A) : Fuel -> A.
+Proof.
+  apply (@Fix positive Pos.lt Coqlib.Plt_wf (fun _ => A)); intros n rec.
+  destruct n as [n'|n'|] eqn:Hn > [| |exact d]; ltac1:(refine (f (rec (Pos.pred n) _)); lia).
+Defined.
+
+End FuelBased.
+
+Ltac unfold_FixFuel wrapper term :=
+  let x := eval unfold wrapper, FixFuel in term in exact x.
+
+Module FixFuelExample.
+
+Definition plus' : Fuel -> nat -> nat -> nat.
+Proof.
+  apply (@FixFuel (nat -> nat -> nat) (fun _ _ => 0)); intros rec n m.
+  destruct n as [|n] > [exact m|].
+  exact (S (rec n m)).
+Defined.
+
+Definition plus n m := ltac:(unfold_FixFuel plus' (plus' lots_of_fuel n m)).
+
+End FixFuelExample.
+Recursive Extraction FixFuelExample.plus.
+
+(* Equations and Program Fixpoint use a fixpoint combinator which has the following type when
+   specialized to a particular measure [measure]:
+     [forall arg_pack, (forall arg_pack', measure arg_pack' < measure arg_pack -> P arg_pack') -> P arg_pack]
+   This requires wrapping and unwrapping [arg_pack]s. Instead we'll make
+     [forall (cost : erased nat), e_ok cost -> (forall cost', e_ok cost' -> cost' < cost -> Q cost') -> Q cost']
+   which can achieve the same thing without arg packs by setting
+     [Q := fun cost => arg1 -> ‥ -> arg_n -> cost = measure(arg1, ‥, arg_n) -> P (arg1, ‥, arg_n)].
+
+   After a function has been defined this way, unfolding all fixpoint combinators will leave behind a
+   primitive fixpoint of type
+     [forall (cost : erased nat), e_ok cost -> Accessible cost -> arg1 -> ‥ -> arg_n -> cost = measure ‥ -> P ‥]
+   that is structurally recursive on the accessibility proof [Accessible cost].
+
+   Extraction will erase [cost : erased nat], [e_ok cost], [Accessible cost], and [cost = measure ‥],
+   leaving a plain recursive function of type [arg1 -> ‥ -> arg_n -> P ‥]. *)
+Require Import Coq.Arith.Wf_nat.
+Section WellfoundedRecursion.
+
+Section AccS.
+
+  Context (A : Type) (B : A -> Prop) (R : forall x, B x -> forall y, B y -> Prop).
+
+  Inductive AccS (x : A) (Hx : B x) : Prop :=
+    AccS_intro : (forall (y : A) (Hy : B y), R Hy Hx -> @AccS y Hy) -> AccS Hx.
+
+  Definition AccS_inv (x : A) (Hx : B x) (H : AccS Hx) : forall (y : A) (Hy : B y), R Hy Hx -> AccS Hy :=
+    let 'AccS_intro H := H in H.
+
+  Definition well_foundedS := forall (x : A) (Hx : B x), AccS Hx.
+
+  Section FixS.
+
+    Context
+      (Rwf : well_foundedS)
+      (P : A -> Type)
+      (F : forall (x : A) (Hx : B x), (forall (y : A) (Hy : B y), R Hy Hx -> P y) -> P x).
+
+    Fixpoint FixS_F (x : A) (Hx : B x) (H : AccS Hx) {struct H} : P x :=
+      F (fun (y : A) (Hy : B y) (Hyx : R Hy Hx) => FixS_F (AccS_inv H Hyx)).
+
+    Definition FixS (x : A) (Hx : B x) : P x := FixS_F (Rwf Hx).
+
+  End FixS.
+
+End AccS.
+
+Section FixEN.
+
+Definition enat := erased nat.
+Definition e_lt : forall x : enat, e_ok x -> forall y : enat, e_ok y -> Prop :=
+  fun n Hn m Hm => «e_map (fun n => «e_map (fun m => n < m) m») n».
+
+Lemma e_lt_wf : well_foundedS e_ok e_lt.
+Proof.
+  intros n Hn; unerase.
+  induction n as [n IHn] using Wf_nat.lt_wf_ind.
+  constructor; intros m Hm Hmn; unerase.
+  now apply IHn.
+Defined.
+
+Definition FixEN :
+  forall P : enat -> Type,
+  (forall (x : enat) (Hx : e_ok x), (forall (y : enat) (Hy : e_ok y), e_lt Hy Hx -> P y) -> P x) ->
+  forall x : enat, e_ok x -> P x
+  := FixS e_lt_wf.
+
+End FixEN.
+
+End WellfoundedRecursion.
+
+(* Unfolding all the combinators above exposes a primitive fixpoint on AccS
+   that erases to a standard recursive function *)
+Ltac unfold_FixEN wrapper term :=
+  let x := eval unfold wrapper, FixEN, FixS, FixS_F in term in exact x.
+
+Module FixENExample.
+
+Definition plus' : forall (cost : enat) `{e_ok _ cost}, forall n m : nat, «e_map (eq n) cost» -> nat.
+Proof.
+  apply (FixEN (fun cost => forall n m : nat, «e_map (eq n) cost» -> nat)).
+  intros cost Hok rec n m Hcost.
+  destruct n as [|n] > [exact m|].
+  specialize rec with (n := n).
+  specialize (rec (erase n) _).
+  apply S, rec > [|exact m|]; unfold e_lt in *; ltac1:(unerase; lia).
+Defined.
+
+Definition plus n m : nat := ltac:(unfold_FixEN @plus' (@plus' (erase n) _ n m eq_refl)).
+
+End FixENExample.
+
+Print FixENExample.plus.
+Recursive Extraction FixENExample.plus.
+
 (* -------------------- 1-hole contexts built from frames -------------------- *)
 
 Class Frame_inj (U : Set) `{Frame U} :=
@@ -198,6 +387,7 @@ Definition frames_split' {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A
   (A = B /\ JMeq fs (<[]> : frames_t' F A A) /\ frames_len fs = 0%nat).
 Proof. destruct fs as [| A' AB B' f fs] > [now right|left; now do 3 eexists]. Qed.
 
+(* Like frames_split', but peels off frames from the left instead of from the right *)
 Fixpoint frames_split {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
   (exists AB (g : F AB B) (gs : frames_t' F A AB), fs = <[g]> >++ gs) \/ (frames_len fs = O).
 Proof.
@@ -365,171 +555,223 @@ Fixpoint cong_retype {U : Set} `{H : Frame U} (A B : U) (fs gs : @uframes_t U H)
   fs = gs -> retype A B fs Hfs = retype A B gs Hgs.
 Proof. intros; subst gs; ltac1:(assert (Hfs = Hgs) by apply unique_typings); now subst. Defined.
 
-(* By defining a Preserves instance for some [P], the user explains:
-   - How to preserve a value [P C x] which depends on the current context C + focused node x
-     through each step of a (mutually) recursive traversal of a [univD Root].
-   - How to preserve the same value across edits to the focused node. *)
+(* -------------------- State variables, parameters, and delayed computations -------------------- *)
 
-(* The environment can only depend on context *)
-Class Preserves_R (U : Set) `{Frame U} (Root : U)
-      (P : forall {A : U}, frames_t A Root -> Set) : Set :=
-  preserve_R :
-    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B),
-    P fs -> P (fs >:: f).
-
-(* State can depend on both context and value on focus, and needs to be preserved while moving
-   upwards and downwards *)
-Class Preserves_S (U : Set) `{Frame U} (Root : U)
-      (P : forall {A : U}, frames_t A Root -> univD A -> Set) : Set := {
-  preserve_S_up :
-    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B) (x : univD A),
-    P (fs >:: f) x -> P fs (frameD f x);
-  preserve_S_dn :
-    forall {A B : U} (fs : frames_t B Root) (f : frame_t A B) (x : univD A),
-    P fs (frameD f x) -> P (fs >:: f) x }.
-
-(* -------------------- Delayed computation -------------------- *)
-
-(* The delayed computation may depend on the focus *)
-Class Delayed {U : Set} `{Frame U} (D : forall {A}, univD A -> Set) := {
-  delayD : forall {A} (e : univD A), D e -> univD A;
-  delay_id : forall {A} (e : univD A), D e;
-  delay_id_law : forall {A} (e : univD A), delayD e (delay_id e) = e }.
-
-(* -------------------- Handy instances -------------------- *)
-
-Definition trivial_R_C {U : Set} `{Frame U} {Root : U} A (C : frames_t A Root) : Set := unit.
-Instance Preserves_R_trivial_R_C {U : Set} `{H : Frame U} {Root : U} :
-  Preserves_R _ Root (@trivial_R_C U H Root).
-Proof. constructor. Defined.
-
-Definition trivial_S {U : Set} `{Frame U} {Root : U} A (C : frames_t A Root) (e : univD A) : Set := unit.
-Instance Preserves_S_trivial_S {U : Set} `{H : Frame U} {Root : U} :
-  Preserves_S _ Root (@trivial_S U H Root).
-Proof. do 2 constructor. Defined.
-
-Definition trivial_delay_t {U : Set} `{Frame U} A (e : univD A) : Set := unit.
-Instance Delayed_trivial_delay_t {U : Set} `{H : Frame U} : Delayed (@trivial_delay_t U H).
-Proof. ltac1:(unshelve econstructor; [intros A e _; exact e|..]; reflexivity). Defined.
-
-(* Parameters and state variables with no invariants *)
-
-Definition R_plain {U : Set} `{Frame U} {Root : U}
-           (R : Set) A (C : frames_t A Root) : Set :=
-  R.
-
-Instance Preserves_R_R_plain (U : Set) `{Frame U} (Root : U) (R : Set) :
-  Preserves_R _ Root (R_plain R).
-Proof. intros A B fs x s; exact s. Defined.
-
-Definition S_plain {U : Set} `{Frame U} {Root : U}
-           (S : Set) A (C : frames_t A Root) (e : univD A) : Set :=
-  S.
-
-Instance Preserves_S_S_plain (U : Set) `{Frame U} (Root : U) (S : Set) :
-  Preserves_S _ Root (S_plain S).
-Proof. constructor; intros A B fs f x s; exact s. Defined.
-
-(* Composing two parameters *)
-
-Definition R_prod {U : Set} `{Frame U} {Root : U}
-           (R1 R2 : forall {A}, frames_t A Root -> Set) 
-           A (C : frames_t A Root) : Set :=
-  R1 C * R2 C.
-
-Instance Preserves_R_R_prod {U : Set} `{H : Frame U} {Root : U}
-         (R1 R2 : forall {A}, frames_t A Root -> Set) 
-         `{H1 : @Preserves_R U H Root (@R1)} 
-         `{H2 : @Preserves_R U H Root (@R2)} :
-  Preserves_R _ Root (R_prod (@R1) (@R2)).
-Proof. unfold R_prod; intros A B fs f [s1 s2]; split; now eapply @preserve_R. Defined.
-
-(* Composing two states *)
-
-Definition S_prod {U : Set} `{Frame U} {Root : U}
-           (S1 S2 : forall {A}, frames_t A Root -> univD A -> Set) 
-           A (C : frames_t A Root) (e : univD A) : Set :=
-  S1 C e * S2 C e.
-
-Instance Preserves_S_S_prod {U : Set} `{H : Frame U} {Root : U}
-         (S1 S2 : forall A, frames_t A Root -> univD A -> Set)
-         `{H1 : @Preserves_S U H Root S1} 
-         `{H2 : @Preserves_S U H Root S2} :
-  Preserves_S _ Root (S_prod S1 S2).
-Proof.
-  constructor; unfold S_prod; intros A B fs f x [s1 s2]; split;
-  try (now eapply @preserve_S_up); (now eapply @preserve_S_dn).
-Defined.
-
-(* -------------------- Annotations -------------------- *)
-
-Definition Rec {A} (rhs : A) : A := rhs.
-Definition BottomUp {A} (rhs : A) : A := rhs.
-
-(* -------------------- The type of the rewriter -------------------- *)
-
-Section Rewriters.
+Section Bookkeeping.
 
 Context
   (* Types the rewriter will encounter + type of 1-hole contexts *)
-  {U} `{HFrame : Frame U} 
+  (U : Set) `{HFrame : Frame U}
   (* The type of trees being rewritten *)
-  (root : U) 
+  (Root : U).
+
+Section Strategies.
+
+Context
+  (D : Set) (I_D : forall (A : U), univD A -> D -> Prop)
+  (R : Set) (I_R : forall (A : U), frames_t A Root -> R -> Prop)
+  (S : Set) (I_S : forall (A : U), frames_t A Root -> univD A -> S -> Prop).
+
+Definition Delay {A} (e : univD A) : Set := {d | I_D A e d}.
+Definition Param {A} (C : erased (frames_t A Root)) : Set :=
+  {r | «e_map (fun C => I_R C r) C»}.
+Definition State {A} (C : erased (frames_t A Root)) (e : univD A) : Set :=
+  {s | «e_map (fun C => I_S C e s) C»}.
+
+Class Delayed := {
+  delayD : forall {A} (e : univD A), Delay e -> univD A;
+  delay_id : forall {A} (e : univD A), Delay e;
+  delay_id_law : forall {A} (e : univD A), delayD (delay_id e) = e }.
+
+Class Preserves_R :=
+  preserve_R :
+    forall {A B : U} (fs : erased (frames_t B Root)) `{e_ok _ fs} (f : frame_t A B),
+    Param fs -> Param (e_map (fun fs => fs >:: f) fs).
+
+Class Preserves_S_up :=
+  preserve_S_up :
+    forall {A B : U} (fs : erased (frames_t B Root)) `{e_ok _ fs} (f : frame_t A B) (x : univD A),
+    State (e_map (fun fs => fs >:: f) fs) x -> State fs (frameD f x).
+
+Class Preserves_S_dn :=
+  preserve_S_dn :
+    forall {A B : U} (fs : erased (frames_t B Root)) `{e_ok _ fs} (f : frame_t A B) (x : univD A),
+    State fs (frameD f x) -> State (e_map (fun fs => fs >:: f) fs) x.
+
+Extraction Inline delayD delay_id preserve_R preserve_S_up preserve_S_dn.
+
+End Strategies.
+
+(* -------------------- Handy instances -------------------- *)
+
+(* Structures with no invariants *)
+
+Definition I_D_plain (D : Set) (A : U) (_ : univD A) (_ : D) : Prop := True.
+Definition id_Delay := @Delay unit (@I_D_plain unit).
+
+Global Instance Delayed_id_Delay : Delayed (@I_D_plain unit).
+Proof.
+  ltac1:(unshelve econstructor).
+  - intros A x _; exact x.
+  - intros; exists tt; exact I.
+  - reflexivity.
+Defined.
+
+Definition I_R_plain (R : Set) (A : U) (C : frames_t A Root) (_ : R) : Prop := True.
+Definition I_S_plain (S : Set) (A : U) (C : frames_t A Root) (_ : univD A) (_ : S) : Prop := True.
+
+Global Instance Preserves_R_plain (R : Set) : Preserves_R (@I_R_plain R).
+Proof. unfold Preserves_R; intros; assumption. Defined.
+
+Global Instance Preserves_S_up_plain (S : Set) : Preserves_S_up (@I_S_plain S).
+Proof. unfold Preserves_S_up; intros; assumption. Defined.
+
+Global Instance Preserves_S_dn_plain (S : Set) : Preserves_S_dn (@I_S_plain S).
+Proof. unfold Preserves_S_dn; intros; assumption. Defined.
+
+Extraction Inline Delayed_id_Delay Preserves_R_plain Preserves_S_up_plain Preserves_S_dn_plain.
+
+(* Composing two parameters *)
+Section R_prod.
+
+Context
+  (R1 R2 : Set)
+  (I_R1 : forall A, frames_t A Root -> R1 -> Prop) 
+  (I_R2 : forall A, frames_t A Root -> R2 -> Prop).
+
+Definition I_R_prod A (C : frames_t A Root) : R1 * R2 -> Prop :=
+  fun '(r1, r2) => I_R1 C r1 /\ I_R2 C r2.
+
+Global Instance Preserves_R_prod
+       `{H1 : @Preserves_R _ (@I_R1)}
+       `{H2 : @Preserves_R _ (@I_R2)} :
+  Preserves_R I_R_prod.
+Proof.
+  unfold I_R_prod; intros A B C C_ok f [[r1 r2] Hr12].
+  assert (Hr1 : «e_map (fun C => I_R1 _ C r1) C»). { unerase; now destruct Hr12. }
+  assert (Hr2 : «e_map (fun C => I_R2 _ C r2) C»). { unerase; now destruct Hr12. }
+  pattern r1 in Hr1; pattern r2 in Hr2. apply exist in Hr1; apply exist in Hr2. clear Hr12 r1 r2.
+  ltac1:(unshelve eapply preserve_R with (f := f) in Hr1); try assumption.
+  ltac1:(unshelve eapply preserve_R with (f := f) in Hr2); try assumption.
+  destruct Hr1 as [r1 Hr1], Hr2 as [r2 Hr2]; exists (r1, r2).
+  unerase; auto.
+Defined.
+
+Extraction Inline Preserves_R_prod.
+
+End R_prod.
+
+(* Composing two states *)
+Section S_prod.
+
+Context
+  (S1 S2 : Set)
+  (I_S1 : forall A, frames_t A Root -> univD A -> S1 -> Prop) 
+  (I_S2 : forall A, frames_t A Root -> univD A -> S2 -> Prop).
+
+Definition I_S_prod A (C : frames_t A Root) (e : univD A) : S1 * S2 -> Prop :=
+  fun '(s1, s2) => I_S1 C e s1 /\ I_S2 C e s2.
+
+Global Instance Preserves_S_up_prod
+         `{H1 : @Preserves_S_up _ (@I_S1)}
+         `{H2 : @Preserves_S_up _ (@I_S2)} :
+  Preserves_S_up I_S_prod.
+Proof.
+  unfold I_S_prod; intros A B C C_ok f x [[s1 s2] Hs12].
+  assert (Hs1 : «e_map (fun C => I_S1 _ (C >:: f) x s1) C»). { unerase; now destruct Hs12. }
+  assert (Hs2 : «e_map (fun C => I_S2 _ (C >:: f) x s2) C»). { unerase; now destruct Hs12. }
+  pattern s1 in Hs1; pattern s2 in Hs2; apply exist in Hs1; apply exist in Hs2; clear Hs12 s1 s2.
+  ltac1:(unshelve eapply preserve_S_up with (f := f) in Hs1); try assumption.
+  ltac1:(unshelve eapply preserve_S_up with (f := f) in Hs2); try assumption.
+  destruct Hs1 as [s1 Hs1], Hs2 as [s2 Hs2]; exists (s1, s2); unerase; auto.
+Defined.
+
+Global Instance Preserves_S_dn_prod
+         `{H1 : @Preserves_S_dn _ (@I_S1)}
+         `{H2 : @Preserves_S_dn _ (@I_S2)} :
+  Preserves_S_dn I_S_prod.
+Proof.
+  unfold I_S_prod; intros A B C C_ok f x [[s1 s2] Hs12].
+  assert (Hs1 : «e_map (fun C => I_S1 _ C (frameD f x) s1) C»). { unerase; now destruct Hs12. }
+  assert (Hs2 : «e_map (fun C => I_S2 _ C (frameD f x) s2) C»). { unerase; now destruct Hs12. }
+  pattern s1 in Hs1; pattern s2 in Hs2; apply exist in Hs1; apply exist in Hs2; clear Hs12 s1 s2.
+  ltac1:(unshelve eapply preserve_S_dn with (f := f) in Hs1); try assumption.
+  ltac1:(unshelve eapply preserve_S_dn with (f := f) in Hs2); try assumption.
+  destruct Hs1 as [s1 Hs1], Hs2 as [s2 Hs2]; exists (s1, s2); unerase; auto.
+Defined.
+
+Extraction Inline Preserves_S_up_prod Preserves_S_dn_prod.
+
+End S_prod.
+
+(* The type of the rewriter *)
+Section Rewriters.
+
+Context
   (* One rewriting step *)
-  (R : relation (univD root)) 
-  (* Delayed computation *)
-  (D : forall A, univD A -> Set) `{@Delayed U HFrame (@D)} 
-  (* Env relevant to R; depends on current context C *)
-  (R_C : forall A, frames_t A root -> Set) 
-  (* State relevant to R *)
-  (St : forall A, frames_t A root -> univD A -> Set).
-
-Section Rewriters1.
-
-(* The current context and focus *)
-Context {A} (C : frames_t A root) (e : univD A).
+  (Rstep : relation (univD Root))
+  (D : Set) (I_D : forall (A : U), univD A -> D -> Prop)
+  (R : Set) (I_R : forall (A : U), frames_t A Root -> R -> Prop)
+  (S : Set) (I_S : forall (A : U), frames_t A Root -> univD A -> S -> Prop)
+  `{HDelay : Delayed _ I_D}.
 
 (* The result returned by a rewriter when called with context C and exp e *)
-Record result : Set := mk_result {
+Record result A (C : erased (frames_t A Root)) (e : univD A) : Set := mk_result {
   resTree : univD A;
-  resState : St _ C resTree;
-  resProof : clos_refl_trans _ R (C ⟦ e ⟧) (C ⟦ resTree ⟧) }.
+  resState : State I_S C resTree;
+  resProof : «e_map (fun C => clos_refl_trans _ Rstep (C ⟦ e ⟧) (C ⟦ resTree ⟧)) C» }.
 
-Definition rw_for : Set := R_C _ C -> St _ C e -> result.
+(* Rewriters with fuel parameter *)
+Section FueledRewriters.
 
-End Rewriters1.
+Definition frw_for A (C : erased (frames_t A Root)) (e : univD A) :=
+  Param I_R C -> State I_S C e -> result C e.
+Definition fueled_rewriter' :=
+  Fuel -> forall A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e),
+  frw_for C (delayD d).
 
-(* The identity rewriter *)
-Definition rw_id A (C : frames_t A root) (e : univD A) : rw_for C e.
-Proof. intros r s; econstructor > [exact s|apply rt_refl]. Defined.
+Definition frw_id A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) : frw_for C e.
+Proof. intros r s; econstructor > [exact s|unerase; apply rt_refl]. Defined.
 
-(* The simplest rewriter *)
-Definition rw_base A (C : frames_t A root) (e : univD A) (d : D _ e) :
-  rw_for C (delayD e d).
-Proof. intros r s; econstructor > [exact s|apply rt_refl]. Defined.
+Definition frw_base A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e) :
+  frw_for C (delayD d).
+Proof. intros r s; econstructor > [exact s|unerase; apply rt_refl]. Defined.
 
 (* Extend rw1 with rw2 *)
-Definition rw_chain
-  A (C : frames_t A root) (e : univD A) (d : D _ e)
-  (rw1 : rw_for C (delayD e d)) (rw2 : forall e, rw_for C e)
-  : rw_for C (delayD e d).
+Definition frw_chain
+  A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e)
+  (rw1 : frw_for C (delayD d)) (rw2 : forall e, frw_for C e)
+  : frw_for C (delayD d).
 Proof.
   intros r s.
   destruct (rw1 r s) as [e' s' Hrel]; clear s.
   destruct (rw2 e' r s') as [e'' s'' Hrel']; clear s'.
-  econstructor > [exact s''|eapply rt_trans; eauto].
+  econstructor > [exact s''|unerase; eapply rt_trans; eauto].
 Defined.
+
+Extraction Inline frw_id frw_base frw_chain.
+
+End FueledRewriters.
+
+(* Rewriters with termination metric *)
+Section FuelFreeRewriters.
+
+Definition metric_t := forall A, frames_t A Root -> univD A -> R -> S -> nat.
+
+Context (metric : metric_t).
+
+Definition rw_for n A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) :=
+  forall (r : Param I_R C) (s : State I_S C e),
+  «e_map (fun n => «e_map (fun C => n = metric C e (proj1_sig r) (proj1_sig s)) C») n» ->
+  result C e.
+
+Definition rewriter' (metric : metric_t) :=
+  forall (n : erased nat) `{Hn : e_ok _ n} A (C : erased (frames_t A Root)) `{e_ok _ C}
+    (e : univD A) (d : Delay I_D e),
+  rw_for (C:=C) n (delayD d).
+
+End FuelFreeRewriters.
 
 End Rewriters.
 
-Definition Fuel := positive.
-
-Definition lots_of_fuel : Fuel := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
-
-Require Import Lia.
-
-Definition Fuel_Fix {A} (d : A) (f : A -> A) : Fuel -> A.
-Proof.
-  apply (@Fix positive Pos.lt Coqlib.Plt_wf (fun _ => A)); intros n rec.
-  destruct n as [n'|n'|] eqn:Hn > [| |exact d]; ltac1:(refine (f (rec (Pos.pred n) _)); lia).
-Defined.
+End Bookkeeping.
