@@ -153,14 +153,11 @@ End FixEN.
 
 End WellfoundedRecursion.
 
-(* Unfolding all the combinators above exposes a primitive fixpoint on AccS
-   that erases to a standard recursive function *)
-Ltac unfold_FixEN wrapper term :=
-  let x := eval unfold wrapper, FixEN, FixS, FixS_F in term in exact x.
+Extraction Inline FixEN FixS FixS_F.
 
 Module FixENExample.
 
-Definition plus' : forall (cost : enat) `{e_ok _ cost}, forall n m : nat, «e_map (eq n) cost» -> nat.
+Definition plus : forall (cost : enat) `{e_ok _ cost}, forall n m : nat, «e_map (eq n) cost» -> nat.
 Proof.
   apply (FixEN (fun cost => forall n m : nat, «e_map (eq n) cost» -> nat)).
   intros cost Hok rec n m Hcost.
@@ -170,11 +167,10 @@ Proof.
   apply S, rec > [|exact m|]; unfold e_lt in *; ltac1:(unerase; lia).
 Defined.
 
-Definition plus n m : nat := ltac:(unfold_FixEN @plus' (@plus' (erase n) _ n m eq_refl)).
-
 End FixENExample.
 
 Print FixENExample.plus.
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
 Recursive Extraction FixENExample.plus.
 
 (* -------------------- 1-hole contexts built from frames -------------------- *)
@@ -687,7 +683,9 @@ Definition fuel_dec (fueled : bool) : Fuel fueled -> Fuel fueled :=
   | false => fun fuel => fuel
   end.
 
-Extraction Inline is_empty fuel_dec.
+Definition lots_of_fuel : positive := (1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1)%positive.
+
+Extraction Inline is_empty fuel_dec lots_of_fuel.
 
 Definition Metric (fueled : bool) :=
   if fueled then unit
@@ -725,36 +723,24 @@ Record result A (C : erased (frames_t A Root)) (e : univD A) : Set := mk_result 
   resState : State I_S C resTree;
   resProof : «e_map (fun C => clos_refl_trans _ Rstep (C ⟦ e ⟧) (C ⟦ resTree ⟧)) C» }.
 
-Definition rw_for n (fuel : Fuel) A (C : erased (frames_t A Root)) (e : univD A) :=
-  forall (r : Param I_R C) (s : State I_S C e),
+Definition rw_for (fuel : Fuel) A (C : erased (frames_t A Root)) (e : univD A) :=
+  forall n `{e_ok _ n} (r : Param I_R C) (s : State I_S C e),
   «e_map (fun n => «e_map (fun C => n = run_metric fuel C e) C») n» ->
   result C e.
 
 Definition rewriter' :=
-  forall (n : erased nat) `{Hn : e_ok _ n},
   forall (fuel : Fuel) A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e),
-  rw_for n fuel C (delayD d).
+  rw_for fuel C (delayD d).
 
-Definition rw_id n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) : rw_for n fuel C e.
-Proof. intros r s _; econstructor > [exact s|unerase; apply rt_refl]. Defined.
-
-Definition rw_base n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e) :
-  rw_for n fuel C (delayD d).
-Proof. intros r s _; econstructor > [exact s|unerase; apply rt_refl]. Defined.
-
-(* Extend rw1 with rw2 *)
-Definition rw_chain n fuel A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (d : Delay I_D e)
-           (rw1 : rw_for n fuel C (delayD d)) (rw2 : forall n e, rw_for n fuel C e)
-  : rw_for n fuel C (delayD d).
+Definition res_chain A (C : erased (frames_t A Root)) `{e_ok _ C} (e : univD A) (m : result C e)
+           (k : forall e (s : State I_S C e), result C e) : result C e.
 Proof.
-  intros r s Hfuel.
-  destruct (rw1 r s Hfuel) as [e' s' Hrel]; clear s.
-  destruct (rw2 (e_map (fun C => run_metric fuel _ C e') C) e' r s') as [e'' s'' Hrel']; clear s'.
-  - unerase; reflexivity.
-  - econstructor > [exact s''|unerase; eapply rt_trans; eauto].
+  destruct m as [e' s' Hrel1]; cbn in k.
+  specialize (k e' s'); destruct k as [e'' s'' Hrel2].
+  econstructor > [exact s''|unerase; eapply rt_trans; eauto].
 Defined.
 
-Extraction Inline rw_id rw_base rw_chain.
+Extraction Inline res_chain.
 
 End Rewriter.
 

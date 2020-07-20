@@ -257,8 +257,7 @@ Definition rewriter {U} `{H : Frame U} `{AuxData U} (Root : U) (fueled : bool)
 
 (* For each rule, *)
 Inductive ExtraVars (s : string) : Prop := MkExtraVars.
-Inductive TopdownRunRule (s : string) : Prop := MkTopdownRunRule.
-Inductive BottomupRunRule (s : string) : Prop := MkBottomupRunRule.
+Inductive RunRule (s : string) : Prop := MkRunRule.
 Inductive Success (s : string) : Prop := MkSuccess.
 Inductive Failure (s : string) : Prop := MkFailure.
 
@@ -770,29 +769,31 @@ Context
   (R I_R S I_S : term)
   (Param := mkApps <%@Param%> [tInd rw_univ_i []; HFrame; root; R; I_R])
   (State := mkApps <%@State%> [tInd rw_univ_i []; HFrame; root; S; I_S])
-  (* specialize to erased nat -> Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
+  (* specialize to univD rw_univ -> univD rw_univ -> Set *)
+  (frames_t := mkApps <%@frames_t%> [tInd rw_univ_i []; HFrame])
+  (* specialize to Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
   (rw_for := mkApps <%@rw_for%> [rw_univ; HFrame; root; fueled; metric; rw_rel; R; I_R; S; I_S]).
 
 Definition gen_run_rule_ty (r : rule_t) : GM term. ltac1:(refine(
   let! emetric := gensym "emetric" in
   let! fuel := gensym "fuel" in
+  let! C_ok := gensym "C_ok" in
   let hole := mk_univ r.(rHoleU) in
-  let run_rule :=
-    match r.(rDir) with
-    | dTopdown => <%TopdownRunRule%>
-    | dBottomup => <%BottomupRunRule%>
-    end
+  let run_rule := <%RunRule%>
+    (* match r.(rDir) with *)
+    (* | dTopdown => <%TopdownRunRule%> *)
+    (* | dBottomup => <%BottomupRunRule%> *)
+    (* end *)
   in
   ret
     (fn (mkApps run_rule [quote_string r.(rName)])
-    (tProd (nNamed emetric) <%erased nat%>
     (tProd (nNamed fuel) (mkApps <%Fuel%> [fueled])
     (it_mkProd_or_LetIn (drop_names r.(rΓ))
-    (* TODO: why is this different for topdown vs bottomup? *)
-    ((match r.(rDir) with dTopdown => fn (mkApps Param [hole; r.(rC)]) | dBottomup => id end)
+    (tProd (nNamed C_ok) (mkApps <%@e_ok%> [mkApps frames_t [hole; root]; r.(rC)])
+    (fn (mkApps Param [hole; r.(rC)])
     (fn (mkApps State [hole; r.(rC); r.(rRhs)])
-    (fn (mkApps rw_for [tVar emetric; tVar fuel; hole; r.(rC); r.(rRhs)])
-    (mkApps rw_for [tVar emetric; tVar fuel; hole; r.(rC); r.(rLhs)]))))))))
+    (fn (mkApps rw_for [tVar fuel; hole; r.(rC); r.(rRhs)])
+    (mkApps rw_for [tVar fuel; hole; r.(rC); r.(rLhs)]))))))))
 )).
 Defined.
 
@@ -913,7 +914,7 @@ Context
   (frames_t := mkApps <%@frames_t%> [rw_univ; HFrame])
   (* specialize to rw_univ -> Set *)
   (univD := mkApps <%@univD%> [rw_univ; HFrame]) 
-  (* specialize to erased nat -> Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
+  (* specialize to Fuel fueled -> forall A, erased (frames_t A root) -> univD A -> Set *)
   (rw_for := mkApps <%@rw_for%> [rw_univ; HFrame; root; fueled; metric; rw_rel; R; I_R; S; I_S])
   (frame_ind := mkInd (typename +++ "_frame_t") 0)
   (frame_t := tInd frame_ind [])
@@ -947,14 +948,12 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
         ret (x, univ, ty_term, frame_cons n, lxs, rxs))
       (combine n_frames (holes_of xtys))
   in
-  let! emetric := gensym "emetric" in
   let! fuel := gensym "fuel" in
   let! C := gensym "C" in
   let! C_ok := gensym "C_ok" in
   let C_ty := mkApps frames_t [univ_rty; root] in
   let constr_ty := fold_right (fun '(_, _, ty, _, _, _) res => fn ty res) rty_term xutfs in 
   ret (fn (mkApps <%@SmartConstr%> [constr_ty; constr])
-    (tProd (nNamed emetric) <%erased nat%>
     (tProd (nNamed fuel) (mkApps <%Fuel%> [fueled])
     (tProd (nNamed C) (mkApps <%erased%> [C_ty])
     (tProd (nNamed C_ok) (mkApps <%@e_ok%> [C_ty; tVar C])
@@ -972,7 +971,7 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                 (fun '(x', _, t, _, _, _) ty => if x ==? x' then ty else tProd (nNamed x') t ty)
                 (let mk_ctx_t u := mkApps frames_t [u; root] in
                  mkApps rw_for [
-                   tVar emetric; tVar fuel;
+                   tVar fuel;
                    u; mkApps <%@e_map%> [
                      mk_ctx_t univ_rty; mk_ctx_t u;
                      tLambda (nNamed C) (mk_ctx_t univ_rty) (mkApps frames_cons [
@@ -983,11 +982,11 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
                 xutfs))
             ty)
         (mkApps rw_for [
-          tVar emetric; tVar fuel;
+          tVar fuel;
           univ_rty; tVar C; 
           mkApps constr (map (fun '(x, _, _, _, _, _) => tVar x) xutfs)])
         (rev xutfs))
-      xutfs))))))
+      xutfs)))))
 )).
 Defined.
 
@@ -1457,40 +1456,59 @@ Ltac mk_rw_obs k :=
 
 Ltac mk_rw' := mk_rw_obs ltac:(fun _ => idtac).
 
-Ltac mk_smart_constr_children root R_C St s hasHrel Hrel :=
+Ltac mk_smart_constr_children Root Rstep I_R I_S C s hasHrel Hrel :=
   lazymatch goal with
   | H : SmartConstrCase (frameD ?frame ?hole) -> _ |- _ =>
     specialize (H (MkSmartConstrCase _));
     let x := fresh "x" in
     let s' := fresh "s" in
     let Hrel' := fresh "Hrel" in
-    edestruct H as [x s' Hrel'];
-    [eapply (@preserve_R _ _ root R_C _); cbn; eassumption
-    |eapply (@preserve_S_dn _ _ root St _); cbn; eassumption
-    |idtac];
-    clear H; clear s;
-    apply (@preserve_S_up _ _ root St _) in s'; cbn in s';
+    unshelve edestruct H as [x s' Hrel'];
+    [(* Siblings *)..|(* n *)|(* e_ok n *)
+    |(* Param *)eapply (@preserve_R _ _ Root _ I_R _); eassumption
+    |(* State *)eapply (@preserve_S_dn _ _ Root _ I_S _); cbn; eassumption
+    |(* equation about n *)
+    |];
+    [(* Siblings *)..|(* n *)refine (e_map (fun C => _) C)|(* e_ok n *)|(* equation about n *)|];
+    [(* n *)|(* e_ok (e_map ..) *)apply e_map_ok; assumption
+    |(* equation about n *)unerase; reflexivity
+    |];
+    clear H s;
+    apply (@preserve_S_up _ _ Root _ I_S _) in s'; [|assumption]; cbn in s';
     lazymatch hasHrel with
-    | false => idtac
-    | true => apply (rt_trans _ _ _ _ _ Hrel) in Hrel'; clear Hrel
-    end;
-    mk_smart_constr_children root R_C St s' true Hrel'
+    | false => mk_smart_constr_children Root Rstep I_R I_S C s' true Hrel'
+    | true =>
+      let Hrel'' := fresh "Hrel" in
+      match goal with |- result _ _ ?C ?e1 =>
+      match type of s' with State _ C ?e2 =>
+      match type of C with erased ?T =>
+        assert (Hrel'' : «e_map (fun (C : T) => clos_refl_trans _ Rstep (C⟦e1⟧) (C⟦e2⟧)) C»);
+        [unerase; eapply rt_trans; [exact Hrel|exact Hrel']|];
+        clear Hrel Hrel'
+      end end end;
+      mk_smart_constr_children Root Rstep I_R I_S C s' true Hrel''
+    end
   | _ =>
     lazymatch hasHrel with
-    | false => econstructor; [exact s|apply rt_refl]
+    | false => econstructor; [exact s|unerase; apply rt_refl]
     | true => econstructor; [exact s|exact Hrel]
     end
   end.
 Ltac mk_smart_constr :=
    clear;
+   let fuel := fresh "fuel" in
    let C := fresh "C" in
-   let r_C := fresh "r_C" in
+   let emetric := fresh "emetric" in
+   let Hemetric_ok := fresh "Hemetric_ok" in
+   let Hemetric := fresh "Hemetric" in
+   let r := fresh "r" in
    let s := fresh "s" in
-   intros _ C; intros;
+   intros _ fuel C; intros;
    lazymatch goal with
-   | |- @rw_for _ _ ?root _ ?R_C ?St _ _ _ =>
-     unfold rw_for in *; intros r_C s;
-     mk_smart_constr_children root R_C St s false None
+   | |- @rw_for ?U ?HFrame ?Root ?fueled ?metric ?Rstep ?R ?I_R ?S ?I_S ?fuel _ _ _ =>
+     unfold rw_for in *;
+     intros emetric Hemetric_ok r s Hemetric;
+     mk_smart_constr_children Root Rstep I_R I_S C s false None
    end.
 
 (* TODO: hack to get constr given the name of the rule *)
@@ -1503,56 +1521,40 @@ Definition tm_get_constr (s : string) : TemplateMonad typed_term :=
 
 Ltac mk_run_rule :=
   lazymatch goal with
-  | |- TopdownRunRule ?rule -> _ =>
+  | |- RunRule ?rule -> _ =>
     clear;
-    intros;
-    let r_C := fresh "r_C" in
+    let fuel := fresh "fuel" in
+    let C := fresh "C" in
+    intros _ fuel C; intros;
+    let r := fresh "r" in
     let s := fresh "s" in
     let Hnext := fresh "Hnext" in
+    let emetric := fresh "emetric" in
+    let Hemetric_ok := fresh "Hemetric_ok" in
+    let Hemetric := fresh "Hemetrick" in
     lazymatch goal with H1 : _, H2 : _, H3 : _ |- _ => revert H1 H2 H3 end;
-    unfold rw_for; intros r_C s Hnext _ _;
+    unfold rw_for; intros r s Hnext emetric Hemetric_ok _ _ Hemetric;
     let x' := fresh "x'" in
     let s' := fresh "s'" in
     let Hrel := fresh "Hrel" in
-    destruct (Hnext r_C s) as [x' s' Hrel];
+    unshelve edestruct Hnext as [x' s' Hrel];
+    [(* n *)refine (e_map (fun C => _) C)|(* e_ok n *)
+    |(* Param *)exact r|(* State *)exact s
+    |(* equation about metric *)unerase; reflexivity|];
+    [(* e_ok (e_map (fun C => new metric) C) *)apply e_map_ok; assumption|];
     econstructor; [exact s'|];
-    eapply rt_trans; [eapply rt_step|exact Hrel];
+    unerase; eapply rt_trans; [eapply rt_step|exact Hrel];
     run_template_program (tm_get_constr rule) ltac:(fun ctor =>
     match ctor with
     | {| my_projT2 := ?ctor' |} =>
       eapply ctor';
       lazymatch goal with
-      (* | |- When _ => exact I  *)
-      | _ => eassumption
-      end
-    end)
-  | |- BottomupRunRule ?rule -> _ =>
-    clear;
-    intros;
-    let r_C := fresh "r_C" in
-    let s := fresh "s" in
-    let Hnext := fresh "Hnext" in
-    lazymatch goal with H1 : _, H2 : _ |- _ => revert H1 H2 end;
-    unfold rw_for; intros s Hnext r_C _;
-    let x' := fresh "x'" in
-    let s' := fresh "s'" in
-    let Hrel := fresh "Hrel" in
-    destruct (Hnext r_C s) as [x' s' Hrel];
-    econstructor; [exact s'|];
-    eapply rt_trans; [eapply rt_step|exact Hrel];
-    run_template_program (tm_get_constr rule) ltac:(fun ctor =>
-    match ctor with
-    | {| my_projT2 := ?ctor' |} =>
-      eapply ctor';
-      lazymatch goal with
-      (* | |- When _ => exact I  *)
       | _ => eassumption
       end
     end)
   end.
 
 (* Used by mk_topdown *)
-Inductive Sentinel := MkSentinel. 
 Ltac strip_one_match :=
   lazymatch goal with
   | H : InspectCaseRule _ -> match ?e with _ => _ end -> _ |- _ =>
@@ -1578,7 +1580,7 @@ Ltac mk_topdown_congruence :=
     eapply (H (MkInspectCaseCongruence constr) (MkCongruence constr));
     solve [eassumption|reflexivity]
   end.
-Ltac mk_topdown_active r_C s :=
+Ltac mk_topdown_active r s :=
   lazymatch goal with
   | H : InspectCaseRule _ -> Active ?rule -> _, Hextras : ExtraVars ?rule -> _ |- _ =>
     eapply (Hextras (MkExtraVars rule));
@@ -1590,14 +1592,14 @@ Ltac mk_topdown_active r_C s :=
     [(* Success: switch to new env + state and apply the proper rule *)
      lazymatch goal with
      | H1 : _ , H2 : _ |- _ =>
-       let r_C_old := fresh "r_old" in
+       let r_old := fresh "r_old" in
        let s_old := fresh "s_old" in
-       rename r_C into r_C_old, s into s_old, H1 into r_C, H2 into s;
-       eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity|exact r_C|exact s];
+       rename r into r_old, s into s_old, H1 into r, H2 into s;
+       eapply (H (MkInspectCaseRule rule) (MkActive rule)); [..|reflexivity|exact r|exact s];
        eassumption
      end
     |(* Failure: try to apply other rules *)
-      mk_topdown_active r_C s]
+      mk_topdown_active r s]
   | _ => mk_topdown_congruence
   end.
 Ltac mk_topdown :=
@@ -1609,11 +1611,11 @@ Ltac mk_topdown :=
   let R := fresh "R" in
   let C := fresh "C" in
   let e := fresh "e" in
-  let r_C := fresh "r_C" in
+  let r := fresh "r" in
   let s := fresh "s" in
-  intros _ R C e d r_C s; intros;
+  intros _ R C e d r s; intros;
   repeat strip_one_match;
-  mk_topdown_active r_C s.
+  mk_topdown_active r s.
 
 Ltac mk_bottomup_fallback :=
   lazymatch goal with
@@ -1645,6 +1647,8 @@ Ltac mk_bottomup :=
   repeat strip_one_match;
   mk_bottomup_active.
 
+Require Import Coq.PArith.BinPos Lia.
+
 Ltac try_find_constr e k_constr k_atom :=
   lazymatch goal with
   | H : SmartConstr e -> _ |- _ => k_constr e H
@@ -1660,128 +1664,188 @@ Ltac next_action e k_rec k_constr k_atom :=
   | _ => try_find_constr e k_constr k_atom
   end.
 
-Ltac mk_edit_rhs recur univ HFrame root R delay_t HD R_C St :=
+Lemma nonempty_nonzero (fuel : Rewriting.Fuel true) : is_empty true fuel = false -> (fuel > 1)%positive.
+Proof. unfold is_empty; destruct fuel; try ltac1:(lia); now inversion 1. Qed.
+
+Ltac apply_recur recur fuel fueled Hempty :=
+  match fueled with
+  | true =>
+    specialize recur with (fuel := Pos.pred fuel);
+    specialize (recur (erase (Pos.to_nat (Pos.pred fuel))) _)
+  | false =>
+    specialize recur with (fuel := fuel);
+    admit
+  end;
+  apply recur; try assumption;
+  repeat lazymatch goal with
+  | |- e_lt _ _ =>
+    unfold e_lt; unerase; subst; cbn;
+    apply nonempty_nonzero in Hempty; lia
+  | |- e_ok (e_map _ _) => apply e_map_ok
+  | |- e_ok _ => assumption
+  | |- «_» => unerase; reflexivity
+  end.
+
+Ltac mk_edit_rhs recur fuel fueled Hempty :=
   let rec go _ :=
     lazymatch goal with
-    | |- @rw_for _ _ _ _ _ _ _ _ ?e =>
-      next_action e 
+    | |- @rw_for _ _ _ _ _ _ _ _ _ _ _ _ _ ?e =>
+      next_action e
         (* Recursive calls: *)
         ltac:(fun e' =>
-          match goal with
-          | H : e' = delayD _ ?d |- _ =>
-            rewrite H; apply (recur _ _ _ d)
+          (* Rewrite any call pending on the current subterm in terms of delayed computation *)
+          lazymatch goal with
+          | H : e' = delayD ?d |- _ =>
+            rewrite H;
+            let emetric := fresh "emetric" in
+            let Hemetric_ok := fresh "Hemetric_ok" in
+            let r := fresh "r" in
+            let s := fresh "s" in
+            let Hemetric := fresh "Hemetric" in
+            intros emetric Hemetric_ok r s Hemetric;
+            apply_recur recur fuel fueled Hempty
           end)
         (* Constructor nodes: apply the smart constructor... *)
         ltac:(fun constr Hconstr =>
-          apply (Hconstr (MkSmartConstr constr));
+          apply (Hconstr (MkSmartConstr constr) fuel);
+          repeat match goal with
+          | |- e_ok (e_map _ _) => apply e_map_ok
+          | |- e_ok _ => assumption
+          end;
           (* ...and recursively expand each child *)
-          intros; go tt)
+          intros _; intros; go tt)
         (* Atoms: just return the atom *)
-        ltac:(fun e => apply (@rw_id univ HFrame root R R_C St))
+        ltac:(fun e => unfold rw_for; intros; econstructor; [|unerase; apply rt_refl]; assumption)
     end
   in go tt.
 
-(*
+Inductive Sentinel := MkSentinel. (* used by mk_rewriter *)
 Ltac mk_rewriter :=
   lazymatch goal with
-  | |- @rewriter ?univ ?HFrame _ ?root ?R ?delay_t ?HD ?R_C ?St _ _ =>
-    unfold rewriter;
+  | |- @rewriter ?univ ?HFrame _ ?Root ?fueled ?metric ?Rstep ?D ?I_D ?HD ?R ?I_R ?S ?I_S _ _ _ =>
+    unfold rewriter, rewriter';
     lazymatch goal with
-    | |- Rewriting.Fuel -> ?T =>
+    | |- forall (_ : Rewriting.Fuel _), _ =>
+      (* Pull the erased nat and its e_ok proof to the front *)
+      let sentinel := fresh "sentinel" in
+      let emetric := fresh "emetric" in
+      let Hemetric_ok := fresh "Hemetric_ok" in
+      pose (sentinel := MkSentinel : Sentinel);
+      clearbody sentinel;
+      intros; unfold rw_for; intros emetric Hemetric_ok;
+      repeat progress lazymatch goal with
+      | H : ?T, emetric : _, Hemetric_ok : _ |- _ =>
+        lazymatch T with
+        | Sentinel => idtac
+        | _ => revert H
+        end
+      end;
+      (* Now apply the fixpoint combinator *)
+      pattern emetric; revert emetric Hemetric_ok;
       let recur := fresh "recur" in
+      let fuel := fresh "fuel" in
       let A := fresh "A" in
-      apply (@FixFuel T); [apply (@rw_base univ _ root _ delay_t HD R_C St)|];
-      intros recur A; destruct A;
+      apply FixEN; intros emetric Hemetric_ok recur fuel A;
+      (* Check if fuel-based and fuel empty, and return e unchanged if so *)
+      let Hempty := fresh "Hempty" in
+      match fueled with
+      | true =>
+        destruct (is_empty fueled fuel) eqn:Hempty;
+        [econstructor; [|unerase; apply rt_refl]; assumption|]
+      | false => idtac
+      end;
+      (* Case split on type tag *)
+      destruct A;
       lazymatch goal with
-      (* Nonatomic children *)
-      | Htopdown : Topdown ?hole -> _ |- forall _ : frames_t ?hole _, _ =>
+      (* Nonatomic children: apply topdown rules and then bottomup rules *)
+      | Htopdown : Topdown ?hole -> _ |- forall _ : erased (frames_t ?hole _), _ =>
         let C := fresh "C" in
+        let C_ok := fresh "C_ok" in
         let e := fresh "e" in
         let d := fresh "d" in
-        intros C e d;
-        eapply (@rw_chain univ HFrame root R delay_t HD R_C St);
-        [(* Topdown *)
-         let r_C := fresh "r_C" in
-         let s := fresh "s" in
-         intros r_C s;
-         let r_C' := fresh "r_C" in
-         let s' := fresh "s" in
-         let r_Cty := type of r_C in
-         let sty := type of s in
-         (assert (r_C' : r_Cty) by exact r_C);
-         (assert (s' : sty) by exact s);
-         revert r_C' s';
-         change (@rw_for univ _ root R R_C St _ C (delayD e d));
-         apply (Htopdown (MkTopdown hole) _ C e d r_C s);
-         (* clear r_C s; *)
-         lazymatch goal with
-         (* Rule applications *)
-         | Hrun : TopdownRunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
-           intros _ _; intros;
-           lazymatch goal with He : delayD e d = _ |- _ => rewrite He end;
-           let r_C'' := fresh "r_C" in
-           let s'' := fresh "s" in
-           lazymatch goal with H1 : _, H2 : _ |- _ => rename H1 into r_C'', H2 into s'' end;
-           eapply (Hrun (MkTopdownRunRule rule));
-           [idtac..|exact r_C''|exact s''|idtac];
-           [try eassumption..|mk_edit_rhs recur univ HFrame root R delay_t HD R_C St]
-         (* Congruence cases *)
-         | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
-           intros _ _; intros;
-           lazymatch goal with Hdelay : delayD e d = _ |- _ => rewrite Hdelay end;
-           apply (Hconstr (MkSmartConstr constr));
-           intros;
-           lazymatch goal with
-           (* If child is nonatomic (has call to delayD), recur *)
-           | |- @rw_for _ _ _ _ _ _ _ _ (delayD _ _) =>
-             apply recur
-           (* Otherwise, just return it *)
-           | |- @rw_for _ _ _ _ _ _ _ _ _ =>
-             apply (@rw_id univ HFrame root R R_C St)
-           end
-         end
-        |(* Bottomup *)
-         lazymatch goal with
-         | Hbottomup : Bottomup hole -> _ |- _ =>
-           clear d e; intros e;
-           let r_C := fresh "r_C" in
-           let s := fresh "s" in
-           intros r_C s;
-           let r_C' := fresh "r_C" in
-           let s' := fresh "s" in
-           let r_Cty := type of r_C in
-           let sty := type of s in
-           (assert (r_C' : r_Cty) by exact r_C);
-           (assert (s' : sty) by exact s);
-           revert r_C' s';
-           change (@rw_for univ _ root R R_C St _ C e);
-           apply (Hbottomup (MkBottomup hole) _ C e r_C s);
-           clear r_C s;
-           lazymatch goal with
-           (* Rule applications *)
-           | Hrun : BottomupRunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
-             intros _ _; intros;
-             lazymatch goal with He : e = _ |- _ => rewrite He end;
-             (* Run the rule... *)
-             let s'' := fresh "s" in
-             lazymatch goal with H : _ |- _ => rename H into s'' end;
-             eapply (Hrun (MkBottomupRunRule rule));
-             [idtac..|exact s''|idtac];
-             (* ...and then just return the modified tree *)
-             [try eassumption..|apply (@rw_id univ HFrame root R R_C St)]
-           (* Fallback (just return the child) *)
-           | |- Fallback -> _ =>
-             intros _;
-             apply (@rw_id univ HFrame root R R_C St)
-           end
-         end]
-      (* Atomic children: just run the delayed computation *)
-      | |- forall _ : frames_t ?hole _, _ =>
+        let r := fresh "r" in
+        let s := fresh "s" in
+        let Hemetric := fresh "Hemetric" in
+        intros C C_ok e d r s Hemetric;
+        apply (@res_chain univ HFrame Root Rstep S I_S _ C C_ok);
+        [ apply (Htopdown (MkTopdown hole) _ C C_ok e d r s);
+          lazymatch goal with
+          (* Rule applications *)
+          | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
+            intros _ _; intros;
+            lazymatch goal with He : delayD d = _ |- _ => rewrite He in * end;
+            let r'' := fresh "r" in
+            let s'' := fresh "s" in
+            lazymatch goal with H1 : _, H2 : _ |- _ => rename H1 into r'', H2 into s'' end;
+            eapply (Hrun (MkRunRule rule) fuel);
+            lazymatch goal with
+            | |- Param _ _ => eassumption
+            | |- State _ _ _ => eassumption
+            | |- «_» => eassumption
+            | |- e_ok _ => eassumption
+            | _ => idtac
+            end;
+            [try eassumption..|mk_edit_rhs recur fuel fueled Hempty]
+          (* Congruence cases *)
+          | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
+            intros _ _; intros;
+            lazymatch goal with Hdelay : delayD d = _ |- _ => rewrite Hdelay in * end;
+            let r' := fresh "r" in
+            let s' := fresh "s" in
+            let Hemetric' := fresh "Hemetric" in
+            let r_t := type of r in assert (r' : r_t) by exact r;
+            let s_t := type of s in assert (s' : s_t) by exact s;
+            let Hemetric_t := type of Hemetric in assert (Hemetric' : Hemetric_t) by exact Hemetric;
+            revert r' s' Hemetric';
+            unfold rw_for in Hconstr;
+            apply (Hconstr (MkSmartConstr _) fuel C C_ok); try exact Hemetric_ok;
+            intros _; intros;
+            lazymatch goal with
+            (* If child is nonatomic (has call to delayD), recur *)
+            | |- result _ _ _ (delayD _) =>
+              apply_recur recur fuel fueled Hempty
+            (* Otherwise, just return it *)
+            | |- result _ _ _ _ => econstructor; [|unerase; apply rt_refl]; assumption
+            end
+          end
+        | lazymatch goal with
+          | Hbottomup : Bottomup hole -> _ |- _ =>
+            clear emetric Hemetric_ok recur d e s Hemetric; intros e s;
+            apply (Hbottomup (MkBottomup hole) _ C C_ok e r s);
+            lazymatch goal with
+            (* Rule applications *)
+            | Hrun : RunRule ?rule -> _ |- InspectCaseRule ?rule -> _ =>
+              intros _ _; intros;
+              lazymatch goal with He : e = _ |- _ => rewrite He in * end;
+              (* Run the rule... *)
+              let s'' := fresh "s" in
+              lazymatch goal with H : _ |- _ => rename H into s'' end;
+              unshelve eapply (Hrun (MkRunRule rule) fuel);
+              try lazymatch goal with
+              | |- erased nat => refine (erase _)
+              | |- State _ _ _ => exact s''
+              | |- «_» => unerase; unfold run_metric; reflexivity
+              end;
+              try lazymatch goal with
+              | |- e_ok (erase _) => apply erase_ok
+              | _ => assumption
+              end;
+              (* ...and then just return the modified tree *)
+              unfold rw_for; intros; econstructor; [|unerase; apply rt_refl]; assumption
+            (* Fallback (just return the child) *)
+            | |- Fallback -> _ =>
+              intros _; econstructor; [|unerase; apply rt_refl]; assumption
+            end
+          end
+        ]
+      (* Atomic children: Just run the delayed computation *)
+      | |- forall _ : erased (frames_t ?hole _), _ =>
         let C := fresh "C" in
+        let C_ok := fresh "C_ok" in
         let e := fresh "e" in
         let d := fresh "d" in
-        intros C e d;
-        apply (@rw_base univ HFrame root R delay_t HD R_C St _ _ _ d)
+        intros C C_ok e d; intros;
+        econstructor; [|unerase; apply rt_refl]; assumption
       end
     end
   end.
@@ -1791,8 +1855,7 @@ Ltac mk_rw :=
   mk_rw';
   lazymatch goal with
   | |- SmartConstr _ -> _ => mk_smart_constr
-  | |- TopdownRunRule _ -> _ => mk_run_rule
-  | |- BottomupRunRule _ -> _ => mk_run_rule
+  | |- RunRule _ -> _ => mk_run_rule
   | |- Topdown _ -> _ => mk_topdown
   | |- Bottomup _ -> _ => mk_bottomup
   | _ => idtac
@@ -1816,4 +1879,4 @@ Ltac cond_success name :=
   | Hs : Success ?rule -> _, Hf : Failure ?rule -> _ |- ?R =>
     specialize (Hs (MkSuccess rule)); clear Hf; rename Hs into name
   end.
-*)
+

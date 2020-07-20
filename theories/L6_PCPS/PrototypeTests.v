@@ -1,4 +1,4 @@
-From CertiCoq.L6 Require Import Prototype MockExpr.
+From CertiCoq.L6 Require Import MockExpr Prototype.
 
 Require Import Coq.Strings.Ascii Coq.Strings.String.
 Infix "+++" := append (at level 60, right associativity).
@@ -8,7 +8,6 @@ Import ListNotations.
 
 From MetaCoq Require Import Template.All.
 Import MonadNotation.
-Module TM := MetaCoq.Template.monad_utils.
 
 From ExtLib.Core Require Import RelDec.
 From ExtLib.Data Require Import Nat List Option Pair String.
@@ -92,6 +91,8 @@ Proof. intros A B C C_ok f x; destruct f; unfold used_vars_prop; simpl; intros; 
 Instance Preserves_S_up_exp : Preserves_S_up (@used_vars_prop).
 Proof. intros A B C C_ok f x; destruct f; unfold used_vars_prop; simpl; intros; assumption. Defined.
 
+Extraction Inline Preserves_S_dn_exp Preserves_S_up_exp.
+
 (* ---------- Mock relation + state for testing ---------- *)
 
 Inductive R : exp -> exp -> Prop :=
@@ -127,6 +128,8 @@ Proof. intros A B C C_ok f x [n _]; exists n; unerase; reflexivity. Defined.
 
 Instance Preserves_S_up_St : Preserves_S_up (@I_S).
 Proof. intros A B C C_ok f x [n _]; exists n; unerase; reflexivity. Defined.
+
+Extraction Inline Preserves_R_R_C Preserves_S_dn_St Preserves_S_up_St.
 
 (* Run TemplateProgram (tmPrint =<< parse_rel R). *) (* For some reason, this hangs.. *)
 
@@ -298,7 +301,7 @@ Definition test_case_tree (pat pat_ty ret_ty success failure : term) : TemplateM
   print_nf ast ;;
   ret tt.
 
-Compute runGM' 0 (gen_case_tree exp_aux_data.(aIndInfo)
+(* Compute runGM' 0 (gen_case_tree exp_aux_data.(aIndInfo)
   [(tVar "discr", mkApps <%S%> [mkApps <%S%> [mkApps <%S%> [tVar "n"]]])] <%nat%> <%true%> <%false%>).
 
 Compute <%(mk_constr 0, eApp (mk_var 0) [])%>.
@@ -307,13 +310,13 @@ Run TemplateProgram (test_case_tree <%@nil nat%> <%list nat%> <%bool%> <%true%> 
 Run TemplateProgram (test_case_tree <%eApp (mk_var 0) []%> <%exp%> <%bool%> <%true%> <%false%>).
 Run TemplateProgram (test_case_tree <%(mk_constr 0, eApp (mk_var 0) [])%> <%(constr * exp)%type%>
                                    <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree <%eCase (mk_var 1) [(mk_constr 0, eApp (mk_var 0) [])]%> <%exp%>
-                                   <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree
-  (mkApps <%eCase%> [mkApps <%mk_var%> [tVar "$n"]; mkApps <%@cons (constr * exp)%type%> [
-    mkApps <%@pair constr exp%> [mkApps <%mk_constr%> [tVar "$m"];
-    mkApps <%eApp%> [<%mk_var 0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]])
-  <%exp%> <%nat%> (mkApps <%plus%> [tVar "$n"; tVar "$m"]) <%O%>).
+Run TemplateProgram (test_case_tree <%eCase (mk_var 1) [(mk_constr 0, eApp (mk_var 0) [])]%> <%exp%> *)
+(*                                    <%bool%> <%true%> <%false%>). *)
+(* Run TemplateProgram (test_case_tree *)
+(*   (mkApps <%eCase%> [mkApps <%mk_var%> [tVar "$n"]; mkApps <%@cons (constr * exp)%type%> [ *)
+(*     mkApps <%@pair constr exp%> [mkApps <%mk_constr%> [tVar "$m"]; *)
+(*     mkApps <%eApp%> [<%mk_var 0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]]) *)
+(*   <%exp%> <%nat%> (mkApps <%plus%> [tVar "$n"; tVar "$m"]) <%O%>). *)
 
 Goal True.
   ltac1:(
@@ -364,7 +367,7 @@ Definition const_fun {A B} (x : A) (y : B) : B := y.
 Inductive R' : exp -> exp -> Prop :=
 | R'0 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ys ys' e,
     ys' = ys ++ ys ->
-    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys' (Rec (const_fun tt e))⟧) . (*
+    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys' (Rec (const_fun tt e))⟧)
 | R'1 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c y ys ys' e,
     #|ys| = 4%nat /\
     (forall D : frames_t exp_univ_exp exp_univ_exp, D >++ C = D >++ C) /\
@@ -372,7 +375,7 @@ Inductive R' : exp -> exp -> Prop :=
     ys' = ys ++ [y; y] ->
     R' (C⟦eCons x c (y :: ys) e⟧) (C⟦eCons x c ys' (Rec e)⟧)
 | R'4 : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ys e,
-    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys (Rec (eCons x c ys e))⟧)
+    R' (C⟦eCons x c ys e⟧) (C⟦eCons x c ys (eCons x c ys (Rec e))⟧)
 | R'2 : forall (C : frames_t exp_univ_list_fundef exp_univ_exp) f x xs xs' e fds,
     #|xs| = 0%nat /\
     xs ++ [x] = xs' /\
@@ -382,32 +385,27 @@ Inductive R' : exp -> exp -> Prop :=
     #|xs| = 0%nat /\
     xs ++ [x] = xs' /\
     C = C ->
-    BottomUp (R' (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)). *)
+    BottomUp (R' (C⟦fFun f (x :: x' :: xs) e :: fds⟧) (C⟦fFun f xs' e :: fds⟧)).
 
 Goal True.
   ltac1:(
   parse_rel 0 R' ltac:(fun rules n => idtac rules n)).
 Abort.
 
-Definition rw_R' : rewriter exp_univ_exp true tt R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
+Definition rw_R : rewriter exp_univ_exp true tt R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
 Proof.
-  ltac1:(mk_rw').
-
   ltac1:(mk_rw';
     try lazymatch goal with
     | |- SmartConstr _ -> _ => mk_smart_constr
-    | |- TopdownRunRule _ -> _ => mk_run_rule
-    | |- BottomupRunRule _ -> _ => mk_run_rule
+    | |- RunRule _ -> _ => mk_run_rule
     | |- Topdown _ -> _ => mk_topdown
     | |- Bottomup _ -> _ => mk_bottomup
     end;
     (* This particular rewriter's delayed computation is just the identity function, *)
-    (*    so ConstrDelay and EditDelay are easy *)
-    mk_easy_delay;
-    (* try lazymatch goal with *)
-    (* | |- ConstrDelay _ -> _ => admit *)
-    (* | |- EditDelay _ -> _ => admit *)
-    (* end; *)
+    (* so ConstrDelay is easy *)
+    try lazymatch goal with
+    | |- ConstrDelay _ -> _ => mk_easy_delay
+    end;
     (* try lazymatch goal with *)
     (* | |- ExtraVars _ -> _ => admit *)
     (* end; *)
@@ -415,24 +413,18 @@ Proof.
     idtac).
   { cbn; intros; ltac1:(cond_success success).
     eapply success; eauto.
-    constructor > [exact O|reflexivity]. }
-Defined.
-
-Definition rw_R'' : 
-  rewriter exp_univ_exp R' (@opaque_delay_t) (@R_C) (@St).
-Proof.
-  ltac1:(let x := eval unfold rw_R', Fuel_Fix, rw_chain, rw_id, rw_base in rw_R' in
-  let x := eval unfold preserve_R, Preserves_R_R_C, Preserves_S_St in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold delayD, opaque_delay_t, Delayed_D_unit in x in
-  let x := eval lazy beta iota zeta in x in
-  exact x).
+    ltac1:(unshelve econstructor; [exact O|unerase; reflexivity]). }
+  { cbn; intros; ltac1:(cond_failure). }
+  { cbn; intros; ltac1:(cond_success success); eapply success; eauto.
+    ltac1:(unshelve econstructor; [exact O|unerase; reflexivity]). }
+  { cbn; intros; ltac1:(cond_failure). }
+  { cbn; intros; ltac1:(cond_failure). }
 Defined.
 
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
-Recursive Extraction rw_R''.
-(* - is directly recursive (no fixpoint combinator) 
-   - the context parameter C looks dead by induction *)
+Recursive Extraction rw_R.
+(* - is directly recursive (fixpoint combinator gone) 
+   - context parameter erased *)
 
 (*
 Compute rw_R'' (xI xH) exp_univ_exp <[]>
@@ -441,11 +433,11 @@ Compute rw_R'' (xI xH) exp_univ_exp <[]>
   {| envVal := 0; envPrf := eq_refl |}
   {| stVal := 0; stPrf := eq_refl |}. *)
 
-(* -------------------- Example with state (not working yet) -------------------- *)
+(* -------------------- Another example -------------------- *)
 
 Instance Eq_var : Eq var := {rel_dec := fun '(mk_var n) '(mk_var m) => n ==? m}.
 
-Definition renaming {A : exp_univ} (e : univD A) := var -> var.
+Definition renaming := var -> var.
 
 Definition one_renaming x y := fun x' => if x ==? x' then y else x'.
 
@@ -501,10 +493,11 @@ Proof.
   - destruct fd; simpl; f_equal > [now rewrite map_comp|now rewrite subst_exp_comp].
 Defined.
 
-Instance Delayed_renaming : Delayed (@renaming).
+Definition I_renaming A (e : univD A) (d : renaming) : Prop := True.
+Instance Delayed_renaming : Delayed (I_renaming).
 Proof.
   ltac1:(unshelve econstructor).
-  - destruct A; simpl; intros x σ.
+  - destruct A; simpl; intros x [σ _].
     + exact (subst_arm σ x).
     + exact (map (subst_arm σ) x).
     + exact (subst_fd σ x).
@@ -514,7 +507,7 @@ Proof.
     + exact x.
     + exact x.
     + exact (map σ x).
-  - intros. exact id.
+  - intros. exists id; exact I.
   - intros [] []; simpl;
       try ltac1:(match goal with p : constr * exp |- _ => destruct p; simpl end);
       repeat (rewrite map_id);
@@ -525,27 +518,9 @@ Proof.
       try (now (intros; apply subst_fd_id; auto));
       auto.
 Defined.
+Extraction Inline Delayed_renaming.
 
-Definition subst_compose_law :
-  forall {A} (x : univD A) (σ2 : renaming x) (σ1 : renaming (delayD x σ2)),
-  delayD (delayD x σ2) σ1 = delayD x (σ1 ∘ σ2).
-Proof.
-  intros [] [] σ1 σ2; simpl; auto;
-    try ltac1:(match goal with p : constr * exp |- _ => destruct p; simpl end);
-    try (rewrite <- subst_exp_comp);
-    try (rewrite <- subst_fd_comp);
-    try (rewrite <- map_comp); repeat f_equal;
-    auto.
-  - apply (@FunctionalExtensionality.functional_extensionality (constr * exp) (constr * exp)); intros []; simpl.
-    now rewrite <- subst_exp_comp.
-  - apply (@FunctionalExtensionality.functional_extensionality fundef); intros.
-    now rewrite <- subst_fd_comp.
-  - apply (@FunctionalExtensionality.functional_extensionality (constr * exp) (constr * exp)); intros []; simpl.
-    now rewrite <- subst_exp_comp.
-  - apply (@FunctionalExtensionality.functional_extensionality fundef); intros.
-    now rewrite <- subst_fd_comp.
-Defined.
-
+(*
 Definition Exists' {A} (P : A -> Prop) : list A -> Prop :=
   fix go xs :=
     match xs with
@@ -630,6 +605,7 @@ Proof.
     rewrite occurs_frame_split.
     unfold occurs_ctx; simpl; ltac1:(tauto).
 Defined.
+*)
 
 Inductive cp_fold : exp -> exp -> Prop :=
 | cp_case_fold : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ces e,
@@ -645,15 +621,16 @@ Inductive cp_fold : exp -> exp -> Prop :=
       (C ⟦ eProj x y n e ⟧)
       (C ⟦ Rec (subst_exp (one_renaming x y') e) ⟧).
 
-Definition cp_env {A} (C : frames_t A exp_univ_exp) : Set := {
-  cpConses : var -> option (constr × list var) |
-    forall x c ys, cpConses x = Some (c, ys) ->
-    exists D E, C = D >:: eCons3 x c ys >++ E }.
+Definition I_cp_env {A} (C : frames_t A exp_univ_exp) (ρ : var -> option (constr × list var)) : Prop :=
+  forall x c ys, ρ x = Some (c, ys) ->
+  exists D E, C = D >:: eCons3 x c ys >++ E.
 
+(*
 Definition var_gt : var -> var -> Prop := fun '(mk_var x) '(mk_var y) => (x > y)%nat.
 
 Definition cp_state {A} (C : frames_t A exp_univ_exp) (e : univD A) : Set :=
   unit.
+*)
 
 Lemma eq_var_spec (x y : var) : Bool.reflect (x = y) (x ==? y).
 Proof.
@@ -661,30 +638,28 @@ Proof.
   destruct (PeanoNat.Nat.eqb_spec x y); constructor; ltac1:(congruence).
 Defined.
 
-Instance Preserves_cp_env : Preserves_R exp_univ exp_univ_exp (@cp_env).
+Instance Preserves_cp_env : Preserves_R (@I_cp_env).
 Proof.
-  intros A B fs.
-  unfold cp_env; destruct f eqn:Heqf; intros;
-  ltac1:(match goal with H : {_ : _| _} |- _ => destruct H as [cpConses HConses] end);
+  unfold I_cp_env; intros A B C C_ok f [ρ Hρ]; destruct f eqn:Heqf;
   ltac1:(
     match type of Heqf with
     (* The case we care about *)
     | _ = eCons3 _ _ _ => idtac
     (* All other cases: just preserve the invariant *)
     | _ =>
-      exists cpConses; intros;
-      edestruct HConses as [D [E Hctx]]; eauto;
+      exists ρ; unerase; intros;
+      edestruct Hρ as [D [E Hctx]]; eauto;
       rewrite Hctx; exists D; eexists;
       match goal with
       | |- ?C >++ ?D >:: ?e = _ =>
         now change (C >++ D >:: e) with (C >++ (D >:: e))
       end
     end).
-  exists (fun v' => if v' ==? v then Some (c, l) else cpConses v').
+  exists (fun v' => if v' ==? v then Some (c, l) else ρ v'); unerase.
   intros v'; destruct (eq_var_spec v' v); intros c' l' Heq.
   - inversion Heq; subst.
-    now exists fs, <[]>.
-  - edestruct HConses as [D [E Hctx]]; eauto.
+    now exists C, <[]>.
+  - edestruct Hρ as [D [E Hctx]]; eauto.
     rewrite Hctx.
     do 2 eexists.
     ltac1:(match goal with
@@ -692,12 +667,7 @@ Proof.
       now change (C >:: f1 >++ E >:: f2) with (C >:: f1 >++ (E >:: f2))
     end).
 Defined.
-
-Instance Preserves_cp_state : Preserves_S exp_univ exp_univ_exp (@cp_state).
-Proof.
-  (* Don't need to do anything to the state when moving around, so this is easy *)
-  constructor; intros A B fs; unfold cp_state; simpl; intros; assumption.
-Defined.
+Extraction Inline Preserves_cp_env.
 
 Instance Eq_constr : Eq constr := {rel_dec := fun '(mk_constr n) '(mk_constr m) => n ==? m}.
 Lemma eq_constr_spec (x y : constr) : Bool.reflect (x = y) (x ==? y).
@@ -722,19 +692,20 @@ Proof.
     now exists ((c', e') :: l), r.
 Defined.
 
-Require Import Omega.
+Require Import Lia.
+(*
 Lemma fresh_fresher :
   forall {A} x (e : univD A), (forall y, occurs y e -> var_gt x y) -> forall z, var_gt z x -> ~ occurs z e.
 Proof.
   intros A x e Hx z Hz; intros Hocc.
-  (assert (var_gt x z) by auto); destruct x, z; simpl in *; ltac1:(omega).
+  (assert (var_gt x z) by auto); destruct x, z; simpl in *; ltac1:(lia).
 Defined.
 
 Lemma occurs_ctx_insert :
   forall {A B} (C : frames_t A B), forall (D : frames_t A A) x e,
   occurs x (C ⟦ e ⟧) -> occurs x (C ⟦ D ⟦ e ⟧ ⟧).
 Proof. intros A B C D x e; repeat (rewrite occurs_ctx_split); ltac1:(tauto). Defined.
-
+*)
 Lemma app_as_ctx :
   forall l ces c r e, ces = l ++ (c, e) :: r ->
   exists C : frames_t exp_univ_exp exp_univ_list_prod_constr_exp, ces = C ⟦ e ⟧.
@@ -754,6 +725,7 @@ Proof.
   try ltac1:(intuition congruence).
 Defined.
 
+(*
 Lemma Exists'_map {A} (f : A -> A) P xs :
   Exists' P xs ->
   (forall x, P x -> P (f x)) ->
@@ -788,60 +760,68 @@ Proof.
     destruct H as [H|[H|H]] > [now left|right; left; now apply (In_map_eq σ)|].
     right; right; now apply occurs_subst_ne_exp.
 Defined.
+*)
 
-Definition rw_cp : rewriter exp_univ_exp cp_fold (@renaming) (@cp_env) (@cp_state).
+Definition rw_cp :
+  rewriter exp_univ_exp true tt cp_fold
+  renaming (I_renaming) _ (@I_cp_env) unit (I_S_plain (S:=unit)).
 Proof.
-  ltac1:(mk_rw; mk_easy_delay).
+  ltac1:(mk_rw;
+    (* Explain how to incrementalize substitutions *)
+    try lazymatch goal with
+    | |- ConstrDelay _ -> _ =>
+      clear; intros _; intros;
+      lazymatch goal with
+      | d : Delay _ _, H : forall _, _ |- _ =>
+        destruct d as [d Hd]; cbn in H; unshelve eapply H;
+        try lazymatch goal with |- Delay _ _ => eexists end;
+        try lazymatch goal with |- _ = _ => reflexivity end;
+        try lazymatch goal with |- I_renaming _ _ _ => exact I end
+      end
+    end).
   (* Now there are two things left: first, we need to explain how to check the preconditions
      of each rule and compute intermediate values *)
   - (* Case folding *)
-    intros _ R C x ces d r s success failure.
-    destruct r as [cpConses HConses] eqn:Hr.
-    destruct (cpConses (d x)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
+    intros _ R C C_ok x ces [d []] r s success failure.
+    destruct r as [ρ Hρ] eqn:Hr.
+    destruct (ρ (d x)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (find_arm c ces) as [e|] eqn:Hc > [|ltac1:(cond_failure)].
     ltac1:(cond_success success).
-    specialize (success e d (d x) (map (subst_arm d) ces) c (subst_exp d e)).
-    apply success; auto; split.
-    + edestruct HConses as [D [E Hctx]]; eauto.
+    specialize (success e (exist _ d I) (d x) (map (subst_arm d) ces) c (subst_exp d e)).
+    apply success; auto; unerase; split.
+    + edestruct Hρ as [D [E Hctx]]; eauto.
     + apply find_arm_In in Hc; destruct Hc as [l [r_arms Hlr]].
       exists (map (subst_arm d) l), (map (subst_arm d) r_arms); subst ces.
       now rewrite !map_app.
   - (* Projection folding *)
-    clear; intros _ R C e x y n d r s success failure.
-    destruct r as [cpConses HConses] eqn:Hr.
-    destruct (cpConses (d y)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
+    clear; intros _ R C C_ok e x y n [d []] r s success failure.
+    destruct r as [ρ Hρ] eqn:Hr.
+    destruct (ρ (d y)) as [[c ys]|] eqn:Hx > [|ltac1:(cond_failure)].
     destruct (nth_error ys n) as [y'|] eqn:Hn > [|ltac1:(cond_failure)].
-    ltac1:(cond_success success); apply (success (subst_exp d e) (fun e => one_renaming (d x) y' (d e))
-                                                 (d x) (d y) n y' ys); auto.
-    + edestruct HConses as [D [E Hctx]]; eauto.
+    ltac1:(cond_success success); apply (success (subst_exp d e)
+                                                 (exist _ (fun e => one_renaming (d x) y' (d e)) I)
+                                                 (d x) (d y) n y' ys); auto; unerase.
+    + edestruct Hρ as [D [E Hctx]]; eauto.
     + now rewrite <- subst_exp_comp.
 Defined.
 
-Check rw_cp.
-Eval unfold rewriter, rw_for in rewriter exp_univ_exp cp_fold (@renaming) (@cp_env) (@cp_state).
-
-Definition rw_cp' : 
-  rewriter exp_univ_exp cp_fold (@renaming) (@cp_env) (@cp_state).
-Proof.
-  ltac1:(let x := eval unfold rw_cp, Fuel_Fix, rw_chain, rw_id, rw_base in rw_cp in
-  let x := eval unfold preserve_R, Preserves_cp_env, Preserves_cp_state in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold delayD, Delayed_renaming in x in
-  let x := eval lazy beta iota zeta in x in
-  exact x).
-Defined.
-
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
-Recursive Extraction rw_cp'.
+Recursive Extraction rw_cp.
 
-Definition rw_cp_top e : result exp_univ_exp cp_fold (@cp_state) <[]> e.
+Definition rw_cp_top e : result (Root:=exp_univ_exp) cp_fold (I_S_plain (S:=unit)) (erase <[]>) e.
 Proof.
-  rewrite <- delay_id_law.
-  ltac1:(refine(
-  rw_cp' lots_of_fuel exp_univ_exp <[]> e
-    id (exist _ (fun _ => None) _) tt); intros; congruence).
+  ltac1:(replace e with (delayD ((exist _ (fun x => x) I) : (Delay I_renaming e)))
+        by (cbn; rewrite subst_exp_id; auto)).
+  ltac1:(unshelve eapply (rw_cp lots_of_fuel);
+  try lazymatch goal with |- erased nat => refine (erase _) end;
+  try lazymatch goal with
+  | |- e_ok (erase _) => apply erase_ok
+  | |- Param _ _ => exists (fun _ => None); unerase; unfold I_cp_env; intros; congruence
+  | |- State _ _ _ => exists tt; exact I
+  | |- «_» => unerase; reflexivity
+  | |- _ = _ => reflexivity
+  end).
 Defined.
-Check rw_cp_top.
 
 (*
 Compute (rw_cp_top (
