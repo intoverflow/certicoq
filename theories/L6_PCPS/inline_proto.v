@@ -1547,10 +1547,9 @@ Inductive inline_step : exp -> exp -> Prop :=
     (C ⟦ Rec e'' ⟧).
 
 (* Maintain map of known functions while traversing *)
-Definition S_fns {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := {
-  ρ : fun_map |
+Definition S_fns {A} (C : exp_c A exp_univ_exp) (e : univD A) (ρ : fun_map) : Prop :=
   forall f ft xs e_body, M.get f ρ = Some (ft, xs, e_body) ->
-  known_function [f]! ft xs e_body C e }.
+  known_function [f]! ft xs e_body C e.
 
 Fixpoint remove_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
   match fds with
@@ -1631,141 +1630,134 @@ Proof.
      |try solve [inversion HEeq|inv' HEnil; inversion HC]])).
 Qed.
 
-Instance Preserves_S_S_fns : Preserves_S _ exp_univ_exp (@S_fns).
+Local Ltac destruct_known' Hρ :=
+  destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[]]].
+Local Ltac destruct_known Hρ :=
+  destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[D[fds1[HC Hin]]]]].
+Local Ltac destruct_ctx' E AB fE E' HE :=
+  destruct (frames_split' E) as [[AB [fE [E' HE]]]|[?[? ?]]]; [|discriminate].
+Local Ltac destruct_ctx E AB fE E' HE HEeq HEnil HElen :=
+  destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]].
+
+Instance Preserves_S_up_S_fns : Preserves_S_up (@S_fns).
 Proof.
-  constructor.
-  Local Ltac destruct_known' Hρ :=
-    destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[]]].
-  Local Ltac destruct_known Hρ :=
-    destruct Hρ as [[D[fds'[E[HC HIn]]]]|[[D[fds1[fds2[E[HC Hin]]]]]|[D[fds1[HC Hin]]]]].
-  Local Ltac destruct_ctx' E AB fE E' HE :=
-    destruct (frames_split' E) as [[AB [fE [E' HE]]]|[?[? ?]]]; [|discriminate].
-  Local Ltac destruct_ctx E AB fE E' HE HEeq HEnil HElen :=
-    destruct (frames_split' E) as [[AB [fE [E' HE]]]|[HEeq [HEnil HElen]]].
-  (* Moving upwards *)
-  - intros A B C f e [ρ Hρ]; destruct f; lazymatch goal with
-    (* There are only a few cases that we care about: *)
-    | |- S_fns C (frameD (Efun0 ?e') ?fds') => rename e' into e, fds' into fds
-    | |- S_fns C (frameD (Efun1 ?fds') ?e') => rename e' into e, fds' into fds
-    | |- S_fns C (frameD (cons_fundef0 ?fds') ?fd) => destruct fd as [[f] ft xs e_body]; rename fds' into fds
-    | |- S_fns C (frameD (cons_fundef1 ?fd) ?fds') => destruct fd as [[f] ft xs e_body]; rename fds' into fds
-    (* For all the others, the map should remain unchanged *)
-    | _ =>
-      exists ρ; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
-      apply known_nonbundle_up; [now inversion 1..|exact I|assumption]
-    end.
-    (* When leaving a function definition f(xs) = e, need to add f back into the map *)
-    + exists (M.set f (ft, xs, e_body) ρ); intros g gt ys e Hget.
-      destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto].
-      * (* f is now a known function *) inv Hget; right; right; exists C, []; split; [reflexivity|now left].
-      * (* All other functions are still known *)
-        specialize (Hρ g gt ys e Hget); destruct_known' Hρ; [left|right].
-        -- destruct_ctx' E AB fE E' HE; subst E; inv' HC; now repeat eexists.
-        -- destruct_ctx E AB fE E' HE HEeq HEnil HElen; [subst E; left|right].
-           ++ inv' HC; now repeat eexists.
-           ++ inv' HEnil; inv' HC.
-              exists D, fds1; split; [auto|]; apply in_app_or in Hin; apply in_or_app.
-              now (destruct Hin; [left|right; right]).
-    (* When moving upwards along a function bundle, the set of known functions remains unchanged *)
-    + exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ.
-      (* If g was defined in an earlier bundle, g is still known *)
-      * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
-      (* If g was defined in a bundle and we are currently inside one of the bundle's definitions,
-         g is still known *)
-      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
-      (* If g was defined in the bundle we are currently traversing, g is still known (though it
-         may be to the right of us instead of to the left now as we are moving upwards through the
-         bundle) *)
-      * destruct fds1 as [|[f1 ft1 xs1 e1] fds1].
-        -- destruct_ctx' D AB fD D' HD; subst D.
-           inv' HC; right; right; exists D', []; split; [easy|now right].
-        -- inv' HC; right; right; exists D, fds1; split; [easy|].
-           apply in_app_or in Hin; apply in_or_app.
-           now destruct Hin as [[Hin|Hin]|Hin]; [inv Hin; right; left|left|right; right].
-    (* When moving upwards past a function bundle, the whole bundle must be deleted *)
-    + exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
-      apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
-      destruct_known Hρ.
-      (* If g was defined in an earlier bundle, it's still known *)
-      * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
-      (* If g was defined in a bundle and we're currently in one of its definitions, g is still known *)
-      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
-      (* If g was defined in the bundle we are leaving, then it can't have been in (remove_fundefs fds ρ)
-         in the first place *)
-      * destruct fds1 as [|fd fds1]; [|now inversion HC]; contradiction Hne; now repeat eexists.
-    (* Ditto, but this time moving upwards to (Efun fds e) from e instead of from fds *)
-    + exists (remove_fundefs fds ρ); intros g gt ys e_body Hget.
-      apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
-      destruct_known' Hρ.
-      * destruct_ctx E AB fE E' HE HEeq HEnil HElen.
-        -- subst E; inv' HC; left; now repeat eexists.
-        -- inv' HEnil; inv' HC; contradiction Hne; now repeat eexists.
-      * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
-  (* Moving downwards *)
-  - intros A B C f e [ρ Hρ]; destruct f; lazymatch goal with
-    (* There are only a few cases that we care about: *)
-    | |- S_fns (C >:: Efun0 ?e') ?fds' => rename e' into e, fds' into fds
-    | |- S_fns (C >:: Efun1 ?fds') ?e' => rename e' into e, fds' into fds
-    | |- S_fns (C >:: cons_fundef0 ?fds') ?fd => destruct fd as [[f] ft xs e_body]; rename fds' into fds
-    | |- S_fns (C >:: cons_fundef1 ?fd) ?fds' => destruct fd as [[f] ft xs e_body]; rename fds' into fds
-    (* For all the others, the map should remain unchanged *)
-    | _ =>
-      exists ρ; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
-      apply known_nonbundle_dn; [now inversion 1..|exact I|assumption]
-    end.
-    Local Ltac still_known :=
-      subst; change (?l >++ ?r >:: ?f) with (l >++ (r >:: f));
-      (left + (right; left)); now repeat eexists.
-    (* When entering a function body f(xs) = e_body, need to delete ρ(f) *)
-    + exists (M.remove f ρ); intros g gt ys e Hget; destruct (Pos.eq_dec g f) as [Hgf|Hgf];
-      [subst f; now rewrite M.grs in Hget|rewrite M.gro in Hget by auto]; specialize (Hρ g gt ys e Hget).
-      (* If g was defined in a bundle earlier, it's still there *)
-      destruct_known Hρ; [still_known..|].
-      (* If g was defined in the bundle that we were traversing and g <> f, then g is still known
-         but now as a function defined in an "earlier bundle" instead of as a function in the bundle
-         currently being traversed *)
-      right; left; exists D, fds1, fds, <[]>; split; [now subst C|].
-      apply in_app_or in Hin; apply in_or_app; now destruct Hin as [Hin|[Hin|Hin]]; [left|inv Hin|right].
-    (* When moving downwards along a function bundle, the set of known functions doesn't change *)
-    + exists ρ; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ; [still_known..|].
-      subst C; change (?l >++ ctx_of_fds ?r >:: cons_fundef1 ?f) with (l >++ ctx_of_fds (f :: r)).
-      right; right; repeat eexists; apply in_app_or in Hin; apply in_or_app.
-      destruct Hin as [Hin|[Hin|Hin]]; [now (left; right)|left; left; now inv Hin|now right].
-    (* When entering a function bundle fds, need to add the whole bundle to ρ *)
-    + exists (add_fundefs fds ρ); intros g gt ys e_body Hget.
-      (* If g ∈ fds then g is clearly in the bundle we are currently traversing *)
-      apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [do 2 right; eexists; now exists []|].
-      (* Otherwise, g is still known *)
-      specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
-    (* Ditto when entering e in (Efun fds e) *)
-    + exists (add_fundefs fds ρ); intros g gt ys e_body Hget.
-      (* If g ∈ fds then g is clearly defined in an 'earlier' bundle *)
-      apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [left; now exists C, fds, <[]>|].
-      (* Otherwise, g is still known *)
-      specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
+  intros A B C C_ok f e [ρ Hρ]; destruct f; try lazymatch goal with
+  (* There are only a few cases that we care about: *)
+  | |- State (@S_fns) C (frameD (Efun0 ?e') ?fds') => rename e' into e, fds' into fds
+  | |- State (@S_fns) C (frameD (Efun1 ?fds') ?e') => rename e' into e, fds' into fds
+  | |- State (@S_fns) C (frameD (cons_fundef0 ?fds') ?fd) => destruct fd as [[f] ft xs e_body]; rename fds' into fds
+  | |- State (@S_fns) C (frameD (cons_fundef1 ?fd) ?fds') => destruct fd as [[f] ft xs e_body]; rename fds' into fds
+  (* For all the others, the map should remain unchanged *)
+  | _ =>
+    exists ρ; unerase; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
+    apply known_nonbundle_up; [now inversion 1..|exact I|]; assumption
+  end.
+  (* When leaving a function definition f(xs) = e, need to add f back into the map *)
+  + exists (M.set f (ft, xs, e_body) ρ); unerase; intros g gt ys e Hget.
+    destruct (Pos.eq_dec g f) as [Hgf|Hgf]; [subst f; rewrite M.gss in Hget|rewrite M.gso in Hget by auto].
+    * (* f is now a known function *) inv Hget; right; right; exists C, []; split; [reflexivity|now left].
+    * (* All other functions are still known *)
+      specialize (Hρ g gt ys e Hget); destruct_known' Hρ; [left|right].
+      -- destruct_ctx' E AB fE E' HE; subst E; inv' HC; now repeat eexists.
+      -- destruct_ctx E AB fE E' HE HEeq HEnil HElen; [subst E; left|right].
+         ++ inv' HC; now repeat eexists.
+         ++ inv' HEnil; inv' HC.
+            exists D, fds1; split; [auto|]; apply in_app_or in Hin; apply in_or_app.
+            now (destruct Hin; [left|right; right]).
+  (* When moving upwards along a function bundle, the set of known functions remains unchanged *)
+  + exists ρ; unerase; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ.
+    (* If g was defined in an earlier bundle, g is still known *)
+    * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
+    (* If g was defined in a bundle and we are currently inside one of the bundle's definitions,
+       g is still known *)
+    * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
+    (* If g was defined in the bundle we are currently traversing, g is still known (though it
+       may be to the right of us instead of to the left now as we are moving upwards through the
+       bundle) *)
+    * destruct fds1 as [|[f1 ft1 xs1 e1] fds1].
+      -- destruct_ctx' D AB fD D' HD; subst D.
+         inv' HC; right; right; exists D', []; split; [easy|now right].
+      -- inv' HC; right; right; exists D, fds1; split; [easy|].
+         apply in_app_or in Hin; apply in_or_app.
+         now destruct Hin as [[Hin|Hin]|Hin]; [inv Hin; right; left|left|right; right].
+  (* When moving upwards past a function bundle, the whole bundle must be deleted *)
+  + exists (remove_fundefs fds ρ); unerase; intros g gt ys e_body Hget.
+    apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
+    destruct_known Hρ.
+    (* If g was defined in an earlier bundle, it's still known *)
+    * destruct_ctx' E AB fE E' HE; subst E; inv' HC; left; now repeat eexists.
+    (* If g was defined in a bundle and we're currently in one of its definitions, g is still known *)
+    * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
+    (* If g was defined in the bundle we are leaving, then it can't have been in (remove_fundefs fds ρ)
+       in the first place *)
+    * destruct fds1 as [|fd fds1]; [|now inversion HC]; contradiction Hne; now repeat eexists.
+  (* Ditto, but this time moving upwards to (Efun fds e) from e instead of from fds *)
+  + exists (remove_fundefs fds ρ); unerase; intros g gt ys e_body Hget.
+    apply remove_fundefs_Some in Hget; destruct Hget as [Hne Hget]; specialize (Hρ g gt ys e_body Hget).
+    destruct_known' Hρ.
+    * destruct_ctx E AB fE E' HE HEeq HEnil HElen.
+      -- subst E; inv' HC; left; now repeat eexists.
+      -- inv' HEnil; inv' HC; contradiction Hne; now repeat eexists.
+    * destruct_ctx' E AB fE E' HE; subst E; right; left; inv' HC; now repeat eexists.
 Defined.
+Extraction Inline Preserves_S_up_S_fns.
+
+Instance Preserves_S_dn_S_fns : Preserves_S_dn (@S_fns).
+Proof.
+  intros A B C C_ok f e [ρ Hρ]; destruct f; try lazymatch goal with
+  (* There are only a few cases that we care about: *)
+  | |- State (@S_fns) (e_map (fun C => C >:: Efun0 ?e') C) ?fds' =>
+    rename e' into e, fds' into fds
+  | |- State (@S_fns) (e_map (fun C => C >:: Efun1 ?fds') C) ?e' => 
+    rename e' into e, fds' into fds
+  | |- State (@S_fns) (e_map (fun C => C >:: cons_fundef0 ?fds') C) ?fd => 
+    destruct fd as [[f] ft xs e_body]; rename fds' into fds
+  | |- State (@S_fns) (e_map (fun C => C >:: cons_fundef1 ?fd) C) ?fds' => 
+    destruct fd as [[f] ft xs e_body]; rename fds' into fds
+  (* For all the others, the map should remain unchanged *)
+  | _ =>
+    exists ρ; unerase; intros f' ft' xs' e' Hftxse'; specialize (Hρ f' ft' xs' e' Hftxse');
+    apply known_nonbundle_dn; [now inversion 1..|exact I|]; assumption
+  end.
+  Local Ltac still_known :=
+    subst; change (?l >++ ?r >:: ?f) with (l >++ (r >:: f));
+    (left + (right; left)); now repeat eexists.
+  (* When entering a function body f(xs) = e_body, need to delete ρ(f) *)
+  + exists (M.remove f ρ); unerase; intros g gt ys e Hget; destruct (Pos.eq_dec g f) as [Hgf|Hgf];
+    [subst f; now rewrite M.grs in Hget|rewrite M.gro in Hget by auto]; specialize (Hρ g gt ys e Hget).
+    (* If g was defined in a bundle earlier, it's still there *)
+    destruct_known Hρ; [still_known..|].
+    (* If g was defined in the bundle that we were traversing and g <> f, then g is still known
+       but now as a function defined in an "earlier bundle" instead of as a function in the bundle
+       currently being traversed *)
+    right; left; exists D, fds1, fds, <[]>; split; [now subst C|].
+    apply in_app_or in Hin; apply in_or_app; now destruct Hin as [Hin|[Hin|Hin]]; [left|inv Hin|right].
+  (* When moving downwards along a function bundle, the set of known functions doesn't change *)
+  + exists ρ; unerase; intros g gt ys e Hget; specialize (Hρ g gt ys e Hget); destruct_known Hρ; [still_known..|].
+    subst C; change (?l >++ ctx_of_fds ?r >:: cons_fundef1 ?f) with (l >++ ctx_of_fds (f :: r)).
+    right; right; repeat eexists; apply in_app_or in Hin; apply in_or_app.
+    destruct Hin as [Hin|[Hin|Hin]]; [now (left; right)|left; left; now inv Hin|now right].
+  (* When entering a function bundle fds, need to add the whole bundle to ρ *)
+  + exists (add_fundefs fds ρ); unerase; intros g gt ys e_body Hget.
+    (* If g ∈ fds then g is clearly in the bundle we are currently traversing *)
+    apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [do 2 right; eexists; now exists []|].
+    (* Otherwise, g is still known *)
+    specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
+  (* Ditto when entering e in (Efun fds e) *)
+  + exists (add_fundefs fds ρ); unerase; intros g gt ys e_body Hget.
+    (* If g ∈ fds then g is clearly defined in an 'earlier' bundle *)
+    apply add_fundefs_Some in Hget; destruct Hget as [Hget|Hget]; [left; now exists C, fds, <[]>|].
+    (* Otherwise, g is still known *)
+    specialize (Hρ _ _ _ _ Hget); destruct_known' Hρ; still_known.
+Defined.
+Extraction Inline Preserves_S_dn_S_fns.
 
 (* Inlining heuristic is a piece of state *)
-Record S_IH {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := mk_IH {un_IH : InlineHeuristic}.
+Definition S_IH : forall {A} (C : exp_c A exp_univ_exp) (e : univD A) (IH : InlineHeuristic), Prop :=
+  I_S_plain (S:=InlineHeuristic).
 
-(* Though inlining heuristics don't have any nontrivial invariants, the Preserves_R
-    instance must make calls to update_* methods in the proper places. *)
-Instance Preserves_S_S_IH : Preserves_S _ exp_univ_exp (@S_IH).
-Proof.
-  constructor; intros A B C f x [IH].
-  - (* No change on the way back up *) constructor; exact IH.
-  - (* Update the heuristic on the way down *)
-    destruct f;
-    match goal with
-    | |- S_IH (C >:: Efun0 ?e) ?fds => constructor; exact (IH.(update_funDef1) fds e)
-    | |- S_IH (C >:: Efun1 ?fds) ?e => constructor; exact (IH.(update_funDef2) fds e)
-    | |- S_IH (C >:: Ffun3 ?f ?ft ?xs) ?e => constructor; exact (IH.(update_inFun) f ft xs e)
-    | |- _ => constructor; exact IH
-    end.
-Defined.
-
-Definition S_inline : forall {A}, exp_c A exp_univ_exp -> univD A -> Set :=
-  S_prod (S_prod (S_prod (S_prod (S_plain comp_data) (@S_IH)) (@S_fresh)) (@S_fns)) (@S_uniq).
+Definition S_inline : forall {A}, exp_c A exp_univ_exp -> univD A -> _ -> Prop :=
+  I_S_prod (I_S_prod (I_S_prod (I_S_prod (I_S_plain (S:=comp_data)) (@S_IH)) (@I_S_fresh)) (@S_fns)) (@I_S_uniq).
 
 Require Import Coq.Strings.String.
 
@@ -1806,17 +1798,15 @@ Proof.
     rewrite HC; exists (D >++ C); now rewrite frames_compose_law.
 Qed.
 
-Definition rw_inline' : rewriter exp_univ_exp inline_step
-  trivial_delay_t trivial_R_C (@S_inline).
+Definition rw_inline :
+  rewriter exp_univ_exp true tt inline_step _ (I_D_plain (D:=unit)) _ (I_R_plain (R:=unit)) _ (@S_inline).
 Proof.
   mk_rw; mk_easy_delay.
   (* To actually perform inlining, we need to check the heuristic, do the renaming, etc. *)
-  - clear; unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
-    intros _ R C f ft' ys _ _ [[[[cdata [IH]] [fresh Hfresh]] [ρ Hρ]] Huniq] success failure.
+  - unfold delayD, Delayed_id_Delay in *.
+    intros _ R C C_ok f ft' ys d r [[[[[cdata IH] fresh] ρ] []] Hs] success failure.
     (* Look up f in the map of known functions *)
     destruct (M.get ![f] ρ) as [[[ft xs] e]|] eqn:Hget; [|cond_failure].
-    pose (Hρ' := Hρ); clearbody Hρ'.
-    specialize (Hρ ![f] ft xs e Hget).
     specialize success with (ft := ft) (xs := xs) (e := e).
     (* Check the heuristic *)
     destruct (decide_App IH f ft ys) eqn:Hdec; [|cond_failure].
@@ -1826,19 +1816,27 @@ Proof.
        works as long as FV(e) ∩ BV(e) = ∅ (so the mapping [xs ↦ ys] never overlaps with future
        updates to σ). *)
     destruct (set_lists ![xs] ![ys] (M.empty _)) as [σ|] eqn:Hσ; [|cond_failure].
-    replace [![f]]! with f in Hρ by now unbox_newtypes.
     destruct (freshen_exp fresh (M.empty _) e) as [fresh' e'] eqn:Hfreshen; symmetry in Hfreshen.
     specialize success with (e' := e') (σ := σ).
     (* Prove that we did what we said we did *)
-    cond_success success; eapply success; [..|reflexivity| |]; [exact tt|..];
-      repeat match goal with |- _ /\ _ => split end; eauto.
+    cond_success success. specialize (success (rename_all' σ e') d f ft' ys (rename_all' σ e') (Eapp f ft ys)).
+    apply success; try reflexivity; try exact r;
+      try lazymatch goal with
+      | |- «_» =>
+        unerase; unfold S_inline, I_S_prod, I_S_plain, I_S_fresh, S_fns, I_S_uniq in Hs;
+        destruct Hs as [[[[_ HIH] Hfresh] Hρ] Huniq];
+        pose (Hρ' := Hρ); clearbody Hρ';
+        specialize (Hρ ![f] ft xs e Hget);
+        rewrite isoABA in Hρ;
+        repeat match goal with |- _ /\ _ => split end; auto
+      end.
     + assert (Hid : f_eq id (apply_r (M.empty _))). {
         unfold f_eq, apply_r; intros x; now rewrite M.gempty. }
       rewrite Hid; eapply freshen_exp_Alpha; eauto.
       * (* for every known function (ft, xs, e), exists D s.t. C[f(ys)] = D[e].
            then UB(D[e]) ==> UB e by ub_app_ctx_f *)
         apply known_in_ctx in Hρ; destruct Hρ as [D HD].
-        unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+        rewrite HD, app_exp_c_eq, isoBAB in Huniq.
         now apply ub_app_ctx_f in Huniq.
       * rewrite <- Hid, image_id, Union_idempotent.
         (* fresh > C[f(ys)] = D[e] for some D and then vars(D[e]) ⊇ vars(e) *)
@@ -1851,7 +1849,7 @@ Proof.
     + eapply freshen_exp_uniq; eauto.
       (* UB(C[f(ys)] ==> UB(D[e]) ==> UB(e) by ub_app_ctx_f *)
       apply known_in_ctx in Hρ; destruct Hρ as [D HD].
-      unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+      rewrite HD, app_exp_c_eq, isoBAB in Huniq.
       now apply ub_app_ctx_f in Huniq.
     + (* BV(e') ⊆ [fresh, fresh') by freshen_exp_bounded and fresh > vars(C[e]) *)
       apply known_in_ctx in Hρ; destruct Hρ as [D HD].
@@ -1868,18 +1866,27 @@ Proof.
         eapply Disjoint_Included_l; [eapply Included_Union_r|].
         eapply Disjoint_Included_l; [eassumption|].
         apply Disjoint_intervals; lia.
-    + constructor.
     (* We must explain how to maintain all the intermediate state variables across the edit *)
-    + unfold trivial_delay_t, delayD, Delayed_trivial_delay_t in *.
-      split; [split; [split; [split|]|]|]; unfold S_plain, S_fresh, S_fns, S_uniq.
-      * (* Need to set fresh variable in cdata properly for future passes.
+    + exists ((* Need to set fresh variable in cdata properly for future passes.
            Though we don't use it, later passes do. *)
-        exact (update_next_var fresh' cdata).
-      * (* Update the inlining heuristic *)
-        constructor; exact (IH.(update_App) f ft ys).
-      * (* fresh' is a sufficiently fresh variable *)
-        exists fresh'.
-        (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ image σ (used_vars e). then have 
+          update_next_var fresh' cdata,
+          (* Update the inlining heuristic *)
+          IH.(update_App) f ft ys,
+          (* fresh' is a sufficiently fresh variable *)
+          fresh',
+          (* The set of known functions remains the same *)
+          ρ,
+          (* Unique bindings *)
+          tt);
+        unerase; unfold S_inline, I_S_prod, I_S_plain, I_S_fresh, S_fns, I_S_uniq in Hs;
+        destruct Hs as [[[[_ HIH] Hfresh] Hρ] Huniq];
+        pose (Hρ' := Hρ); clearbody Hρ';
+        specialize (Hρ ![f] ft xs e Hget);
+        rewrite isoABA in Hρ;
+        split; [split; [split; [split|]|]|]; unfold I_S_plain, I_S_fresh, S_fns, I_S_uniq.
+      * exact I.
+      * exact I.
+      * (* first need to show used_vars (rename_all σ e) ⊆ used_vars e ∪ image σ (used_vars e). then have 
              vars(C[rename_all σ e'])
              = vars(C) ∪ vars(rename_all σ e')
              ⊆ vars(C) ∪ used_vars e' ∪ image σ (used_vars e)
@@ -1907,9 +1914,7 @@ Proof.
               eapply fresher_than_antimon; [|eassumption].
               change (used_vars ![?e]) with (used e); rewrite used_app.
               unbox_newtypes; cbn; normalize_used_vars; eauto with Ensembles_DB.
-      * (* The set of known functions remains the same *)
-        exists ρ.
-        (* For any known g:
+      * (* For any known g:
            - If g was in an earlier bundle, it's still there
            - If g was in a bundle and we are in one of the bundle's definitions, we're still
              in that definition *)
@@ -1919,15 +1924,14 @@ Proof.
       * (* Unique bindings is preserved *)
         rewrite app_exp_c_eq, isoBAB.
         rewrite (proj1 (ub_app_ctx_f _)); split; [|split].
-        -- unfold S_uniq in Huniq.
-           rewrite app_exp_c_eq, isoBAB in Huniq.
+        -- rewrite app_exp_c_eq, isoBAB in Huniq.
            rewrite (proj1 (ub_app_ctx_f _)) in Huniq.
            decompose [and] Huniq; clear Huniq; auto.
         -- (* Follows from UB(e') because rename_all' doesn't change bindings *)
            unfold Rec.
            apply rename_all_uniq.
            apply known_in_ctx in Hρ; destruct Hρ as [D HD].
-           unfold S_uniq in Huniq; rewrite HD, app_exp_c_eq, isoBAB in Huniq.
+           rewrite HD, app_exp_c_eq, isoBAB in Huniq.
            apply ub_app_ctx_f in Huniq; decompose [and] Huniq.
            apply freshen_exp_uniq in Hfreshen; auto.
         -- (* Follows from vars(C[e]) ∩ BV(e') = ∅.
@@ -1945,36 +1949,27 @@ Proof.
            apply Disjoint_intervals; lia.
 Defined.
 
-Definition rw_inline : rewriter exp_univ_exp inline_step
-  trivial_delay_t trivial_R_C (@S_inline).
-Proof.
-  let x := eval unfold rw_inline', Fuel_Fix, rw_chain, rw_id, rw_base in rw_inline' in
-  let x := eval unfold delayD, Delayed_trivial_delay_t in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold Preserves_S_S_prod, Preserves_S_S_plain, Preserves_R_R_plain, preserve_R in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold Preserves_S_S_IH in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold Preserves_S_S_fresh, delayD, Delayed_trivial_delay_t in x in
-  let x := eval lazy beta iota zeta in x in
-  exact x.
-Defined.
-
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
 Recursive Extraction rw_inline.
 
-Definition initial_fns (e : exp) : S_fns <[]> e.
-Proof. exists (M.empty _); intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
+Definition initial_fns (e : exp) : State (@S_fns) (erase <[]>) e.
+Proof. exists (M.empty _); unerase; intros f ft xs e_body; rewrite M.gempty; inversion 1. Defined.
 
-Lemma inline_top' (e : exp) (s : S_inline <[]> e)
-  : result exp_univ_exp inline_step (@S_inline) <[]> e.
-Proof. exact (run_rewriter' rw_inline e tt s). Defined.
+Lemma inline_top' (e : exp) (s : State (@S_inline) (erase <[]>) e)
+  : result (Root:=exp_univ_exp) inline_step (@S_inline) (erase <[]>) e.
+Proof. exact (run_rewriter' rw_inline e (exist _ tt I) s). Defined.
 
 Definition inline_top (IH : InlineHeuristic) (c : comp_data) (e : exp) (H : unique_bindings ![e])
-  : exp * comp_data :=
-  let '{| resTree := e'; resState := (cdata, _, _, _, _) |} :=
-    run_rewriter' rw_inline e tt (c, mk_IH _ _ _ IH, initial_fresh e, initial_fns e, H)
-  in (e', cdata).
+  : exp * comp_data.
+Proof.
+  refine (let '{| resTree := e'; resState := exist (cdata, _, _, _, _) _ |} :=
+    run_rewriter' rw_inline e (exist _ tt I) _
+  in (e', cdata)).
+  exists (c, IH, proj1_sig (initial_fresh e), proj1_sig (initial_fns e), tt); unerase.
+  split; [split; [split; [split|]|]|]; try exact I; try exact H.
+  - exact (proj2_sig (initial_fresh e)).
+  - exact (proj2_sig (initial_fns e)).
+Defined.
 
 (* For now, to allow extraction, these functions assume the inliner receives terms with 
    unique bindings *)

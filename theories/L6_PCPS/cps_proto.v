@@ -754,7 +754,7 @@ Instance Iso_frames {U : Set} `{H : Frame U} {A B : U} : Iso (@frames_t U H A B)
   isoABA := t_sig_t;
   isoBAB := sig_t_sig }.
 
-Instance exp_Frame_inj : Frame_inj exp_univ.
+Instance exp_Frame_inj : Frame_inj (U:=exp_univ).
 Proof. intros A B f x y; destruct f; now inversion 1. Qed.
 
 Require Import Coq.Logic.JMeq.

@@ -75,24 +75,25 @@ Inductive shrink_step : exp -> exp -> Prop :=
 (** * Known constructors *)
 
 Definition ctx_map := M.tree (ctor_tag * list var).
-Definition R_ctors {A} (C : exp_c A exp_univ_exp) : Set := {
-  ρ : ctx_map |
-  forall x c ys, M.get ![x] ρ = Some (c, ys) -> known_ctor x c ys C }.
+Definition R_ctors {A} (C : exp_c A exp_univ_exp) (ρ : ctx_map) : Prop :=
+  forall x c ys, M.get ![x] ρ = Some (c, ys) -> known_ctor x c ys C.
 
-Instance Preserves_R_ctors : Preserves_R _ exp_univ_exp (@R_ctors).
+Instance Preserves_R_ctors : Preserves_R (@R_ctors).
 Proof.
-  intros A B fs f [ρ Hρ]; destruct f; lazymatch goal with
-  | |- R_ctors (fs >:: Econstr3 ?x' ?c' ?ys') => rename x' into x, c' into c, ys' into ys
+  intros A B fs fs_ok f [ρ Hρ]; destruct f; lazymatch goal with
+  | |- Param (@R_ctors) (e_map (fun fs => fs >:: Econstr3 ?x' ?c' ?ys') fs) =>
+    rename x' into x, c' into c, ys' into ys
   | _ =>
-    exists ρ; intros x' c' ys' Hget'; specialize (Hρ x' c' ys' Hget');
+    exists ρ; unerase; intros x' c' ys' Hget'; specialize (Hρ x' c' ys' Hget');
     destruct Hρ as [D [E Hctx]];
     match goal with |- known_ctor _ _ _ (_ >:: ?f) => exists D, (E >:: f); now subst fs end
   end.
-  destruct x as [x]; exists (M.set x (c, ys) ρ); intros [x'] c' ys' Hget'; cbn in *.
+  destruct x as [x]; exists (M.set x (c, ys) ρ); unerase; intros [x'] c' ys' Hget'; cbn in *.
   destruct (Pos.eq_dec x' x); [subst; rewrite M.gss in Hget'; inv Hget'; now exists fs, <[]>|].
   rewrite M.gso in Hget' by auto; destruct (Hρ (mk_var x') c' ys' Hget') as [D [E Hctx]].
   exists D, (E >:: Econstr3 (mk_var x) c ys); now subst fs.
 Defined.
+Extraction Inline Preserves_R_ctors.
 
 (** * Occurrence counts *)
 
@@ -980,13 +981,16 @@ Proof. apply well_scoped_mut'. Qed.
 
 (** * State variable *)
 
-Definition S_shrink {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set := {
-  δ : c_map | well_scoped (C ⟦ e ⟧) /\ (forall x, get_count x δ = count_exp x (C ⟦ e ⟧)) }.
+Definition S_shrink {A} (C : exp_c A exp_univ_exp) (e : univD A) (δ : c_map) : Prop :=
+  well_scoped (C ⟦ e ⟧) /\ (forall x, get_count x δ = count_exp x (C ⟦ e ⟧)).
 
-Instance Preserves_S_shrink : Preserves_S _ exp_univ_exp (@S_shrink).
-Proof. constructor; intros A B fs f x δ; exact δ. Defined.
+Instance Preserves_S_up_shrink : Preserves_S_up (@S_shrink).
+Proof. intros A B fs fs_ok f x δ; exact δ. Defined.
+Instance Preserves_S_dn_shrink : Preserves_S_dn (@S_shrink).
+Proof. intros A B fs fs_ok f x δ; exact δ. Defined.
+Extraction Inline Preserves_S_up_shrink Preserves_S_dn_shrink.
 
-Definition R_shrink : forall {A}, exp_c A exp_univ_exp -> Set := @R_ctors.
+Definition R_shrink : forall {A}, exp_c A exp_univ_exp -> _ -> Prop := @R_ctors.
 
 (** * Delayed renaming *)
 
@@ -1030,10 +1034,9 @@ Definition bound {A} : univD A -> Ensemble cps.var :=
   | exp_univ_list_var => fun _ => Empty_set _
   end.
 
-Definition D_rename {A} (e : univD A) : Set := {
-  σ : r_map | 
+Definition D_rename {A} (e : univD A) (σ : r_map) : Prop :=
   Disjoint _ (domain' σ) (bound e) /\ 
-  Disjoint _ (image'' σ) (bound e) }.
+  Disjoint _ (image'' σ) (bound e).
 
 Definition rename {A} (σ : r_map) : univD A -> univD A :=
   match A with
@@ -1076,12 +1079,13 @@ Instance Delayed_D_rename : Delayed (@D_rename).
 Proof.
   unshelve econstructor.
   - intros A e [σ Hσ]; exact (rename σ e).
-  - intros A e; exists (M.empty _); rewrite empty_domain', empty_image; eauto with Ensembles_DB.
+  - intros A e; exists (M.empty _); unfold D_rename; rewrite empty_domain', empty_image; eauto with Ensembles_DB.
   - cbn; intros; destruct A; cbn in *; unbox_newtypes;
       repeat match goal with |- context [let '_ := ?e in _] => destruct e end;
       rewrite ?apply_r_empty, ?apply_r'_id, ?apply_r_list'_id, ?rename_all_id; auto;
       apply MCList.map_id_f; intros []; cbn; now rewrite rename_all_id.
 Defined.
+Extraction Inline Delayed_D_rename.
 
 (** * Functional definition *)
 
@@ -1727,14 +1731,15 @@ Proof.
      change y with (un_var (mk_var y)); eapply proj_fold_y_unbound; eauto.
 Qed.
 
-Definition rw_shrink' : rewriter exp_univ_exp shrink_step (@D_rename) (@R_shrink) (@S_shrink).
+Definition rw_shrink :
+  rewriter exp_univ_exp true tt shrink_step _ (@D_rename) _ (@R_shrink) _ (@S_shrink).
 Proof.
   mk_rw; try lazymatch goal with |- ExtraVars _ -> _ => clear | |- ConstrDelay _ -> _ => clear end.
-  - (* Case folding *) intros _ R C x ces d r s success failure.
-    destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
+  - (* Case folding *) intros _ R C C_ok x ces d r s success failure.
+    destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, D_rename, Delayed_D_rename in *.
     pose (x0 := apply_r' σ x); specialize success with (x0 := x0).
     destruct (M.get ![x0] ρ) as [[c ys]|] eqn:Hctor; [|cond_failure].
-    pose (Hρ' := Hρ x0 c ys Hctor); specialize success with (c := c) (ys := ys).
+    specialize success with (c := c) (ys := ys).
     destruct (find_case c ces) as [e|] eqn:Hfind; [|cond_failure]; apply find_case_spec in Hfind.
     specialize success with (e := e) (e0 := @rename exp_univ_exp σ e).
     specialize success with (ces0 := @rename exp_univ_list_prod_ctor_tag_exp σ ces).
@@ -1745,13 +1750,15 @@ Proof.
         destruct Hfind as [ces1 [ces2 [Hnotin Hces]]]; subst ces.
         apply in_or_app; right; now left. }
       split; (eapply Disjoint_Included_r; [eapply In_ces_bound; eauto|]; eauto).
-    + split; auto.
+    + unerase; split; auto.
       destruct Hfind as [ces1 [ces2 [Hnotin Hces]]].
       assert (Hfind' : In (c, e) ces) by (subst ces; apply in_or_app; right; now left).
       apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind'; now cbn in Hfind'.
     + reflexivity. + reflexivity. + exact r.
-    + destruct s as [δ Hs] eqn:Hs_eq; unshelve eexists; [|split; [split|]].
-      * (* Update counts *) exact (census_case_pred σ c ces (census_var pred_upd σ x δ)).
+    + (* Update counts *)
+      destruct s as [δ Hs] eqn:Hs_eq;
+      exists (census_case_pred σ c ces (census_var pred_upd σ x δ));
+      unerase; split; [split|].
       * (* UB(C[σ(Ecase x ces)]) ==> UB(C[σ(e)]) because (c, e) ∈ ces *)
         destruct Hs as [[Huniq Hdisj] ?]. clear Hs_eq.
         rewrite !app_exp_c_eq, !isoBAB in Huniq.
@@ -1784,11 +1791,11 @@ Proof.
         eapply census_case_pred_spec; eauto.
         rewrite census_var_pred_corresp.
         destruct Hs as [[Huniq Hdis] Hδ]; rewrite Hδ, count_ctx_app; cbn; collapse_primes; lia.
-  - (* Projection folding *) intros _ R C e y t n x d r s success failure.
-    destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
+  - (* Projection folding *) intros _ R C C_ok e y t n x d r s success failure.
+    destruct r as [ρ Hρ] eqn:Hr, d as [σ Hσ] eqn:Hd; unfold delayD, D_rename, Delayed_D_rename in *.
     clearpose Hx0 x0 (apply_r' σ x); specialize success with (x0 := x0).
     destruct (M.get ![x0] ρ) as [[c ys]|] eqn:Hctor; [|cond_failure].
-    pose (Hρ' := Hρ x0 c ys Hctor); specialize success with (c := c) (ys := ys).
+    specialize success with (c := c) (ys := ys).
     destruct (nthN ys n) as [y'|] eqn:Hy'; [|cond_failure].
     specialize success with (y0 := y) (t0 := t) (n0 := n) (y' := y').
     specialize success with (e0 := @rename exp_univ_exp σ e).
@@ -1801,16 +1808,17 @@ Proof.
       * eapply Disjoint_Included_l; [apply domain'_set|]; apply Union_Disjoint_l; [|auto].
         apply Disjoint_Singleton_l.
         rewrite <- rename_all_preserves_bound with (σ := σ).
-        destruct s as [? [HWS ?]].
+        destruct s as [s Hs]; unerase; destruct Hs as [HWS ?].
         rewrite app_exp_c_eq in HWS; apply well_scoped_inv in HWS; rewrite isoABA in HWS.
         destruct HWS as [Huniq _]; clear - Huniq; unbox_newtypes; cbn in Huniq.
         now inv Huniq.
       * eapply Disjoint_Included_l; [apply image''_set|]; apply Union_Disjoint_l; [|auto].
         apply Disjoint_Singleton_l.
         rewrite <- rename_all_preserves_bound with (σ := σ).
-        destruct s as [? [HWS ?]]. change y' with (un_var (mk_var y')).
+        destruct s as [s Hs]; unerase; destruct Hs as [HWS ?].
+        change y' with (un_var (mk_var y')).
         inv Hx0. eapply proj_fold_y'_unbound; eauto.
-    + split; auto; apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind; now cbn in Hfind.
+    + unerase; split; auto; apply in_map with (f := @rename exp_univ_prod_ctor_tag_exp σ) in Hfind; now cbn in Hfind.
     + subst x0; reflexivity.
     + (* y ∉ dom σ ∪ ran σ because y ∈ BV(Eproj y t n x e).
          So (y ↦ y') ∘ σ = σ[y ↦ y'] *) cbn.
@@ -1823,9 +1831,10 @@ Proof.
         intros Hin; contradiction (Hσ y); constructor; auto. }
       apply rename_fuse, disjoint_fuse; auto.
     + exact r.
-    + destruct s as [δ Hs] eqn:Hs_eq; unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_var_pred σ x (census_subst y' y δ)).
+    + (* Update counts *)
+      destruct s as [δ Hs] eqn:Hs_eq;
+      exists (census_var_pred σ x (census_subst y' y δ)).
+      unerase; split; [split|].
       * (* UB(C[(σe)[y'/y]])
               ⟸ UB(C[σe]) (BV((σe)[y'/y]) = BV(σe) by rename_all_preserves_bound)
               ⟸ UB(C[Eproj y t n (σx) (σe)])
@@ -1847,6 +1856,7 @@ Proof.
         -- unfold Rec, rename; cbn; collapse_primes.
            subst x0; apply proj_fold_preserves_fv with (c := c) (ys := ys); auto.
       * intros arb; rewrite count_ctx_app, census_var_pred_corresp.
+        pose (Hρ' := Hρ x0 c ys Hctor).
         assert (Hneq : y <> y'). {
           subst x0; eapply proj_fold_y_ne_y'; try (exact Hρ' || exact Hy').
           clear Hs_eq; destruct Hs as [HWS _]; cbn in HWS; apply HWS. }
@@ -1876,8 +1886,8 @@ Proof.
            rewrite count_var_neq at 1 by auto; lia.
         -- rewrite census_subst_neither, count_exp_subst_neither, Hδ, count_ctx_app by auto.
            cbn; collapse_primes; lia.
-  - (* Top down dead constr *) intros _ R C e x c ys d r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
+  - (* Top down dead constr *) intros _ R C C_ok e x c ys d r s success failure.
+    destruct s as [δ Hδ] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename, D_rename in *.
     destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     specialize success with (x0 := x) (c0 := c) (ys0 := apply_r_list' σ ys).
     specialize success with (e0 := @rename exp_univ_exp σ e); cond_success success; unshelve eapply success.
@@ -1889,15 +1899,15 @@ Proof.
     Ltac solve_count Hδ Hs Hcount :=
       clear Hs; match goal with
       | |- count_exp ?x _ = 0 =>
+        unfold S_shrink in *; unerase; destruct Hδ as [HWS Hδ];
         specialize (Hδ x); rewrite count_ctx_app in Hδ; unfold get_count in Hδ; rewrite Hcount in Hδ; cbn in Hδ;
         unfold rename; lia
       end.
     + exists σ. (* Follows from BV(e) ⊆ BV(Econstr x c ys e) *) solve_σ_bvs Hσ Hd.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + reflexivity. + reflexivity. + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_vars_pred σ ys δ).
+    + (* Upate counts *)
+      exists (census_vars_pred σ ys δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       Ltac solve_uniq Hs WS :=
         clear Hs; destruct WS as [Huniq _]; rewrite app_exp_c_eq, isoBAB in Huniq|-*;
         rewrite (proj1 (ub_app_ctx_f _)); unbox_newtypes; cbn in Huniq; collapse_primes;
@@ -1925,14 +1935,14 @@ Proof.
            FV(C[σe]) ⊆ FV(C[σ(Econstr x c ys e)]) because x is dead *)
         solve_dead_disj Hs WS Hδ Hcount x σ e.
       * unfold Rec; intros arb; rewrite census_vars_pred_corresp, Hδ, !count_ctx_app; cbn; lia.
-  - (* Bottom up dead constr *) intros _ R C x c ys e r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, (M.get ![x] δ) eqn:Hcount; [cond_failure|].
+  - (* Bottom up dead constr *) intros _ R C C_ok x c ys e r s success failure.
+    destruct s as [δ Hδ] eqn:Hs; unfold delayD, Delayed_D_rename, D_rename in *.
+    destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     cond_success success; unshelve eapply success.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_vars_pred (M.empty _) ys δ).
+    + (* Update counts *)
+      exists (census_vars_pred (M.empty _) ys δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       * (* Follows from Huniq *) solve_uniq Hs WS.
       Ltac solve_dead_disj_bu Hs WS Hδ Hcount x e :=
         clear Hs; destruct WS as [_ Hdis];
@@ -1953,67 +1963,65 @@ Proof.
            FV(C[e]) ⊆ FV(C[Econstr x c ys e]) because x dead *)
         solve_dead_disj_bu Hs WS Hδ Hcount x e.
       * unfold Rec; intros arb; rewrite census_vars_pred_corresp, apply_r_list'_id, Hδ, !count_ctx_app; cbn; lia.
-  - (* Top down dead proj *) intros _ R C e x t n y d r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
+  - (* Top down dead proj *) intros _ R C C_ok e x t n y d r s success failure.
+    destruct s as [δ Hδ] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename, D_rename in *.
     destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     specialize success with (x0 := x) (t0 := t) (n0 := n) (y0 := apply_r' σ y).
     specialize success with (e0 := @rename exp_univ_exp σ e); cond_success success; unshelve eapply success.
     + exists σ. (* Follows from BV(e) ⊆ BV(Eproj x c ys e) *) solve_σ_bvs Hσ Hd.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + reflexivity. + reflexivity. + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_var_pred σ y δ).
+    + (* Update counts *)
+      exists (census_var_pred σ y δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       * (* Follows from Huniq *) solve_uniq Hs WS.
       * (* BV(C[σe]) ⊆ BV(C[σ(Eproj x t n y e)])
            FV(C[σe]) = FV(C[σe]) \\ {x} (because x is dead)
                      ⊆ FV(C[σ(Eproj x t n y e)]) *)
         solve_dead_disj Hs WS Hδ Hcount x σ e.
       * unfold Rec; intros arb; rewrite census_var_pred_corresp, Hδ, !count_ctx_app; cbn; lia.
-  - (* Bottom up dead proj *) intros _ R C x t n y e r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, (M.get ![x] δ) eqn:Hcount; [cond_failure|].
+  - (* Bottom up dead proj *) intros _ R C C_ok x t n y e r s success failure.
+    destruct s as [δ Hδ] eqn:Hs; unfold delayD, Delayed_D_rename, D_rename in *.
+    destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     cond_success success; unshelve eapply success.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_var_pred (M.empty _) y δ).
+    + (* Update counts *)
+      exists (census_var_pred (M.empty _) y δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       * (* Follows from Huniq *) solve_uniq Hs WS.
       * (* BV(C[e]) ⊆ BV(C[Eproj x t n y e])
            FV(C[e]) ⊆ FV(C[Eproj x t n y e]) because x dead *)
         solve_dead_disj_bu Hs WS Hδ Hcount x e.
       * unfold Rec; intros arb; rewrite census_var_pred_corresp, apply_r'_id, Hδ, !count_ctx_app; cbn; lia.
-  - (* Top down dead prim *) intros _ R C e x p ys d r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename in *.
+  - (* Top down dead prim *) intros _ R C C_ok e x p ys d r s success failure.
+    destruct s as [δ Hδ] eqn:Hs, d as [σ Hσ] eqn:Hd; unfold delayD, Delayed_D_rename, D_rename in *.
     destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     specialize success with (x0 := x) (p0 := p) (ys0 := apply_r_list' σ ys).
     specialize success with (e0 := @rename exp_univ_exp σ e); cond_success success; unshelve eapply success.
     + exists σ. (* Follows from BV(e) ⊆ BV(Eprim x p ys e) *) solve_σ_bvs Hσ Hd.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + reflexivity. + reflexivity. + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_vars_pred σ ys δ).
+    + (* Update counts *)
+      exists (census_vars_pred σ ys δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       * (* Follows from Huniq *) solve_uniq Hs WS.
       * (* BV(C[σe]) ⊆ BV(C[σ(Eprim x p ys e)])
            FV(C[σe]) = FV(C[σe]) \\ {x} (because x is dead)
                      ⊆ FV(C[σ(Eprim x p ys e)]) *)
         solve_dead_disj Hs WS Hδ Hcount x σ e.
       * unfold Rec; intros arb; rewrite census_vars_pred_corresp, Hδ, !count_ctx_app; cbn; lia.
-  - (* Bottom up dead prim *) intros _ R C x p ys e r s success failure.
-    destruct s as [δ [WS Hδ]] eqn:Hs, (M.get ![x] δ) eqn:Hcount; [cond_failure|].
+  - (* Bottom up dead prim *) intros _ R C C_ok x p ys e r s success failure.
+    destruct s as [δ Hδ] eqn:Hs; unfold delayD, Delayed_D_rename, D_rename in *.
+    destruct (M.get ![x] δ) eqn:Hcount; [cond_failure|].
     cond_success success; unshelve eapply success.
     + (* Follows from Hcount *) solve_count Hδ Hs Hcount.
     + exact r.
-    + unshelve eexists; [|split; [split|]].
-      * (* Update counts *)
-        exact (census_vars_pred (M.empty _) ys δ).
+    + (* Update counts *)
+      exists (census_vars_pred (M.empty _) ys δ); unerase; unfold S_shrink in *; destruct Hδ as [WS Hδ]; split; [split|].
       * (* Follows from Huniq *) solve_uniq Hs WS.
       * (* BV(C[e]) ⊆ BV(C[Eprim x p ys e])
            FV(C[e]) ⊆ FV(C[Eprim x p ys e]) because x dead *)
         solve_dead_disj_bu Hs WS Hδ Hcount x e.
       * unfold Rec; intros arb; rewrite census_vars_pred_corresp, apply_r_list'_id, Hδ, !count_ctx_app; cbn; lia.
-  Ltac unfold_delayD := unfold delayD, Delayed_D_rename in *.
+  Ltac unfold_delayD := unfold delayD, Delayed_D_rename, D_rename in *.
   Ltac solve_delayD :=
     unbox_newtypes; cbn in *; repeat normalize_bound_var_in_ctx;
     eauto with Ensembles_DB.
@@ -2045,18 +2053,6 @@ Proof.
   - (* Rename prim binding *) intros _ R x p ys e [σ [Hdom Hran]] k; unfold_delayD.
     unshelve eapply (k x p (apply_r_list' σ ys)); [exists σ|]; [solve_delayD..|reflexivity].
   - (* Rename halt *) intros _ R x [σ [Hdom Hran]] k; unfold_delayD; exact (k (apply_r' σ x) eq_refl).
-Defined.
-
-Definition rw_shrink : rewriter exp_univ_exp shrink_step (@D_rename) (@R_shrink) (@S_shrink).
-Proof.
-  let x := eval unfold rw_shrink', Fuel_Fix, rw_chain, rw_id, rw_base in rw_shrink' in
-  let x := eval unfold preserve_R, Preserves_R_ctors, Preserves_S_shrink in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold isoBofA, Iso_var, un_var in x in
-  let x := eval lazy beta iota zeta in x in
-  let x := eval unfold delayD, Delayed_D_rename in x in
-  let x := eval lazy beta iota zeta in x in
-  exact x.
 Defined.
 
 Set Extraction Flag 2031. (* default + linear let + linear beta *)

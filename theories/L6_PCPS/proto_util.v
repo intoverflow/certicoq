@@ -204,51 +204,71 @@ Qed.
 Section RunRewriter.
 
 Context 
-  {root : exp_univ} {R : relation (univD root)}
-  {R_misc S_misc : Set}
-  {D : forall A, univD A -> Set} `{@Delayed exp_univ Frame_exp (@D)}
-  {R_C : forall A, frames_t A root -> Set}
-  {St : forall A, frames_t A root -> univD A -> Set}
-  `{@Preserves_R exp_univ Frame_exp root (@R_C)}
-  `{@Preserves_S exp_univ Frame_exp root (@St)}
-  (rw : rewriter root R (@D) (@R_C) (@St)).
+  {Root : exp_univ} {fueled : bool} {metric : Metric Root fueled} {Rstep : relation (univD Root)}
+  {D : Set} {I_D : forall A, univD A -> D -> Prop} `{@Delayed _ Frame_exp D I_D}
+  {R : Set} {I_R : forall A, frames_t A Root -> R -> Prop}
+  {S : Set} {I_S : forall A, frames_t A Root -> univD A -> S -> Prop}
+  `{@Preserves_R _ Frame_exp _ R I_R}
+  `{@Preserves_S_dn _ Frame_exp _ S I_S}
+  `{@Preserves_S_up _ Frame_exp _ S I_S}
+  (rw : rewriter Root fueled metric Rstep D I_D R I_R S I_S).
 
 Definition run_rewriter' :
-  forall (e : univD root), R_C _ <[]> -> St _ <[]> e ->
-  result root R (@St) <[]> e.
+  forall (e : univD Root), Param I_R (erase <[]>) -> State I_S (erase <[]>) e ->
+  result Rstep I_S (erase <[]>) e.
 Proof.
-  intros e r s; unfold rewriter, rw_for in rw.
-  specialize (rw lots_of_fuel _ <[]> e (delay_id _)).
-  rewrite delay_id_law in rw; exact (rw r s).
+  intros e r s; unfold rewriter, rewriter', rw_for in rw.
+  destruct fueled.
+  - specialize (rw lots_of_fuel _ (erase <[]>) _ e (delay_id _)).
+    rewrite delay_id_law in rw.
+    specialize (rw (erase (Pos.to_nat lots_of_fuel)) _ r s); apply rw; unerase.
+    unfold run_metric; destruct metric; reflexivity.
+  - specialize (rw tt _ (erase <[]>) _ e (delay_id _)).
+    rewrite delay_id_law in rw; unshelve eapply rw;
+    try lazymatch goal with
+    | |- erased nat => refine (erase _)
+    | |- Param _ _ => assumption
+    | |- State _ _ _ => assumption
+    end;
+    try lazymatch goal with
+    | |- e_ok (erase _) => apply erase_ok
+    | |- «_» => unerase; reflexivity
+    end.
 Defined.
 
-Definition run_rewriter (e : univD root)
-           (r : R_C _ <[]>) (s : St _ <[]> e) : univD root :=
+Definition run_rewriter (e : univD Root)
+           (r : Param I_R (erase <[]>)) (s : State I_S (erase <[]>) e) : univD Root :=
   let '{| resTree := e' |} := run_rewriter' e r s in e'.
 
 End RunRewriter.
 
-Definition S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
-  {x | fresher_than x (used_vars ![C ⟦ e ⟧])}.
+Definition I_S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) (x : cps.var) : Prop :=
+  fresher_than x (used_vars ![C ⟦ e ⟧]).
 
 (* We don't have to do anything to preserve a fresh variable as we move around *)
-Instance Preserves_S_S_fresh : Preserves_S _ exp_univ_exp (@S_fresh).
-Proof. constructor; intros; assumption. Defined.
+Instance Preserves_S_dn_S_fresh : Preserves_S_dn (@I_S_fresh).
+Proof. unfold Preserves_S_dn; intros A B C C_ok f x s; exact s. Defined.
+Instance Preserves_S_up_S_fresh : Preserves_S_up (@I_S_fresh).
+Proof. unfold Preserves_S_up; intros A B C C_ok f x s; exact s. Defined.
+Extraction Inline Preserves_S_dn_S_fresh Preserves_S_up_S_fresh.
 
 (* Compute an initial fresh variable *)
-Definition initial_fresh (e : exp) : S_fresh <[]> e.
+Definition initial_fresh (e : exp) : State (@I_S_fresh) (erase <[]>) e.
 Proof.
-  exists (1 + max_var ![e] 1)%positive.
+  exists (1 + max_var ![e] 1)%positive; unerase; unfold I_S_fresh.
   change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
   intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
   destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
 Defined.
 
 (* Some passes assume unique bindings *)
-Definition S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) : Set :=
+Definition I_S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) (_ : unit) : Prop :=
   unique_bindings ![C ⟦ e ⟧].
-Instance Preserves_S_S_uniq : Preserves_S _ exp_univ_exp (@S_uniq).
-Proof. constructor; intros; assumption. Defined.
+Instance Preserves_S_dn_S_uniq : Preserves_S_dn (@I_S_uniq).
+Proof. unfold Preserves_S_dn; intros A B C C_ok f x s; exact s. Defined.
+Instance Preserves_S_up_S_uniq : Preserves_S_up (@I_S_uniq).
+Proof. unfold Preserves_S_up; intros A B C C_ok f x s; exact s. Defined.
+Extraction Inline Preserves_S_dn_S_uniq Preserves_S_up_S_uniq.
 
 (* Additional facts about variables *)
 
@@ -264,8 +284,6 @@ Proof.
   - rewrite bound_var_Ecase_nil; now cbn.
   - rewrite bound_var_Ecase_cons; cbn; rewrite IHces; eauto with Ensembles_DB.
 Qed.
-
-(* TODO: move to util *)
 
 Fixpoint used_vars_ces (ces : list (cps.ctor_tag * cps.exp)) :=
   match ces with
