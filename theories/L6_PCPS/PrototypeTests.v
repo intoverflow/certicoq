@@ -54,9 +54,6 @@ Instance EqDec_fd : EqDec fundef := {eq_dec' := fd_eq_dec'}.
 
 Instance EqDec_list {A} `{EqDec A} : EqDec (list A) := {eq_dec' := list_eq_dec eq_dec'}.
 
-(* Instance univ_eq_exp : @UnivEq exp_univ exp_frame_t. *)
-(* Proof. ltac1:(derive_UnivEq). Defined. *)
-
 Check frames_nil >:: cons_fundef0 [] >:: fFun2 (mk_var 0) [].
 Check fun e => <[ cons_fundef0 []; fFun2 (mk_var 0) [] ]> ⟦ e ⟧.
 
@@ -301,7 +298,8 @@ Definition test_case_tree (pat pat_ty ret_ty success failure : term) : TemplateM
   print_nf ast ;;
   ret tt.
 
-(* Compute runGM' 0 (gen_case_tree exp_aux_data.(aIndInfo)
+(*
+Compute runGM' 0 (gen_case_tree exp_aux_data.(aIndInfo)
   [(tVar "discr", mkApps <%S%> [mkApps <%S%> [mkApps <%S%> [tVar "n"]]])] <%nat%> <%true%> <%false%>).
 
 Compute <%(mk_constr 0, eApp (mk_var 0) [])%>.
@@ -310,13 +308,14 @@ Run TemplateProgram (test_case_tree <%@nil nat%> <%list nat%> <%bool%> <%true%> 
 Run TemplateProgram (test_case_tree <%eApp (mk_var 0) []%> <%exp%> <%bool%> <%true%> <%false%>).
 Run TemplateProgram (test_case_tree <%(mk_constr 0, eApp (mk_var 0) [])%> <%(constr * exp)%type%>
                                    <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree <%eCase (mk_var 1) [(mk_constr 0, eApp (mk_var 0) [])]%> <%exp%> *)
-(*                                    <%bool%> <%true%> <%false%>). *)
-(* Run TemplateProgram (test_case_tree *)
-(*   (mkApps <%eCase%> [mkApps <%mk_var%> [tVar "$n"]; mkApps <%@cons (constr * exp)%type%> [ *)
-(*     mkApps <%@pair constr exp%> [mkApps <%mk_constr%> [tVar "$m"]; *)
-(*     mkApps <%eApp%> [<%mk_var 0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]]) *)
-(*   <%exp%> <%nat%> (mkApps <%plus%> [tVar "$n"; tVar "$m"]) <%O%>). *)
+Run TemplateProgram (test_case_tree <%eCase (mk_var 1) [(mk_constr 0, eApp (mk_var 0) [])]%> <%exp%>
+                                   <%bool%> <%true%> <%false%>).
+Run TemplateProgram (test_case_tree
+  (mkApps <%eCase%> [mkApps <%mk_var%> [tVar "$n"]; mkApps <%@cons (constr * exp)%type%> [
+    mkApps <%@pair constr exp%> [mkApps <%mk_constr%> [tVar "$m"];
+    mkApps <%eApp%> [<%mk_var 0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]])
+  <%exp%> <%nat%> (mkApps <%plus%> [tVar "$n"; tVar "$m"]) <%O%>).
+*)
 
 Goal True.
   ltac1:(
@@ -520,93 +519,6 @@ Proof.
 Defined.
 Extraction Inline Delayed_renaming.
 
-(*
-Definition Exists' {A} (P : A -> Prop) : list A -> Prop :=
-  fix go xs :=
-    match xs with
-    | [] => False
-    | x :: xs => P x \/ go xs
-    end.
-
-Definition occurs_arm' (occurs_exp : var -> exp -> Prop) x (ce : constr * exp) : Prop :=
-  let '(c, e) := ce in occurs_exp x e.
-Fixpoint occurs_exp (x : var) (e : exp) {struct e} : Prop :=
-  match e with
-  | eHalt x' => x = x'
-  | eApp f xs => x = f \/ In x xs
-  | eCons x' c ys e => x = x' \/ In x ys \/ occurs_exp x e
-  | eProj x' y n e => x = x' \/ x = y \/ occurs_exp x e
-  | eCase x' arms => x = x' \/ Exists' (occurs_arm' occurs_exp x) arms
-  | eFuns fds e => Exists' (occurs_fd x) fds \/ occurs_exp x e
-  end
-with occurs_fd (x : var) (fd : fundef) {struct fd} : Prop :=
-  match fd with
-  | fFun f xs e => x = f \/ In x xs \/ occurs_exp x e
-  end.
-Definition occurs_arm := occurs_arm' occurs_exp.
-
-Definition occurs {A} : var -> univD A -> Prop :=
-  match A with
-  | exp_univ_nat => fun _ _ => False
-  | exp_univ_prod_constr_exp => occurs_arm
-  | exp_univ_list_prod_constr_exp => fun x => Exists' (occurs_arm x)
-  | exp_univ_fundef => occurs_fd
-  | exp_univ_list_fundef => fun x => Exists' (occurs_fd x)
-  | exp_univ_exp => occurs_exp
-  | exp_univ_var => eq
-  | exp_univ_constr => fun _ _ => False
-  | exp_univ_list_var => @In var
-  end.
-
-Definition occurs_frame (x : var) {A B} (f : exp_frame_t A B) : Prop. ltac1:(refine(
-  match f with
-  | pair_constr_exp0 e => occurs_exp x e
-  | pair_constr_exp1 c => False
-  | cons_prod_constr_exp0 ces => Exists' (occurs_arm x) ces
-  | cons_prod_constr_exp1 ce => occurs_arm x ce
-  | fFun0 xs e => In x xs \/ occurs_exp x e
-  | fFun1 f e => x = f \/ occurs_exp x e
-  | fFun2 f xs => x = f \/ In x xs
-  | cons_fundef0 fds => Exists' (occurs_fd x) fds
-  | cons_fundef1 fd => occurs_fd x fd
-  | eHalt0 => False
-  | eApp0 xs => In x xs
-  | eApp1 f => x = f
-  | eCons0 c ys e => In x ys \/ occurs_exp x e
-  | eCons1 x' ys e => x = x' \/ In x ys \/ occurs_exp x e
-  | eCons2 x' c e => x = x' \/ occurs_exp x e
-  | eCons3 x' c ys => x = x' \/ In x ys
-  | eProj0 y n e => x = y \/ occurs_exp x e
-  | eProj1 x' n e => x = x' \/ occurs_exp x e
-  | eProj2 x' y e => x = x' \/ x = y \/ occurs_exp x e
-  | eProj3 x' y n => x = x' \/ x = y
-  | eCase0 ces => Exists' (occurs_arm x) ces
-  | eCase1 x' => x = x'
-  | eFuns0 e => occurs_exp x e
-  | eFuns1 fds => Exists' (occurs_fd x) fds
-  end
-)).
-Defined.
-
-Definition occurs_ctx {A B} (x : var) (C : frames_t A B) : Prop :=
-  frames_any (@occurs_frame x) C.
-
-Definition occurs_frame_split {A B} (x : var) (f : frame_t A B) (e : univD A)
-  : occurs x (frameD f e) <-> occurs_frame x f \/ occurs x e.
-Proof. destruct f eqn:Hf; simpl; ltac1:(tauto). Defined.
-
-Fixpoint occurs_ctx_split {A B} (x : var) (C : frames_t A B) (e : univD A) {struct C}
-  : occurs x (C ⟦ e ⟧) <-> occurs_ctx x C \/ occurs x e.
-Proof.
-  destruct C.
-  - now unfold occurs_ctx, frames_any.
-  - rewrite framesD_cons.
-    rewrite occurs_ctx_split.
-    rewrite occurs_frame_split.
-    unfold occurs_ctx; simpl; ltac1:(tauto).
-Defined.
-*)
-
 Inductive cp_fold : exp -> exp -> Prop :=
 | cp_case_fold : forall (C : frames_t exp_univ_exp exp_univ_exp) x c ces e,
     (exists D E ys, C = D >:: eCons3 x c ys >++ E) /\
@@ -624,13 +536,6 @@ Inductive cp_fold : exp -> exp -> Prop :=
 Definition I_cp_env {A} (C : frames_t A exp_univ_exp) (ρ : var -> option (constr × list var)) : Prop :=
   forall x c ys, ρ x = Some (c, ys) ->
   exists D E, C = D >:: eCons3 x c ys >++ E.
-
-(*
-Definition var_gt : var -> var -> Prop := fun '(mk_var x) '(mk_var y) => (x > y)%nat.
-
-Definition cp_state {A} (C : frames_t A exp_univ_exp) (e : univD A) : Set :=
-  unit.
-*)
 
 Lemma eq_var_spec (x y : var) : Bool.reflect (x = y) (x ==? y).
 Proof.
@@ -693,19 +598,7 @@ Proof.
 Defined.
 
 Require Import Lia.
-(*
-Lemma fresh_fresher :
-  forall {A} x (e : univD A), (forall y, occurs y e -> var_gt x y) -> forall z, var_gt z x -> ~ occurs z e.
-Proof.
-  intros A x e Hx z Hz; intros Hocc.
-  (assert (var_gt x z) by auto); destruct x, z; simpl in *; ltac1:(lia).
-Defined.
 
-Lemma occurs_ctx_insert :
-  forall {A B} (C : frames_t A B), forall (D : frames_t A A) x e,
-  occurs x (C ⟦ e ⟧) -> occurs x (C ⟦ D ⟦ e ⟧ ⟧).
-Proof. intros A B C D x e; repeat (rewrite occurs_ctx_split); ltac1:(tauto). Defined.
-*)
 Lemma app_as_ctx :
   forall l ces c r e, ces = l ++ (c, e) :: r ->
   exists C : frames_t exp_univ_exp exp_univ_list_prod_constr_exp, ces = C ⟦ e ⟧.
@@ -725,43 +618,6 @@ Proof.
   try ltac1:(intuition congruence).
 Defined.
 
-(*
-Lemma Exists'_map {A} (f : A -> A) P xs :
-  Exists' P xs ->
-  (forall x, P x -> P (f x)) ->
-  Exists' P (map f xs).
-Proof. induction xs; auto; simpl; intros [Hhere|Hthere]; auto. Defined.
-
-Lemma occurs_subst_ne_exp x σ e : occurs_exp x e -> σ x = x -> occurs_exp x (subst_exp σ e)
-with occurs_subst_ne_fd x σ fd : occurs_fd x fd -> σ x = x -> occurs_fd x (subst_fd σ fd).
-Proof.
-  - destruct e; simpl; intros.
-    + ltac1:(congruence).
-    + destruct H > [now left|now (right; apply (In_map_eq σ))].
-    + destruct H as [H|H] > [|destruct H] > [now left|now (right; left; apply (In_map_eq σ))|right; right].
-      now apply occurs_subst_ne_exp.
-    + destruct H as [H|H] > [|destruct H] > [now left|now (right; left)|right; right].
-      now apply occurs_subst_ne_exp.
-    + induction arms.
-      * simpl in H; destruct H > [now left|inversion H].
-      * simpl in H; simpl.
-        destruct H as [H|H] > [|destruct H] > [now left|right; left|].
-        -- destruct a; simpl; now apply occurs_subst_ne_exp.
-        -- pose (IHarms (or_intror H)).
-           ltac1:(tauto).
-    + induction fds.
-      * simpl in H; destruct H > [inversion H|now right].
-      * simpl in H; simpl.
-        destruct H as [H|H] > [destruct H|] >
-        [left; now left
-        |pose (IHfds (or_introl H)); ltac1:(tauto)
-        |pose (IHfds (or_intror H)); ltac1:(tauto)].
-  - destruct fd; simpl; intros.
-    destruct H as [H|[H|H]] > [now left|right; left; now apply (In_map_eq σ)|].
-    right; right; now apply occurs_subst_ne_exp.
-Defined.
-*)
-
 Definition rw_cp :
   rewriter exp_univ_exp true tt cp_fold
   renaming (I_renaming) _ (@I_cp_env) unit (I_S_plain (S:=unit)).
@@ -779,8 +635,7 @@ Proof.
         try lazymatch goal with |- I_renaming _ _ _ => exact I end
       end
     end).
-  (* Now there are two things left: first, we need to explain how to check the preconditions
-     of each rule and compute intermediate values *)
+  (* Now there are two obligations left (one per rewrite rule) *)
   - (* Case folding *)
     intros _ R C C_ok x ces [d []] r s success failure.
     destruct r as [ρ Hρ] eqn:Hr.

@@ -779,14 +779,8 @@ Definition gen_run_rule_ty (r : rule_t) : GM term. ltac1:(refine(
   let! fuel := gensym "fuel" in
   let! C_ok := gensym "C_ok" in
   let hole := mk_univ r.(rHoleU) in
-  let run_rule := <%RunRule%>
-    (* match r.(rDir) with *)
-    (* | dTopdown => <%TopdownRunRule%> *)
-    (* | dBottomup => <%BottomupRunRule%> *)
-    (* end *)
-  in
   ret
-    (fn (mkApps run_rule [quote_string r.(rName)])
+    (fn (mkApps <%RunRule%> [quote_string r.(rName)])
     (tProd (nNamed fuel) (mkApps <%Fuel%> [fueled])
     (it_mkProd_or_LetIn (drop_names r.(rΓ))
     (tProd (nNamed C_ok) (mkApps <%@e_ok%> [mkApps frames_t [hole; root]; r.(rC)])
@@ -882,7 +876,6 @@ Definition gen_constr_delay_tys : GM (list term) :=
   in
   mapM
     (fun constr => let! ty := gen_constr_delay_ty constr in indices_of [] ty)
-    (* (fun constr => let! ty := gen_constr_delay_ty constr in ret ty) *)
     (map fst (list_of_map constrs)).
 
 End GoalGeneration.
@@ -1674,7 +1667,7 @@ Ltac apply_recur recur fuel fueled Hempty :=
     specialize (recur (erase (Pos.to_nat (Pos.pred fuel))) _)
   | false =>
     specialize recur with (fuel := fuel);
-    admit
+    admit (* TODO: recursive calls where user must prove termination *)
   end;
   apply recur; try assumption;
   repeat lazymatch goal with
