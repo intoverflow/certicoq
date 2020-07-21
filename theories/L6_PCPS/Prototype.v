@@ -1660,26 +1660,56 @@ Ltac next_action e k_rec k_constr k_atom :=
 Lemma nonempty_nonzero (fuel : Rewriting.Fuel true) : is_empty true fuel = false -> (fuel > 1)%positive.
 Proof. unfold is_empty; destruct fuel; try ltac1:(lia); now inversion 1. Qed.
 
-Ltac apply_recur recur fuel fueled Hempty :=
+Inductive MetricDecreasing := MkMetricDecreasing.
+Ltac apply_recur recur fuel fueled metric Hempty :=
   match fueled with
   | true =>
     specialize recur with (fuel := Pos.pred fuel);
-    specialize (recur (erase (Pos.to_nat (Pos.pred fuel))) _)
+    specialize (recur (erase (Pos.to_nat (Pos.pred fuel))) _);
+    apply recur; try assumption;
+    repeat lazymatch goal with
+    | |- e_lt _ _ =>
+      unfold e_lt; unerase; subst; cbn;
+      apply nonempty_nonzero in Hempty; lia
+    | |- e_ok (e_map _ _) => apply e_map_ok
+    | |- e_ok _ => assumption
+    | |- «_» => unerase; reflexivity
+    end
   | false =>
-    specialize recur with (fuel := fuel);
-    admit (* TODO: recursive calls where user must prove termination *)
-  end;
-  apply recur; try assumption;
-  repeat lazymatch goal with
-  | |- e_lt _ _ =>
-    unfold e_lt; unerase; subst; cbn;
-    apply nonempty_nonzero in Hempty; lia
-  | |- e_ok (e_map _ _) => apply e_map_ok
-  | |- e_ok _ => assumption
-  | |- «_» => unerase; reflexivity
+    specialize recur with (fuel := fuel); unfold Rec; rewrite ?e_map_fuse;
+    lazymatch goal with
+    | |- result _ _ ?C' (@delayD ?univ ?HFrame ?D ?I_D ?HD ?A ?e ?d') =>
+      lazymatch C' with
+      | e_map ?f ?C'' =>
+        specialize recur with
+          (C := C')
+          (y := e_map (fun C => metric _ (f C) (@delayD univ HFrame D I_D HD A e d')) C'')
+          (d := d')
+      | _ =>
+        specialize recur with
+          (C := C')
+          (y := e_map (fun C => metric _ C (@delayD univ HFrame D I_D HD A e d')) C')
+          (d := d')
+      end;
+      eapply recur;
+      repeat lazymatch goal with
+      | |- Param _ _ => assumption
+      | |- State _ _ _ => assumption
+      | |- e_ok (e_map _ _) => apply e_map_ok
+      | |- e_ok _ => assumption
+      | |- «_» => unerase; unfold run_metric; reflexivity
+      | |- e_lt _ _ =>
+        unfold e_lt; unerase;
+        lazymatch goal with
+        | |- (_ < ?x)%nat => subst x; unfold run_metric
+        end;
+        let dummy := fresh "dummy" in
+        pose (dummy := MkMetricDecreasing); clearbody dummy; revert dummy
+      end
+    end
   end.
 
-Ltac mk_edit_rhs recur fuel fueled Hempty :=
+Ltac mk_edit_rhs recur fuel fueled metric Hempty :=
   let rec go _ :=
     lazymatch goal with
     | |- @rw_for _ _ _ _ _ _ _ _ _ _ _ _ _ ?e =>
@@ -1696,7 +1726,7 @@ Ltac mk_edit_rhs recur fuel fueled Hempty :=
             let s := fresh "s" in
             let Hemetric := fresh "Hemetric" in
             intros emetric Hemetric_ok r s Hemetric;
-            apply_recur recur fuel fueled Hempty
+            apply_recur recur fuel fueled metric Hempty
           end)
         (* Constructor nodes: apply the smart constructor... *)
         ltac:(fun constr Hconstr =>
@@ -1778,7 +1808,7 @@ Ltac mk_rewriter :=
             | |- e_ok _ => eassumption
             | _ => idtac
             end;
-            [try eassumption..|mk_edit_rhs recur fuel fueled Hempty]
+            [try eassumption..|mk_edit_rhs recur fuel fueled metric Hempty]
           (* Congruence cases *)
           | Hconstr : SmartConstr ?constr -> _ |- InspectCaseCongruence ?constr -> _ =>
             intros _ _; intros;
@@ -1796,7 +1826,7 @@ Ltac mk_rewriter :=
             lazymatch goal with
             (* If child is nonatomic (has call to delayD), recur *)
             | |- result _ _ _ (delayD _) =>
-              apply_recur recur fuel fueled Hempty
+              apply_recur recur fuel fueled metric Hempty
             (* Otherwise, just return it *)
             | |- result _ _ _ _ => econstructor; [|unerase; apply rt_refl]; assumption
             end

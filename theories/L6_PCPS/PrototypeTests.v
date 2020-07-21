@@ -425,6 +425,82 @@ Recursive Extraction rw_R.
 (* - is directly recursive (fixpoint combinator gone) 
    - context parameter erased *)
 
+Definition size_ctor : constr -> nat := fun _ => 1%nat.
+Definition size_var : var -> nat := fun _ => 1%nat.
+Definition size_list {A} (size : A -> nat) (xs : list A) : nat :=
+  (fold_right (fun x n => 1 + size x + n) 1 xs)%nat.
+Definition size_vars := size_list size_var.
+Fixpoint size_exp (e : exp) : nat :=
+  match e with
+  | eHalt x => 1 + size_var x
+  | eApp f xs => 1 + size_var f + size_vars xs
+  | eCons x c ys e => 1 + size_var x + size_ctor c + size_vars ys + size_exp e
+  | eProj x y n e => 1 + size_var x + size_var y + n + size_exp e
+  | eCase x arms => 1 + size_var x + size_list (fun '(c, e) => 1 + size_ctor c + size_exp e) arms
+  | eFuns fds e => 1 + size_list size_fd fds + size_exp e
+  end%nat
+with size_fd (fd : fundef) : nat :=
+  let 'fFun f xs e := fd in
+  1 + size_var f + size_vars xs + size_exp e.
+
+Definition size {A} : univD A -> nat :=
+  match A with
+  | exp_univ_prod_constr_exp => fun '(c, e) => 1 + size_ctor c + size_exp e
+  | exp_univ_list_prod_constr_exp => size_list (fun '(c, e) => 1 + size_ctor c + size_exp e)
+  | exp_univ_fundef => size_fd
+  | exp_univ_list_fundef => size_list size_fd
+  | exp_univ_exp => size_exp
+  | exp_univ_var => size_var
+  | exp_univ_constr => size_ctor
+  | exp_univ_nat => id
+  | exp_univ_list_var => size_vars
+  end%nat.
+
+Require Import Lia.
+
+Definition rw_R_m :
+  rewriter exp_univ_exp false (fun A C e => size e) R' unit (I_D_plain (U:=exp_univ) (D:=unit)) nat (@I_R) nat (@I_S).
+Proof.
+  ltac1:(mk_rw';
+    try lazymatch goal with
+    | |- SmartConstr _ -> _ => mk_smart_constr
+    | |- RunRule _ -> _ => mk_run_rule
+    | |- Topdown _ -> _ => mk_topdown
+    | |- Bottomup _ -> _ => mk_bottomup
+    end;
+    try lazymatch goal with
+    (* This particular rewriter's delayed computation is just the identity function, *)
+    (* so ConstrDelay is easy *)
+    | |- ConstrDelay _ -> _ => mk_easy_delay
+    end;
+    (* try lazymatch goal with *)
+    (* | |- ExtraVars _ -> _ => admit *)
+    (* end; *)
+    [..|mk_rewriter];
+    try lazymatch goal with
+    (* Solve easy obligations about termination *)
+    | |- MetricDecreasing -> _ => intros _; cbn; lia
+    end;
+    idtac).
+  { cbn; intros; ltac1:(cond_success success).
+    eapply success; eauto.
+    ltac1:(unshelve econstructor; [exact O|unerase; reflexivity]). }
+  { cbn; intros; ltac1:(cond_failure). }
+  { cbn; intros; ltac1:(cond_success success); eapply success; eauto.
+    ltac1:(unshelve econstructor; [exact O|unerase; reflexivity]). }
+  { cbn; intros; ltac1:(cond_failure). }
+  { cbn; intros; ltac1:(cond_failure). }
+  { intros _; rewrite <- H1. unfold const_fun; cbn; ltac1:(lia). }
+  { intros _; rewrite <- H1. cbn; ltac1:(lia). }
+  { intros _; rewrite <- H0. cbn; ltac1:(lia). }
+Defined.
+
+Set Extraction Flag 2031. (* default + linear let + linear beta *)
+Recursive Extraction rw_R_m.
+(* - is directly recursive (fixpoint combinator gone) 
+   - context parameter erased
+   - no fuel parameter (termination argument erased) *)
+
 (*
 Compute rw_R'' (xI xH) exp_univ_exp <[]>
   (eCons (mk_var 0) (mk_constr 0) [] (eApp (mk_var 1) []))
@@ -597,8 +673,6 @@ Proof.
     now exists ((c', e') :: l), r.
 Defined.
 
-Require Import Lia.
-
 Lemma app_as_ctx :
   forall l ces c r e, ces = l ++ (c, e) :: r ->
   exists C : frames_t exp_univ_exp exp_univ_list_prod_constr_exp, ces = C ⟦ e ⟧.
@@ -618,13 +692,37 @@ Proof.
   try ltac1:(intuition congruence).
 Defined.
 
+Lemma subst_var_size σ x : size_var (σ x) = size_var x. Proof. reflexivity. Qed.
+Lemma subst_ctor_size σ x : size_ctor (σ x) = size_ctor x. Proof. reflexivity. Qed.
+Lemma subst_vars_size σ xs : size_vars (map σ xs) = size_vars xs.
+Proof.
+  induction xs as [|x xs IHxs] > [reflexivity|].
+  unfold size_vars, size_list, size_var in *; cbn in *; now rewrite IHxs.
+Qed.
+
+Fixpoint subst_exp_size σ e : size_exp (subst_exp σ e) = size_exp e
+with subst_fd_size σ e : size_fd (subst_fd σ e) = size_fd e.
+Proof.
+  - destruct e; cbn;
+    rewrite ?subst_var_size, ?subst_vars_size, ?subst_ctor_size, ?subst_exp_size, ?subst_fd_size;
+    try reflexivity.
+    + induction arms as [|[c e] ces IHces] > [reflexivity|cbn in *].
+      unfold size_list in IHces; inversion IHces as [IHces']; clear IHces.
+      now rewrite subst_exp_size, IHces'.
+    + ltac1:(repeat match goal with |- context [S (?n + ?m)] => change (S (n + m))%nat with (S n + m)%nat end).
+      do 2 f_equal; induction fds as [|fd fds IHfds] > [reflexivity|cbn in *].
+      unfold size_list in IHfds; inversion IHfds as [IHfds']; clear IHfds.
+      now rewrite subst_fd_size.
+  - destruct e as [f xs e]; cbn; now rewrite subst_vars_size, subst_exp_size.
+Qed.
+
 Definition rw_cp :
-  rewriter exp_univ_exp true tt cp_fold
+  rewriter exp_univ_exp false (fun A C e => size e) cp_fold
   renaming (I_renaming) _ (@I_cp_env) unit (I_S_plain (S:=unit)).
 Proof.
   ltac1:(mk_rw;
-    (* Explain how to incrementalize substitutions *)
     try lazymatch goal with
+    (* Explain how to incrementalize substitutions *)
     | |- ConstrDelay _ -> _ =>
       clear; intros _; intros;
       lazymatch goal with
@@ -634,8 +732,10 @@ Proof.
         try lazymatch goal with |- _ = _ => reflexivity end;
         try lazymatch goal with |- I_renaming _ _ _ => exact I end
       end
+    (* Solve easy obligations about termination *)
+    | |- MetricDecreasing -> _ =>
+      intros _; cbn; repeat match goal with |- context [let '_ := ?e in _] => destruct e end; lia
     end).
-  (* Now there are two obligations left (one per rewrite rule) *)
   - (* Case folding *)
     intros _ R C C_ok x ces [d []] r s success failure.
     destruct r as [ρ Hρ] eqn:Hr.
@@ -658,16 +758,24 @@ Proof.
                                                  (d x) (d y) n y' ys); auto; unerase.
     + edestruct Hρ as [D [E Hctx]]; eauto.
     + now rewrite <- subst_exp_comp.
+  - (* In case folding, the selected case arm is smaller than the case expression we started with *)
+    intros _. rewrite <- H1. clear - H; destruct H as [_ [l [r Hin]]]; subst ces; cbn.
+    ltac1:(match goal with |- (?x < S (S ?y))%nat => enough (x < y)%nat by lia end).
+    induction l as [|[c' e] ces IHces] > [cbn; ltac1:(lia)|].
+    eapply PeanoNat.Nat.lt_trans > [ltac1:(eassumption)|].
+    unfold size_list; cbn; ltac1:(lia).
+  - (* In proj folding, the subexpression is smaller than what we started with *)
+    rewrite <- H1, subst_exp_size; cbn; ltac1:(lia).
 Defined.
 
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
-Recursive Extraction rw_cp.
+Recursive Extraction rw_cp. (* no fuel parameter *)
 
 Definition rw_cp_top e : result (Root:=exp_univ_exp) cp_fold (I_S_plain (S:=unit)) (erase <[]>) e.
 Proof.
   ltac1:(replace e with (delayD ((exist _ (fun x => x) I) : (Delay I_renaming e)))
         by (cbn; rewrite subst_exp_id; auto)).
-  ltac1:(unshelve eapply (rw_cp lots_of_fuel);
+  ltac1:(unshelve eapply (rw_cp I);
   try lazymatch goal with |- erased nat => refine (erase _) end;
   try lazymatch goal with
   | |- e_ok (erase _) => apply erase_ok

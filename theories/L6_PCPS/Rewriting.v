@@ -47,6 +47,10 @@ Definition e_map {A B} (f : A -> B) (x : erased A) : erased B := fun k => x (fun
 Instance e_map_ok {A B} (f : A -> B) (x : erased A) `{H : e_ok _ x} : e_ok (e_map f x).
 Proof. destruct H as [y Hy]; subst x; unfold e_map; now exists (f y). Qed.
 
+Definition e_map_fuse {A B C} (f : B -> C) (g : A -> B) (x : erased A) :
+  e_map f (e_map g x) = e_map (fun x => f (g x)) x.
+Proof. reflexivity. Qed.
+
 (* Only proofs can be unerased *)
 Definition recover (x : erased Prop) : Prop := x (fun x => x).
 Notation "'«' P '»'" := (recover P).
@@ -669,12 +673,12 @@ End S_prod.
 
 Section FuelAndMetric.
 
-Definition Fuel (fueled : bool) := if fueled then positive else unit.
+Definition Fuel (fueled : bool) := if fueled then positive else True.
 
 Definition is_empty (fueled : bool) : Fuel fueled -> bool :=
   match fueled with
   | true => fun fuel => match fuel with xH => true | _ => false end
-  | false => fun 'tt => false
+  | false => fun 'I => false
   end.
 
 Definition fuel_dec (fueled : bool) : Fuel fueled -> Fuel fueled :=
@@ -689,13 +693,13 @@ Extraction Inline is_empty fuel_dec lots_of_fuel.
 
 Definition Metric (fueled : bool) :=
   if fueled then unit
-  else Fuel fueled -> forall A, frames_t A Root -> univD A -> nat.
+  else forall A, frames_t A Root -> univD A -> nat.
 
 Definition run_metric (fueled : bool) (metric : Metric fueled)
            (fuel : Fuel fueled) A (C : frames_t A Root) (e : univD A) : nat :=
   match fueled return Fuel fueled -> Metric fueled -> nat with
   | true => fun fuel 'tt => Pos.to_nat fuel
-  | false => fun fuel metric => metric fuel A C e
+  | false => fun fuel metric => metric A C e
   end fuel metric.
 
 End FuelAndMetric.

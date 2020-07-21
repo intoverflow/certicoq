@@ -223,7 +223,7 @@ Proof.
     rewrite delay_id_law in rw.
     specialize (rw (erase (Pos.to_nat lots_of_fuel)) _ r s); apply rw; unerase.
     unfold run_metric; destruct metric; reflexivity.
-  - specialize (rw tt _ (erase <[]>) _ e (delay_id _)).
+  - specialize (rw I _ (erase <[]>) _ e (delay_id _)).
     rewrite delay_id_law in rw; unshelve eapply rw;
     try lazymatch goal with
     | |- erased nat => refine (erase _)
