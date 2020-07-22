@@ -843,11 +843,11 @@ Fixpoint size_pos (n : positive) :=
   end.
 Instance Sized_pos : Sized positive := size_pos.
 
-Instance Sized_var : Sized var := fun '(mk_var x) => S (size x).
-Instance Sized_fun_tag : Sized fun_tag := fun '(mk_fun_tag x) => S (size x).
-Instance Sized_ctor_tag : Sized ctor_tag := fun '(mk_ctor_tag x) => S (size x).
-Instance Sized_prim : Sized prim := fun '(mk_prim x) => S (size x).
-Instance Sized_N : Sized N := fun n => match n with N0 => 1%nat | Npos x => S (size x) end.
+Instance Sized_var : Sized var := fun _ => S O.
+Instance Sized_fun_tag : Sized fun_tag := fun _ => S O.
+Instance Sized_ctor_tag : Sized ctor_tag := fun _ => S O.
+Instance Sized_prim : Sized prim := fun _ => S O.
+Instance Sized_N : Sized N := fun _ => S O.
 
 Definition size_list {A} (size : A -> nat) : list A -> nat := fold_right (fun x n => S (size x + n)) 1%nat.
 Definition size_prod {A B} (sizeA : A -> nat) (sizeB : B -> nat) : A * B -> nat := fun '(x, y) => S (sizeA x + sizeB y).
@@ -898,6 +898,7 @@ Proof.
   try change (size_exp x) with (size x); cbn;
   try change (size_fundefs' size x) with (size x); cbn;
   try change (size_list (size_prod size size) x) with (size x); cbn;
+  try change (size x) with 1; cbn;
   try lia.
 Qed.
 

@@ -79,7 +79,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (k k' : var) (kt : fun_tag) (fv fv1 : list var)
     (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
-    (lhs rhs : list fundef) fp_numargs (ms ms' : S_misc),
+    (lhs fds' rhs : list fundef) fp_numargs (ms ms' : S_misc),
   (* Non-linear LHS constraints *)
   k = k' /\
   g = g' /\
@@ -89,8 +89,9 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   ~ ![k] \in used_vars ![ge] /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
   lhs = Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds /\
+  fds' = Ffun f1 ft1 (gv ++ fv) ge :: fds /\
   rhs = Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
-        :: Ffun f1 ft1 (gv ++ fv) ge :: fds /\
+        :: fds' /\
   fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧))) gv1 /\ length gv1 = length gv /\
   fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
   ~ ![f1] \in (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1] :|: FromList ![fv1]) /\
@@ -102,13 +103,13 @@ Inductive uncurry_step : exp -> exp -> Prop :=
     (C ⟦ Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds ⟧)
     (C ⟦ (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
          (Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
-          :: Ffun f1 ft1 (gv ++ fv) ge :: Rec fds) ⟧)
+          :: Rec fds') ⟧)
 (* Uncurrying for ANF *)
 | uncurry_anf :
   forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (fv fv1 : list var)
     (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
-    (lhs rhs : list fundef)
+    (lhs fds' rhs : list fundef)
     fp_numargs (ms ms' : S_misc),
   (* Non-linear LHS constraints *)
   g = g' /\
@@ -117,8 +118,9 @@ Inductive uncurry_step : exp -> exp -> Prop :=
   ~ ![g] \in used_vars ![ge] /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
   lhs = Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds /\
+  fds' = Ffun f1 ft1 (gv ++ fv) ge :: fds /\
   rhs = Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
-        :: Ffun f1 ft1 (gv ++ fv) ge :: fds /\
+        :: fds' /\
   fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧))) gv1 /\ length gv1 = length gv /\
   fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
   ~ ![f1] \in (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1] :|: FromList ![fv1]) /\
@@ -130,7 +132,7 @@ Inductive uncurry_step : exp -> exp -> Prop :=
     (C ⟦ Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds ⟧)
     (C ⟦ (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
          (Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
-          :: Ffun f1 ft1 (gv ++ fv) ge :: Rec fds) ⟧).
+          :: Rec fds') ⟧).
 
 Definition I_S : forall {A}, frames_t A exp_univ_exp -> univD A -> _ -> Prop :=
   I_S_prod (I_S_plain (S:=S_misc)) (@I_S_fresh).
@@ -160,10 +162,24 @@ Definition metadata_update (f g f1 : var) fp_numargs (fv gv fv1 gv1 : list var) 
   in
   (b, aenv, lm, s, cdata).
 
+(* TODO: move to cps_proto *)
+Lemma size_app {A} `{Sized A} (xs ys : list A) : size (xs ++ ys) < size xs + size ys.
+Proof. induction xs as [|x xs IHxs]; cbn; lia. Qed.
+
 Definition rw_uncurry :
-  rewriter exp_univ_exp true tt uncurry_step _ (I_D_plain (D:=unit)) _ (@I_R) _ (@I_S).
+  rewriter exp_univ_exp false (fun A C e => @univ_size A e)
+           uncurry_step _ (I_D_plain (D:=unit)) _ (@I_R) _ (@I_S).
 Proof.
-  mk_rw; mk_easy_delay.
+  mk_rw; mk_easy_delay;
+    try lazymatch goal with
+    (* Solve easy obligations about termination *)
+    | |- MetricDecreasing -> _ =>
+      intros _; cbn in *;
+        try change (size_exp ?e) with (size e);
+        try change (size_list _ ?x) with (size x);
+        try change (size_fundefs' _ ?x) with (size x);
+        lia
+    end.
   (* Obligation 1: uncurry_cps side conditions *)
   - intros; unfold delayD, Delayed_id_Delay in *.
     (* Check nonlinearities *)
@@ -194,13 +210,14 @@ Proof.
     specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
     (* Prove that all the above code actually satisfies the side condition *)
     unfold I_S, I_S_prod, I_S_plain, I_S_fresh in *.
-    specialize (success fds d f ft (mk_var k) fv (mk_var g) gt gv ge (mk_var k') kt (mk_var g') ft1).
+    pose (fds' := Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
+    specialize (success fds' d f ft (mk_var k) fv (mk_var g) gt gv ge (mk_var k') kt (mk_var g') fds ft1).
     pose (lhs := Ffun f ft (mk_var k :: fv)
                    (Efun [Ffun (mk_var g) gt gv ge] (Eapp (mk_var k') kt [mk_var g'])) :: fds).
     pose (rhs := Ffun f ft (mk_var k :: fv1)
                   (Efun [Ffun (mk_var g) gt gv1 (Eapp (mk_var f1) ft1 (gv1 ++ fv1))]
-                    (Eapp (mk_var k) kt [mk_var g])) :: Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
-    specialize (success lhs rhs ms').
+                    (Eapp (mk_var k) kt [mk_var g])) :: fds').
+    specialize (success lhs fds' rhs ms').
     eapply success; [|reflexivity|reflexivity| |];
     try lazymatch goal with
     | |- «_» => unerase; destruct Hnext_x as [? Hnext_x]; 
@@ -259,12 +276,13 @@ Proof.
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
     specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
-    specialize (success fds d f ft fv (mk_var g) gt gv ge (mk_var g') ft1).
+    pose (fds' := Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
+    specialize (success fds' d f ft fv (mk_var g) gt gv ge (mk_var g') fds ft1).
     pose (lhs := Ffun f ft fv (Efun [Ffun (mk_var g) gt gv ge] (Ehalt (mk_var g'))) :: fds).
     pose (rhs := Ffun f ft fv1
                    (Efun [Ffun (mk_var g) gt gv1 (Eapp (mk_var f1) ft1 (gv1 ++ fv1))] (Ehalt (mk_var g)))
-                 :: Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
-    specialize (success lhs rhs ms').
+                 :: fds').
+    specialize (success lhs fds' rhs ms').
     (* Prove that all the above code actually satisfies the side condition *)
     eapply success; [|reflexivity|reflexivity| |];
     try lazymatch goal with
@@ -296,6 +314,13 @@ Proof.
       do 10 normalize_used_vars'; repeat normalize_sets.
       rewrite !strip_vars_app; repeat normalize_sets.
       intros arbitrary; rewrite !In_or_Iff_Union; clear; tauto.
+  (* Obligations 3 and 4: must prove that recursive call made by ANF and CPS uncurry are on smaller terms *)
+  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn.
+    assert (size (gv ++ fv) < size gv + size fv) by now apply size_app.
+    lia.
+  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn.
+    assert (size (gv ++ fv) < size gv + size fv) by now apply size_app.
+    lia.
 Defined.
 
 Set Extraction Flag 2031. (* default + linear let + linear beta *)
