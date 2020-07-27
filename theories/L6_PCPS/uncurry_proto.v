@@ -162,10 +162,6 @@ Definition metadata_update (f g f1 : var) fp_numargs (fv gv fv1 gv1 : list var) 
   in
   (b, aenv, lm, s, cdata).
 
-(* TODO: move to cps_proto *)
-Lemma size_app {A} `{Sized A} (xs ys : list A) : size (xs ++ ys) < size xs + size ys.
-Proof. induction xs as [|x xs IHxs]; cbn; lia. Qed.
-
 Definition rw_uncurry :
   rewriter exp_univ_exp false (fun A C e => @univ_size A e)
            uncurry_step _ (I_D_plain (D:=unit)) _ (@I_R) _ (@I_S).

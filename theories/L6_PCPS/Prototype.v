@@ -132,8 +132,7 @@ Definition indices_of (Γ : list string) (t : term) : GM term :=
   let index_of Γ s := find_str s Γ in
   let go_name (x : name) : (name × string) :=
     match x with
-    | nAnon => (nAnon, "anon")
-      (* can never be referred to in named rep, so we don't care if there are clashes *)
+    | nAnon => (nAnon, "anon") (* can never be referred to in named rep, so don't care if there are clashes *)
     | nNamed s => (remove_sigils s, s)
     end
   in
@@ -205,7 +204,7 @@ Compute runGM' 0 (check_roundtrip [] <%
     end%nat
   for ev%>).
 
-(* Renames binders too; in general, doesn't respect scope at all *)
+(* Renames binders too, and doesn't respect scoping rules at all *)
 Definition rename (σ : Map string string) : term -> term :=
   let go_str (s : string) : string := find_d s s σ in
   let go_name (na : name) : name :=
@@ -416,7 +415,12 @@ Fixpoint is_var (x : term) : option string :=
 (* Rec (f .. x) *)
 (* NOTE: This is a hack and depends on the _CoqProject file+name of this file *)
 Compute <%@Rec%>.
-Definition prefix := "CertiCoq.L6.Rewriting.". 
+Definition prefix := ltac:(
+   let e := constr:(<%@Rec%>) in
+   match e with
+   | tConst ?s [] => let s' := eval cbv in (qualifier s) in exact s'
+   end).
+Print prefix.
 Definition rec_rhs_vars_of : term -> Map string (option term).
   ltac1:(refine(
   let fix go tm :=
@@ -619,8 +623,8 @@ Definition gen_extra_vars_ty (rule : rule_t) : GM term :=
     let hole := rule.(rHoleU) in
     let lhs := rule.(rLhs) in
     let lhs_vars := rule.(rLhsVars) in
-    (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order. *)
-    (*    We will rearrange it to be (lhs vars .. rhs vars ..). *)
+    (* Currently, the context rΓ contains (lhs vars ∪ rhs vars) in unspecified order.
+       We will rearrange it to be (lhs vars .. rhs vars ..). *)
     let ctx := map (fun '(x, decl) => (member x lhs_vars, x, decl)) rule.(rΓ) in
     let '(lhs_ctx, rhs_ctx) := partition (fun '(in_lhs, _, _) => in_lhs) ctx in
     (* rhs_ctx also contains C: C will actually be introduced in the outer scope
@@ -1374,7 +1378,7 @@ Definition gen_all : GM (RwObligations term). ltac1:(refine(
 )).
 Defined.
 
-(* Danger: defining [unquote_all] as a function generates universe constraints between the things inside 
+(* Danger: running [unquote_all] generates universe constraints between the things inside 
    each typed_term and pretty common monomorphic types like [list], [pair], [option], etc.
    It's safer to unquote each term in obs with ltac. *)
 Definition unquote_all (obs : RwObligations term)
@@ -1504,7 +1508,6 @@ Ltac mk_smart_constr :=
      mk_smart_constr_children Root Rstep I_R I_S C s false None
    end.
 
-(* TODO: hack to get constr given the name of the rule *)
 Definition tm_get_constr (s : string) : TemplateMonad typed_term :=
   ref <- tmAbout s ;;
   match ref with
@@ -1621,7 +1624,6 @@ Ltac mk_bottomup_active :=
     eapply (Hextras (MkExtraVars rule));
     [eassumption..|intros _; intros|intros _; clear Hextras H];
     [eapply (H (MkInspectCaseRule rule) (MkActive rule)); eauto
-    (* TODO: eassumption not sufficient because sometimes need reflexivity? *)
     |mk_bottomup_active]
   | _ => mk_bottomup_fallback
   end.

@@ -180,7 +180,6 @@ Ltac collapse_primes :=
   change (mk_var (apply_r ?σ (un_var ?x))) with (apply_r' σ x);
   change (total (map (fun '(_, e) => count_exp ?x e) ?ces)) with (count_ces x ces) in *;
   change (total (map (fun '(Ffun _ _ _ e) => count_exp ?x e) ?fds)) with (count_fds x fds) in *;
-  (* TODO: move to proto_util? *)
   change (ces_of_proto' exp_of_proto) with ces_of_proto in *;
   change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
 
@@ -226,7 +225,6 @@ Ltac collapse_primes :=
   change (total (map (fun '(Ffun _ _ _ e) => count_exp ?x e) ?fds)) with (count_fds x fds) in *;
   change (map (apply_r' ?σ) ?xs) with (apply_r_list' σ xs) in *;
   change (total (map (count_var ?x) ?xs)) with (count_vars x xs) in *;
-  (* TODO: move to proto_util? *)
   change (ces_of_proto' exp_of_proto) with ces_of_proto in *;
   change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
 

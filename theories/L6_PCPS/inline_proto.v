@@ -201,6 +201,60 @@ Definition InlinedUncurriedMarkedAnf : M.t nat -> InlineHeuristic :=
 Definition InlineSmallOrUncurried (bound : nat) (s1 : M.t bool) (s2 : M.t nat) : InlineHeuristic :=
   CombineInlineHeuristic orb (InlineSmallIH bound s1) (PostUncurryIH s2).
 
+Fixpoint bound_var_no_names fds :=
+  match fds with
+  | cps.Fnil => Empty_set _
+  | cps.Fcons _ _ xs e fds => FromList xs :|: bound_var e :|: bound_var_no_names fds
+  end.
+
+Lemma bound_var_no_names_Union fds :
+  bound_var_fundefs fds <--> bound_var_no_names fds :|: name_in_fundefs fds.
+Proof.
+  induction fds as [f ft xs e|]; [|cbn; normalize_bound_var; now normalize_sets].
+  cbn; normalize_bound_var; rewrite IHfds.
+  rewrite Ensemble_iff_In_iff; intros arb; repeat rewrite In_or_Iff_Union; tauto.
+Qed.
+
+Fixpoint unique_bindings_ces ces :=
+  match ces with
+  | [] => True
+  | (c, e) :: ces =>
+    unique_bindings e /\ Disjoint _ (bound_var e) (bound_var_ces ces)
+    /\ unique_bindings_ces ces
+  end.
+
+Lemma unique_bindings_Ecase x ces : unique_bindings (cps.Ecase x ces) <-> unique_bindings_ces ces.
+Proof.
+  induction ces as [|[c e] ces]; [split; constructor|split; cbn; intros H].
+  - inv H; rewrite <- IHces; now rewrite bound_var_Ecase in H6.
+  - destruct H as [H1 [H2 H3]].
+    rewrite <- IHces in H3.
+    rewrite <- (bound_var_Ecase x) in H2.
+    now constructor.
+Qed.
+
+Fixpoint unique_bindings_no_names fds :=
+  match fds with
+  | cps.Fnil => True
+  | cps.Fcons f ft xs e fds =>
+    NoDup xs /\ unique_bindings e /\
+    Disjoint _ (bound_var e) (FromList xs) /\
+    Disjoint _ (bound_var_no_names fds) (FromList xs) /\
+    Disjoint _ (bound_var e) (bound_var_no_names fds) /\
+    unique_bindings_no_names fds
+  end.
+
+Fixpoint unique_names fds :=
+  match fds with
+  | cps.Fnil => True
+  | cps.Fcons f ft xs e fds => ~ f \in name_in_fundefs fds /\ unique_names fds
+  end.
+
+Lemma Decidable_bound_var_no_names fds : Decidable (bound_var_no_names fds).
+Proof. induction fds as [f ft xs e fds IHfds|]; cbn; eauto with Decidable_DB. Qed.
+
+Hint Resolve Decidable_bound_var_no_names : Decidable_DB.
+
 (** * Freshening + substituting formals for actuals *)
 
 Definition freshen_fd' (freshen_exp : positive -> r_map -> exp -> positive * exp)
@@ -780,20 +834,6 @@ Local Ltac freshen_used_facts :=
     assert (next' >= next) by now eapply freshen_fds_increasing
   end.
 
-Fixpoint bound_var_no_names fds :=
-  match fds with
-  | cps.Fnil => Empty_set _
-  | cps.Fcons _ _ xs e fds => FromList xs :|: bound_var e :|: bound_var_no_names fds
-  end.
-
-Lemma bound_var_no_names_Union fds :
-  bound_var_fundefs fds <--> bound_var_no_names fds :|: name_in_fundefs fds.
-Proof.
-  induction fds as [f ft xs e|]; [|cbn; normalize_bound_var; now normalize_sets].
-  cbn; normalize_bound_var; rewrite IHfds.
-  rewrite Ensemble_iff_In_iff; intros arb; repeat rewrite In_or_Iff_Union; tauto.
-Qed.
-
 Fixpoint freshen_bounded_names next next' next'' next''' fds_base fds fds' fs σ σ' {struct fds} :
    (next', fs) = gensyms next (map fun_name fds_base) ->
    set_lists ![map fun_name fds_base] ![fs] σ = Some σ' ->
@@ -857,7 +897,6 @@ Ltac easy_interval :=
         |apply Union_Included; easy_interval
         ].
 
-(* TODO: move to lemmas about intervals *)
 Lemma fresher_than_bounded x S : fresher_than x S -> S \subset interval 1 x.
 Proof.
   unfold fresher_than, interval, Included, Ensembles.In; intros Hgt arb HS.
@@ -922,46 +961,6 @@ Proof. apply freshen_bounded. Qed.
 Corollary freshen_fds_bounded : forall σ next fds next' fds',
   (next', fds') = freshen_fds next σ fds -> bound_var_no_names ![fds'] \subset interval next next'.
 Proof. apply freshen_bounded. Qed.
-
-Fixpoint unique_bindings_ces ces :=
-  match ces with
-  | [] => True
-  | (c, e) :: ces =>
-    unique_bindings e /\ Disjoint _ (bound_var e) (bound_var_ces ces)
-    /\ unique_bindings_ces ces
-  end.
-
-Lemma unique_bindings_Ecase x ces : unique_bindings (cps.Ecase x ces) <-> unique_bindings_ces ces.
-Proof.
-  induction ces as [|[c e] ces]; [split; constructor|split; cbn; intros H].
-  - inv H; rewrite <- IHces; now rewrite bound_var_Ecase in H6.
-  - destruct H as [H1 [H2 H3]].
-    rewrite <- IHces in H3.
-    rewrite <- (bound_var_Ecase x) in H2.
-    now constructor.
-Qed.
-
-Fixpoint unique_bindings_no_names fds :=
-  match fds with
-  | cps.Fnil => True
-  | cps.Fcons f ft xs e fds =>
-    NoDup xs /\ unique_bindings e /\
-    Disjoint _ (bound_var e) (FromList xs) /\
-    Disjoint _ (bound_var_no_names fds) (FromList xs) /\
-    Disjoint _ (bound_var e) (bound_var_no_names fds) /\
-    unique_bindings_no_names fds
-  end.
-
-Fixpoint unique_names fds :=
-  match fds with
-  | cps.Fnil => True
-  | cps.Fcons f ft xs e fds => ~ f \in name_in_fundefs fds /\ unique_names fds
-  end.
-
-Lemma Decidable_bound_var_no_names fds : Decidable (bound_var_no_names fds).
-Proof. induction fds as [f ft xs e fds IHfds|]; cbn; eauto with Decidable_DB. Qed.
-
-Hint Resolve Decidable_bound_var_no_names : Decidable_DB.
 
 Lemma unique_bindings_fundefs_decomp fds :
   unique_bindings_fundefs fds <->

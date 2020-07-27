@@ -31,29 +31,6 @@ Unset Strict Unquote Universe Mode.
 Instance Frame_exp_inj : @Frame_inj exp_univ _.
 Proof. unfold Frame_inj; destruct f; simpl; ltac1:(congruence). Defined.
 
-Ltac EqDec_auto := try solve [now left|right; congruence].
-
-Instance EqDec_nat : EqDec nat.
-Proof. unfold EqDec; repeat ltac1:(decide equality). Defined.
-
-Instance EqDec_var : EqDec var.
-Proof. unfold EqDec; repeat ltac1:(decide equality). Defined.
-
-Instance EqDec_constr : EqDec constr.
-Proof. unfold EqDec; repeat ltac1:(decide equality). Defined.
-
-Lemma exp_eq_dec' (x y : exp) : {x = y} + {x <> y}
-with fd_eq_dec' (x y : fundef) : {x = y} + {x <> y}.
-Proof.
-- repeat ltac1:(decide equality).
-- repeat ltac1:(decide equality).
-Defined.
-
-Instance EqDec_exp : EqDec exp := {eq_dec' := exp_eq_dec'}.
-Instance EqDec_fd : EqDec fundef := {eq_dec' := fd_eq_dec'}.
-
-Instance EqDec_list {A} `{EqDec A} : EqDec (list A) := {eq_dec' := list_eq_dec eq_dec'}.
-
 Check frames_nil >:: cons_fundef0 [] >:: fFun2 (mk_var 0) [].
 Check fun e => <[ cons_fundef0 []; fFun2 (mk_var 0) [] ]> ⟦ e ⟧.
 

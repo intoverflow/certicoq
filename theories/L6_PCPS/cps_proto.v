@@ -255,12 +255,9 @@ Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
 Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_list_fundef) : fundefs_ctx :=
   exp_c_rep C Hole_c.
 
-Fixpoint exp_c_rep_compose {A B C} (fs : exp_c A B) (gs : exp_c B C) x {struct fs} :
+Lemma exp_c_rep_compose {A B C} (fs : exp_c A B) (gs : exp_c B C) x :
   exp_c_rep (gs >++ fs) x = exp_c_rep gs (exp_c_rep fs x).
-Proof.
-  destruct fs as [ |A' AB B' f fs]; [reflexivity|simpl].
-  now rewrite exp_c_rep_compose.
-Qed.
+Proof. induction fs as [ |A' AB B' f fs IHfs]; [reflexivity|cbn; now rewrite IHfs]. Qed.
 
 Local Ltac normalize_roundtrips' :=
   try rewrite exp_c_rep_compose; simpl;
@@ -333,15 +330,13 @@ Definition c_ctx_c_stmt {A B} : exp_c A B -> Prop :=
 
 Lemma c_ctx_c {A B} (C : exp_c A B) : c_ctx_c_stmt C.
 Proof.
-  remember (frames_len C) as n eqn:Heqn; generalize dependent C; revert A B.
-  induction n as [n IHn] using lt_wf_ind.
-  intros A B C Hlen.
-  destruct (frames_split C) as [[AB [g [gs Hgs]]] | Hnil].
+  induction C as [|A AB B g gs IHgs] using frames_rev_ind.
+  - destruct A; try exact I; reflexivity.
   - destruct g, A; try exact I;
       try match goal with f : fundef |- _ => destruct f as [f ft xs e] end;
       unbox_newtypes; simpl;
       unfold exp_ctx_of_c, fundefs_ctx_of_c;
-      subst C n; try rewrite exp_c_rep_compose; simpl;
+      try rewrite exp_c_rep_compose; simpl;
       try match goal with
       | |- context [match ?e with end] =>
         let H := fresh "H" in assert (H : zero) by exact e; inversion H
@@ -349,38 +344,25 @@ Proof.
       match goal with |- context [exp_c_rep gs Hole_c] =>
         match type of gs with
         | frames_t' _ ?hole ?root =>
-          specialize IHn with (A := hole) (B := root);
-          unfold c_ctx_c_stmt in IHn;
-          unfold exp_ctx_of_c, fundefs_ctx_of_c in IHn
+          unfold c_ctx_c_stmt in IHgs;
+          unfold exp_ctx_of_c, fundefs_ctx_of_c in IHgs
         end
       end;
       normalize_roundtrips';
-      try solve [erewrite IHn; eauto; rewrite frames_len_compose; simpl; lia].
+      try solve [erewrite IHgs; eauto; rewrite frames_len_compose; simpl; lia].
     + destruct (exp_c_rep gs Hole_c) as [c e] eqn:Hce.
       unfold c_of_ces_ctx, c_of_ces_ctx'; simpl; normalize_roundtrips'.
-      specialize IHn with (C := gs).
-      rewrite Hce in IHn.
-      erewrite <- IHn; eauto; [|rewrite frames_len_compose; simpl; lia].
-      now rewrite frames_rev_assoc.
+      rewrite <- IHgs. now rewrite frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
       destruct p as [[c'] e']; simpl.
       unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      specialize IHn with (C := gs).
-      rewrite Hces12 in IHn.
-      erewrite <- IHn; eauto; [|rewrite frames_len_compose; simpl; lia].
-      now rewrite frames_rev_assoc.
+      rewrite <- IHgs. now rewrite frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[f ft] xs] ctx] eqn:Hces12.
       simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      specialize IHn with (C := gs).
-      rewrite Hces12 in IHn.
-      erewrite <- IHn; eauto; [now rewrite frames_rev_assoc|]; rewrite frames_len_compose; simpl; lia.
+      erewrite <- IHgs. now rewrite frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
       simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      specialize IHn with (C := gs).
-      rewrite Hces12 in IHn.
-      erewrite <- IHn; eauto; rewrite frames_len_compose; simpl; lia.
-  - destruct C; simpl in Hnil; inversion Hnil.
-    destruct A; try exact I; reflexivity.
+      now erewrite <- IHgs.
 Qed.
 
 Corollary c_exp_ctx_c (C : exp_c exp_univ_exp exp_univ_exp) :
@@ -698,15 +680,15 @@ Fixpoint used_c {A B} (C : exp_c A B) : Ensemble cps.var :=
   | C >:: f => used_c C :|: used_frame f
   end.
 
-Fixpoint used_c_comp {A B root} (C : exp_c B root) (D : exp_c A B) {struct D} :
+Lemma used_c_comp {A B root} (C : exp_c B root) (D : exp_c A B) :
   used_c (C >++ D) <--> used_c C :|: used_c D.
-Proof. destruct D; simpl; [|rewrite used_c_comp]; eauto with Ensembles_DB. Qed.
+Proof. induction D; simpl; [|rewrite IHD]; eauto with Ensembles_DB. Qed.
 
-Fixpoint used_app {A B} (C : exp_c A B) (e : univD A) {struct C} :
+Lemma used_app {A B} (C : exp_c A B) (e : univD A) :
   used (C ⟦ e ⟧) <--> used_c C :|: used e.
 Proof.
-  destruct C; simpl; [eauto with Ensembles_DB|].
-  rewrite used_app, used_frameD; eauto with Ensembles_DB.
+  induction C; simpl; [eauto with Ensembles_DB|].
+  rewrite IHC, used_frameD; eauto with Ensembles_DB.
 Qed.
 
 Definition used_iso (e : cps.exp) : used_vars e <--> @used exp_univ_exp [e]!.
@@ -747,12 +729,6 @@ Defined.
 Definition decompose_fd_c := @decompose_fd_c' exp_univ_list_fundef exp_univ_exp.
 
 (* Misc. facts that may or may not be useful when dealing with dependently typed [exp_c]s *)
-
-Instance Iso_frames {U : Set} `{H : Frame U} {A B : U} : Iso (@frames_t U H A B) (@frames_sig_t U H A B) := {
-  isoAofB := ty_merge;
-  isoBofA := ty_split;
-  isoABA := t_sig_t;
-  isoBAB := sig_t_sig }.
 
 Instance exp_Frame_inj : Frame_inj (U:=exp_univ).
 Proof. intros A B f x y; destruct f; now inversion 1. Qed.
@@ -891,6 +867,9 @@ Definition univ_size {A} : univD A -> nat :=
   | exp_univ_list_var => size
   end.
 
+Lemma size_app {A} `{Sized A} (xs ys : list A) : size (xs ++ ys) < size xs + size ys.
+Proof. induction xs as [|x xs IHxs]; cbn; lia. Qed.
+
 Lemma frame_size_gt {A B} (f : exp_frame_t A B) (x : univD A) :
   (univ_size (frameD f x) > univ_size x)%nat.
 Proof.
@@ -902,11 +881,11 @@ Proof.
   try lia.
 Qed.
 
-Fixpoint exp_c_size_ge {A B} (C : exp_c A B) (x : univD A) {struct C} :
+Lemma exp_c_size_ge {A B} (C : exp_c A B) (x : univD A) :
   (univ_size (C ⟦ x ⟧) >= univ_size x)%nat.
 Proof.
-  destruct C as [|A AB B f C]; simpl; [lia|].
-  assert (univ_size (C ⟦ exp_frameD A AB f x ⟧) >= univ_size (frameD f x))%nat by apply exp_c_size_ge.
+  induction C as [|A AB B f C]; simpl; [lia|].
+  assert (univ_size (C ⟦ exp_frameD A AB f x ⟧) >= univ_size (frameD f x))%nat by apply IHC.
   assert (univ_size (frameD f x) > univ_size x)%nat by apply frame_size_gt.
   lia.
 Qed.
@@ -940,4 +919,3 @@ Qed.
 
 Corollary exp_ext_nil' {A B} (C : exp_c A B) : A = B -> (forall x, JMeq x (C ⟦ x ⟧)) -> JMeq C (<[]> : exp_c B B).
 Proof. intros; subst; now apply exp_ext_nil. Qed.
-

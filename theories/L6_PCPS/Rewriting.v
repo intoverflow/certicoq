@@ -205,7 +205,16 @@ Lemma framesD_cons {U : Set} `{Frame U} {A B C : U}
       (fs : frames_t B C) (f : frame_t A B)
       (x : univD A)
   : (fs >:: f) ⟦ x ⟧ = fs ⟦ frameD f x ⟧.
-Proof. reflexivity. Defined.
+Proof. reflexivity. Qed.
+
+Fixpoint frames_lift {U : Set} {F : U -> U -> Set}
+      (P : U -> Set) (Hf : forall {A B}, F A B -> P A -> P B)
+      {A B} (fs : frames_t' F A B)
+  : P A -> P B :=
+  match fs with
+  | <[]> => fun pa => pa
+  | fs >:: f => fun pa => frames_lift P (@Hf) fs (Hf f pa)
+  end.
 
 (* Context composition *)
 Reserved Notation "gs '>++' fs" (at level 50, left associativity).
@@ -220,25 +229,24 @@ where "gs '>++' fs" := (frames_compose fs gs).
 (* Laws: functor laws + injectivity *)
 
 Lemma frames_id_law {U : Set} `{Frame U} {A} (x : univD A) : <[]> ⟦ x ⟧ = x.
-Proof. auto. Defined.
+Proof. auto. Qed.
 
 Lemma frames_compose_law {U : Set} `{Frame U} {A B C} :
   forall (fs : frames_t B C) (gs : frames_t A B) (x : univD A),
   (fs >++ gs) ⟦ x ⟧ = fs ⟦ gs ⟦ x ⟧ ⟧.
-Proof. intros fs gs; revert fs; induction gs; simpl; auto. Defined.
+Proof. intros fs gs; revert fs; induction gs; simpl; auto. Qed.
 
 Class Frame_inj (U : Set) `{Frame U} :=
   frame_inj :
     forall {A B : U} (f : frame_t A B) (x y : univD A),
     frameD f x = frameD f y -> x = y.
 
-Fixpoint frames_inj {U : Set} `{Frame U} `{Frame_inj U} {A B} (fs : frames_t A B) :
+Lemma frames_inj {U : Set} `{Frame U} `{Frame_inj U} {A B} (fs : frames_t A B) :
   forall (x y : univD A), fs ⟦ x ⟧ = fs ⟦ y ⟧ -> x = y.
 Proof.
-  destruct fs; auto; simpl; intros x y Heq.
-  apply frames_inj with (fs := fs) in Heq; auto.
-  apply (frame_inj f) in Heq; auto.
-Defined.
+  induction fs; auto; cbn; intros x y Heq.
+  apply IHfs, (frame_inj f) in Heq; auto.
+Qed.
 
 (* Misc. lemmas (mostly about how frames_t is similar to list) *)
 
@@ -255,50 +263,41 @@ Fixpoint frames_revD {U : Set} `{Frame U} {A B : U}
   | fs >:: f => fun x => frameD f (frames_revD fs x)
   end.
 
-Fixpoint frames_nil_comp {U : Set} {F : U -> U -> Set} {A B : U}
-         (fs : frames_t' F A B) {struct fs}
+Lemma frames_nil_comp {U : Set} {F : U -> U -> Set} {A B : U}
+      (fs : frames_t' F A B)
   : <[]> >++ fs = fs.
-Proof. destruct fs > [reflexivity|simpl; now rewrite frames_nil_comp]. Defined.
+Proof. induction fs > [reflexivity|cbn; now rewrite IHfs]. Qed.
 
-Fixpoint frames_revD_comp {U : Set} `{HFrame : Frame U} {A B C : U}
-         (fs : frames_t' (flip frame_t) B A) (gs : frames_t' (flip frame_t) C B)
-         (x : univD A)
-         {struct gs}
+Lemma frames_revD_comp {U : Set} `{HFrame : Frame U} {A B C : U}
+      (fs : frames_t' (flip frame_t) B A) (gs : frames_t' (flip frame_t) C B)
+      (x : univD A)
   : frames_revD (fs >++ gs) x = frames_revD gs (frames_revD fs x).
-Proof. destruct gs > [reflexivity|simpl; now rewrite frames_revD_comp]. Defined.
+Proof. induction gs > [reflexivity|cbn; now rewrite IHgs]. Qed.
 
-Fixpoint framesD_rev {U : Set} `{Frame U} {A B : U} (fs : frames_t A B) (x : univD A)
-         {struct fs} : fs ⟦ x ⟧ = frames_revD (frames_rev fs) x.
+Lemma framesD_rev {U : Set} `{Frame U} {A B : U} (fs : frames_t A B) (x : univD A)
+  : fs ⟦ x ⟧ = frames_revD (frames_rev fs) x.
 Proof.
-  destruct fs > [reflexivity|simpl].
-  now rewrite frames_revD_comp, <- framesD_rev.
-Defined.
+  induction fs > [reflexivity|cbn].
+  now rewrite frames_revD_comp, <- IHfs.
+Qed.
 
-Fixpoint frames_rev_assoc {U : Set} {F : U -> U -> Set} {A B C D : U}
-         (fs : frames_t' F A B) (gs : frames_t' F B C) (hs : frames_t' F C D)
-         {struct fs}
+Lemma frames_rev_assoc {U : Set} {F : U -> U -> Set} {A B C D : U}
+      (fs : frames_t' F A B) (gs : frames_t' F B C) (hs : frames_t' F C D)
   : hs >++ (gs >++ fs) = hs >++ gs >++ fs.
-Proof.
-  destruct fs > [reflexivity|simpl].
-  now rewrite frames_rev_assoc.
-Defined.
+Proof. induction fs > [reflexivity|cbn; now rewrite IHfs]. Qed.
 
-Fixpoint frames_rev_comp {U : Set} {F : U -> U -> Set} {A B C : U}
-         (fs : frames_t' F A B) (gs : frames_t' F B C)
-         {struct fs}
+Lemma frames_rev_comp {U : Set} {F : U -> U -> Set} {A B C : U}
+      (fs : frames_t' F A B) (gs : frames_t' F B C)
   : frames_rev (gs >++ fs) = frames_rev fs >++ frames_rev gs.
 Proof.
-  destruct fs; simpl.
+  induction fs; cbn.
   - now rewrite frames_nil_comp.
-  - now rewrite frames_rev_comp, frames_rev_assoc.
-Defined.
+  - now rewrite IHfs, frames_rev_assoc.
+Qed.
 
-Fixpoint frames_rev_rev {U : Set} `{Frame U} {A B : U} (fs : frames_t A B)
-         {struct fs} : frames_rev (frames_rev fs) = fs.
-Proof.
-  destruct fs > [reflexivity|simpl].
-  now rewrite frames_rev_comp, frames_rev_rev.
-Defined.
+Lemma frames_rev_rev {U : Set} `{Frame U} {A B : U} (fs : frames_t A B)
+  : frames_rev (frames_rev fs) = fs.
+Proof. induction fs > [reflexivity|cbn]. now rewrite frames_rev_comp, IHfs. Qed.
 
 Fixpoint frames_any {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -> Prop)
          {A B} (fs : frames_t' F A B) : Prop :=
@@ -307,32 +306,17 @@ Fixpoint frames_any {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -
   | fs >:: f => P f \/ frames_any (@P) fs
   end.
 
-Fixpoint frames_any_app
-         {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -> Prop)
-         {A B C} (gs : frames_t' F B C) (fs : frames_t' F A B)
-         {struct fs}
+Lemma frames_any_app
+      {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -> Prop)
+      {A B C} (gs : frames_t' F B C) (fs : frames_t' F A B)
   : frames_any (@P) (gs >++ fs) <-> frames_any (@P) gs \/ frames_any (@P) fs.
-Proof.
-  destruct fs > [simpl; ltac1:(tauto)|simpl].
-  rewrite frames_any_app; ltac1:(tauto).
-Defined.
+Proof. induction fs > [cbn; ltac1:(tauto)|cbn]. rewrite IHfs; ltac1:(tauto). Qed.
 
-Fixpoint frames_any_cons
-         {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -> Prop)
-         {A B C} (fs : frames_t' F B C) (f : F A B)
-         {struct fs}
+Lemma frames_any_cons
+      {U : Set} {F : U -> U -> Set} (P : forall {A B : U}, F A B -> Prop)
+      {A B C} (fs : frames_t' F B C) (f : F A B)
   : frames_any (@P) (fs >:: f) <-> frames_any (@P) fs \/ P f.
-Proof. unfold frames_any; ltac1:(tauto). Defined.
-
-Fixpoint frames_ind {U : Set} {F : U -> U -> Set} (P : forall {A B}, frames_t' F A B -> Prop)
-         (Hnil : forall {A}, P (<[]> : frames_t' F A A))
-         (Hcons : forall {A B C} (f : F A B) (fs : frames_t' F B C), P fs -> P (fs >:: f))
-         {A B} (fs : frames_t' F A B) {struct fs}
-  : P fs.
-Proof.
-  destruct fs > [apply Hnil|apply Hcons].
-  now apply frames_ind.
-Defined.
+Proof. unfold frames_any; ltac1:(tauto). Qed.
 
 Fixpoint frames_len {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) : nat :=
   match fs with
@@ -340,187 +324,56 @@ Fixpoint frames_len {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
   | fs >:: f => S (frames_len fs)
   end.
 
-Fixpoint frames_len_compose {U : Set} {F : U -> U -> Set} {A B C}
-         (fs : frames_t' F A B) (gs : frames_t' F B C) {struct fs} :
+Lemma frames_len_compose {U : Set} {F : U -> U -> Set} {A B C}
+      (fs : frames_t' F A B) (gs : frames_t' F B C) :
   frames_len (gs >++ fs) = frames_len fs + frames_len gs.
-Proof.
-  destruct fs as [ |A' AB B' f fs] > [reflexivity|simpl].
-  now rewrite frames_len_compose.
-Qed.
+Proof. induction fs as [|A' AB B' f fs IHfs] > [reflexivity|cbn]. now rewrite IHfs. Qed.
 
 (* Useful in situations where [destruct] struggles with dependencies *)
-Definition frames_split' {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
+Lemma frames_split' {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
   (exists AB (g : F A AB) (gs : frames_t' F AB B), fs = gs >:: g) \/
   (A = B /\ JMeq fs (<[]> : frames_t' F A A) /\ frames_len fs = 0%nat).
 Proof. destruct fs as [| A' AB B' f fs] > [now right|left; now do 3 eexists]. Qed.
 
 (* Like frames_split', but peels off frames from the left instead of from the right *)
-Fixpoint frames_split {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
+Lemma frames_split {U : Set} {F : U -> U -> Set} {A B} (fs : frames_t' F A B) :
   (exists AB (g : F AB B) (gs : frames_t' F A AB), fs = <[g]> >++ gs) \/ (frames_len fs = O).
 Proof.
-  destruct fs as [| A' AB B' f fs] > [now right|left].
-  destruct (frames_split _ _ _ _ fs) as [[AB' [g [gs Hgs]]] | Hnil].
-  - subst.
-    do 2 eexists; exists (gs >:: f); reflexivity.
-  - destruct fs; simpl in Hnil; inversion Hnil.
-    do 2 eexists; exists <[]>; reflexivity.
+  induction fs as [| A' AB B' f fs IHfs] > [now right|left].
+  destruct IHfs as [[AB' [g [gs Hgs]]] | Hnil].
+  - subst. do 2 eexists; exists (gs >:: f); reflexivity.
+  - destruct fs; simpl in Hnil; inversion Hnil. do 2 eexists; exists <[]>; reflexivity.
 Qed.
 
-(* Misc. equality experiments *)
-
-Inductive Feq {U : Set} {F : U -> U -> Set} : forall {A B C D : U}, F A B -> F C D -> Prop :=
-| Feq_refl : forall {A B} (f : F A B), Feq f f.
-Infix "~=" := Feq (at level 80, no associativity).
-
-Class UnivEq {U : Set} (F : U -> U -> Set) :=
-  univ_eq : forall {A B C D : U} (f : F A B) (g : F C D), {f ~= g} + {~ (f ~= g)}.
-
-Class EqDec A := eq_dec' : forall x y : A, {x = y} + {x <> y}.
-
-(* Assumes there's proper EqDec instances hanging around for concrete subtrees *)
-Ltac derive_UnivEq :=
-  unfold UnivEq;
-  intros A B C D;
-  destruct A eqn:HA; rewrite <- HA; destruct C eqn:HC; rewrite <- HC;
-  try solve [subst; intros f g; right; inversion 1];
-  destruct B eqn:HB; rewrite <- HB; destruct D eqn:HD; rewrite <- HD;
-  try solve [subst; intros f g; right; inversion 1];
-  intros f g;
-  destruct f; try discriminate;
-  destruct g; try discriminate;
-  try solve [left; apply Feq_refl|right; inversion 1; inv_ex; congruence];
-  let rec gen_comparisons lhs rhs :=
-    lazymatch lhs with
-    | ?lf ?le =>
-      lazymatch rhs with
-      | ?rf ?re =>
-        destruct (eq_dec' le re); [|right; inversion 1; inv_ex; congruence];
-        gen_comparisons lf rf
-      end
-    | _ => subst; now left
-    end
-  in
-  lazymatch goal with
-  | |- {?lhs ~= ?rhs} + {~ (?lhs ~= ?rhs)} => gen_comparisons lhs rhs
-  end.
-
-(* Untyping + retyping of frames *)
-
-Definition uframe_t {U : Set} `{H : Frame U} := {A & {B & @frame_t U H A B}}.
-Definition uframes_t {U : Set} `{H : Frame U} := list (@uframe_t U H).
-
-Fixpoint well_typed {U : Set} `{H : Frame U} (A B : U) (fs : @uframes_t U H) : Prop.
+(* Well-founded induction on the length of the context *)
+Lemma frames_len_ind (U : Set) (F : U -> U -> Set)
+      (P : forall {A B}, frames_t' F A B -> Prop)
+      (Hlt : forall {A B} (fs : frames_t' F A B),
+        (forall {C D} (gs : frames_t' F C D), frames_len gs < frames_len fs -> P gs) ->
+        P fs)
+      A B (fs : frames_t' F A B)
+  : P fs.
 Proof.
-  destruct fs as [|f fs] > [exact (A = B)|].
-  destruct f as [A' [AB f]].
-  exact (A = A' /\ well_typed U H AB B fs).
-Defined.
-
-Fixpoint well_typed_comp {U : Set} `{H : Frame U} (A B C : U) (fs gs : @uframes_t U H) {struct fs} :
-  well_typed A B fs ->
-  well_typed B C gs ->
-  well_typed A C (fs ++ gs).
-Proof.
-  destruct fs as [|[A' [AB f]] fs].
-  - cbn; intros; subst; assumption.
-  - cbn; intros [HAB Hfs] Hgs; split > [assumption|eapply well_typed_comp; eauto].
-Defined.
-
-Definition untype_frame {U : Set} `{H : Frame U} {A B : U} (f : @frame_t U H A B) : @uframe_t U H.
-Proof. exists A, B; exact f. Defined.
-
-Fixpoint untype {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) : @uframes_t U H.
-Proof.
-  destruct fs as [|A AB B f fs] > [exact []|ltac1:(refine (_ :: _))].
-  - exact (untype_frame f).
-  - eapply untype; exact fs.
-Defined.
-
-Fixpoint untype_well_typed {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) :
-  well_typed A B (untype fs).
-Proof.
-  destruct fs as [|A AB B f fs] > [reflexivity|simpl].
-  split > [reflexivity|now apply untype_well_typed].
-Defined.
-
-Fixpoint retype {U : Set} `{H : Frame U} (A B : U) (fs : @uframes_t U H)
-         (Hty : well_typed A B fs) {struct fs} : 
-  @frames_t U H A B.
-Proof.
-  destruct fs as [|[A' [AB f]] fs]; simpl in Hty.
-  - subst; exact <[]>.
-  - destruct Hty; subst.
-    ltac1:(refine (_ >:: f)).
-    eapply retype; eauto.
-Defined.
-
-Definition frames_sig_t {U : Set} `{H : Frame U} A B := {fs : @uframes_t U H | well_typed A B fs}.
-
-Definition ty_split {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) : @frames_sig_t U H A B.
-Proof. exists (untype fs); ltac1:(eapply untype_well_typed; eauto). Defined.
-
-Definition ty_merge {U : Set} `{H : Frame U} {A B : U} : @frames_sig_t U H A B -> @frames_t U H A B.
-Proof. intros [fs Hfs]; ltac1:(eapply retype; eauto). Defined.
-
-Fixpoint ty_u_ty {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B)
-         (Hfs : well_typed A B (untype fs)) {struct fs} :
-  retype A B (untype fs) Hfs = fs.
-Proof.
-  destruct fs as [|A AB B f fs]; cbn in Hfs.
-  - (assert (Hfs = eq_refl) by apply UIP); subst; reflexivity.
-  - destruct Hfs as [Hfs1 Hfs2]; (assert (Hfs1 = eq_refl) by apply UIP); subst; cbn.
-    now rewrite ty_u_ty.
-Defined.
-
-Fixpoint t_sig_t {U : Set} `{H : Frame U} {A B : U} (fs : @frames_t U H A B) :
-  ty_merge (ty_split fs) = fs.
-Proof.
-  destruct fs as [|A AB B f fs] > [reflexivity|simpl].
-  unfold eq_rec_r, eq_rec, eq_rect, eq_sym; f_equal.
-  rewrite <- t_sig_t; reflexivity.
+  remember (frames_len fs) as n eqn:Hlen.
+  ltac1:(generalize dependent B; generalize dependent A).
+  induction n as [n IHn] using lt_wf_ind; intros A B fs Hlen.
+  apply Hlt; intros C D gs Hlt_gs; eapply IHn > [|reflexivity]; ltac1:(lia).
 Qed.
 
-Fixpoint sig_t_sig' {U : Set} `{H : Frame U} {A B : U} (fs : @uframes_t U H)
-         (Hty : @well_typed U H A B fs) {struct fs} :
-  ty_split (ty_merge (exist _ fs Hty)) = (exist _ fs Hty).
+(* [frames_t] is a snoc-list of frames; this is an induction principle for reasoning about
+   them as if they were cons-lists. *)
+Lemma frames_rev_ind (U : Set) (F : U -> U -> Set)
+      (P : forall {A B}, frames_t' F A B -> Prop)
+      (Hnil : forall {A}, P (<[]> : frames_t' F A A))
+      (Hcons : forall {A B C} (f : F B C) (fs : frames_t' F A B), P fs -> P (<[f]> >++ fs))
+      A B (fs : frames_t' F A B)
+  : P fs.
 Proof.
-  destruct fs as [|[A' [AB' f]] fs]; simpl in Hty.
-  - subst; reflexivity.
-  - destruct Hty as [? Hwt]; subst; cbn; unfold ty_split; cbn.
-    apply ProofIrrelevance.ProofIrrelevanceTheory.subset_eq_compat.
-    specialize (sig_t_sig' U H _ _ fs Hwt).
-    ltac1:(apply (@f_equal _ _ (@proj1_sig _ _)) in sig_t_sig'; cbn in sig_t_sig').
-    now rewrite sig_t_sig'.
-Defined.
-
-Definition sig_t_sig {U : Set} `{H : Frame U} {A B : U} (fs : @frames_sig_t U H A B) :
-  ty_split (ty_merge fs) = fs.
-Proof. destruct fs as [fs Hfs]; ltac1:(apply sig_t_sig'). Defined.
-
-Fixpoint untype_comp {U : Set} `{H : Frame U} {A B C : U}
-      (gs : @frames_t U H A B) (fs : @frames_t U H B C) {struct gs} :
-  untype (fs >++ gs) = untype gs ++ untype fs.
-Proof. destruct gs as [|A AB B g gs] > [reflexivity|simpl; ltac1:(congruence)]. Defined.
-
-Lemma cong_untype {U : Set} `{H : Frame U} {A B : U} (fs gs : @frames_t U H A B) :
-  fs = gs -> untype fs = untype gs.
-Proof. intros; now f_equal. Defined.
-
-Fixpoint unique_typings {U : Set} `{H : Frame U} {A B : U} (fs : @uframes_t U H)
-      (Hfs Hgs : well_typed A B fs) {struct fs} :
-  Hfs = Hgs.
-Proof.
-  destruct fs as [|[A' [AB f]] fs].
-  - now apply UIP.
-  - simpl in Hfs, Hgs; destruct Hfs as [Hfs1 Hfs2], Hgs as [Hgs1 Hgs2].
-    assert (Hfs1 = Hgs1) by apply UIP; subst.
-    specialize (unique_typings U H _ _ fs Hfs2 Hgs2); now subst.
-Defined.
-
-Fixpoint cong_retype {U : Set} `{H : Frame U} (A B : U) (fs gs : @uframes_t U H)
-      (Hfs : well_typed A B fs) (Hgs : well_typed A B gs) {struct fs} :
-  fs = gs -> retype A B fs Hfs = retype A B gs Hgs.
-Proof. intros; subst gs; ltac1:(assert (Hfs = Hgs) by apply unique_typings); now subst. Defined.
+  induction fs as [A B fs IHfs] using frames_len_ind.
+  destruct (frames_split fs) as [[AB [f [fs' Hfs']]] | Hfs_nil] > [subst fs|].
+  - apply Hcons, IHfs; rewrite frames_len_compose; cbn; ltac1:(lia).
+  - destruct fs > [|now cbn in Hfs_nil]; apply Hnil.
+Qed.
 
 (* -------------------- Rewriters -------------------- *)
 Section Rewriters.
