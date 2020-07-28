@@ -1842,7 +1842,8 @@ Proof.
         destruct Huniq as [HuniqC [Huniq Hdis']].
         rewrite !app_exp_c_eq, !isoBAB, (proj1 (ub_app_ctx_f _)).
         split; [|split]; auto.
-        -- apply rename_all_uniq. unbox_newtypes; cbn in *; now inv Huniq.
+        -- apply rename_all_uniq. (* TODO: use unique_bindings_rename_all_ns *)
+           unbox_newtypes; cbn in *; now inv Huniq.
         -- unfold Rec; rewrite rename_all_preserves_bound.
            eapply Disjoint_Included_r; [|apply Hdis'].
            unbox_newtypes; cbn; normalize_bound_var; eauto with Ensembles_DB.

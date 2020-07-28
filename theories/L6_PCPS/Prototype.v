@@ -806,6 +806,7 @@ Section GoalGeneration.
 
 Context
   (aux_data : aux_data_t)
+  (decls := aux_data.(aEnv))
   (typename := aux_data.(aTypename)) (g := aux_data.(aGraph))
   (univ_of_tyname := aux_data.(aUnivOfTyname)).
 Context
@@ -823,7 +824,7 @@ Context
 Definition gen_constr_delay_ty (c : string) : GM term. ltac1:(refine(
   let! '(n, children, rtyname) := findM c g.(mgChildren) in
   let! rty := findM rtyname g.(mgTypes) in
-  let! '(ind, pars) := decompose_ind rty in
+  let! '(ind, pars) := decompose_ind decls rty in
   let ctr := mkApps (tConstruct ind (N.to_nat n) []) pars in
   let univ_name := typename +++ "_univ" in
   let! univ_n := findM rtyname univ_of_tyname in
@@ -890,6 +891,7 @@ Section GoalGeneration.
 
 Context
   (aux_data : aux_data_t)
+  (decls := aux_data.(aEnv))
   (typename := aux_data.(aTypename)) (graph := aux_data.(aGraph))
   (univ_of_tyname := aux_data.(aUnivOfTyname))
   (frames_of_constr := aux_data.(aFramesOfConstr)).
@@ -925,7 +927,7 @@ Definition gen_smart_constr_ty (c : string) : GM term. ltac1:(refine(
   let! '(n_constr, child_tys, rty) := findM' c graph.(mgChildren) "children" in
   let n_constr := N.to_nat n_constr in
   let! rty_term := findM' rty graph.(mgTypes) "types" in
-  let! '(ind, pars) := decompose_ind rty_term in
+  let! '(ind, pars) := decompose_ind decls rty_term in
   let constr := mkApps (tConstruct ind n_constr []) pars in
   let frames := find_d c [] frames_of_constr in
   let n_frames := map hIndex frames in
@@ -1107,6 +1109,7 @@ Section GoalGeneration.
 
 Context
   (aux_data : aux_data_t)
+  (decls := aux_data.(aEnv))
   (typename := aux_data.(aTypename))
   (ind_info := aux_data.(aIndInfo))
   (graph := aux_data.(aGraph))
@@ -1136,7 +1139,7 @@ Definition gen_topdown_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let! t_tyname := findM'' t_univ_i n_univs "t_univ_i" in
   let t_univ_i := N.to_nat t_univ_i in
   let! t_ty := findM' t_tyname graph.(mgTypes) "t_tyname" in
-  let! '(ind, pars) := decompose_ind t_ty in
+  let! '(ind, pars) := decompose_ind decls t_ty in
   let! Ans := gensym "Ans" in
   let! d := gensym "d" in
   let! C := gensym "C" in
@@ -1287,7 +1290,7 @@ Definition gen_bottomup_ty (t_univ_i : N) : GM term. ltac1:(refine(
   let! t_tyname := findM'' t_univ_i n_univs "t_univ_i" in
   let t_univ_i := N.to_nat t_univ_i in
   let! t_ty := findM' t_tyname graph.(mgTypes) "t_tyname" in
-  let! '(ind, pars) := decompose_ind t_ty in
+  let! '(ind, pars) := decompose_ind decls t_ty in
   let! Ans := gensym "Ans" in
   let! C := gensym "C" in
   let! C_ok := gensym "C_ok" in

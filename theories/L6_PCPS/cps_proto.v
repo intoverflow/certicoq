@@ -13,138 +13,19 @@ From Coq Require Import ZArith.ZArith Lists.List Sets.Ensembles.
 Require Import Lia.
 Import ListNotations.
 
-Require Import CertiCoq.L6.Prototype.
-
+From CertiCoq.L6 Require Import
+     Prototype cps cps_util ctx
+     identifiers Ensembles_util.
 Require Export CertiCoq.L6.cps_proto_metacoq.
+
 Print exp_univ.
 Print exp_univD.
 Print exp_frame_t.
 Print exp_frameD.
 Print exp_Frame_ops.
 
-Require CertiCoq.L6.cps.
-From CertiCoq.L6 Require Import identifiers ctx Ensembles_util.
-
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
-
-Module M := cps.M.
-
-(* -------------------- exp is isomorphic to cps.exp -------------------- *)
-
-Definition strip_vars : list var -> list cps.var := map (fun '(mk_var x) => x).
-
-Lemma strip_vars_app xs ys : strip_vars (xs ++ ys) = strip_vars xs ++ strip_vars ys.
-Proof. unfold strip_vars; now rewrite map_app. Qed.
-
-Definition fundefs := list fundef.
-
-Definition fundefs_of_proto' exp_of_proto :=
-  fold_right
-    (fun '(Ffun (mk_var f) (mk_fun_tag ft) xs e) fds =>
-      cps.Fcons f ft (strip_vars xs) (exp_of_proto e) fds)
-    cps.Fnil.
-Definition ce_of_proto' exp_of_proto : ctor_tag * exp -> cps.ctor_tag * cps.exp :=
-  fun '(mk_ctor_tag c, e) => (c, exp_of_proto e).
-Definition ces_of_proto' exp_of_proto := map (ce_of_proto' exp_of_proto).
-
-Fixpoint exp_of_proto (e : exp) : cps.exp :=
-  match e with
-  | Econstr (mk_var x) (mk_ctor_tag c) ys e => cps.Econstr x c (strip_vars ys) (exp_of_proto e)
-  | Ecase (mk_var x) ces => cps.Ecase x (ces_of_proto' exp_of_proto ces)
-  | Eproj (mk_var x) (mk_ctor_tag c) n (mk_var y) e => cps.Eproj x c n y (exp_of_proto e)
-  | Eletapp (mk_var x) (mk_var f) (mk_fun_tag ft) ys e =>
-    cps.Eletapp x f ft (strip_vars ys) (exp_of_proto e)
-  | Efun fds e => cps.Efun (fundefs_of_proto' exp_of_proto fds) (exp_of_proto e)
-  | Eapp (mk_var f) (mk_fun_tag ft) xs => cps.Eapp f ft (strip_vars xs)
-  | Eprim (mk_var x) (mk_prim p) ys e => cps.Eprim x p (strip_vars ys) (exp_of_proto e)
-  | Ehalt (mk_var x) => cps.Ehalt x
-  end.
-
-Definition ce_of_proto := ce_of_proto' exp_of_proto.
-Definition ces_of_proto := ces_of_proto' exp_of_proto.
-Definition fundefs_of_proto := fundefs_of_proto' exp_of_proto.
-
-Definition proto_of_ce' proto_of_exp : cps.ctor_tag * cps.exp -> ctor_tag * exp :=
-  fun '(c, e) => (mk_ctor_tag c, proto_of_exp e).
-Definition proto_of_ces' proto_of_exp := map (proto_of_ce' proto_of_exp).
-
-Fixpoint proto_of_exp (e : cps.exp) : exp :=
-  match e with
-  | cps.Econstr x c ys e => Econstr (mk_var x) (mk_ctor_tag c) (map mk_var ys) (proto_of_exp e)
-  | cps.Ecase x ces => Ecase (mk_var x) (map (fun '(c, e) => (mk_ctor_tag c, proto_of_exp e)) ces)
-  | cps.Eproj x c n y e => Eproj (mk_var x) (mk_ctor_tag c) n (mk_var y) (proto_of_exp e)
-  | cps.Eletapp x f ft ys e =>
-    Eletapp (mk_var x) (mk_var f) (mk_fun_tag ft) (map mk_var ys) (proto_of_exp e)
-  | cps.Efun fds e => Efun (proto_of_fundefs fds) (proto_of_exp e)
-  | cps.Eapp f ft ys => Eapp (mk_var f) (mk_fun_tag ft) (map mk_var ys)
-  | cps.Eprim x p ys e => Eprim (mk_var x) (mk_prim p) (map mk_var ys) (proto_of_exp e)
-  | cps.Ehalt x => Ehalt (mk_var x)
-  end
-with proto_of_fundefs (fds : cps.fundefs) : fundefs :=
-  match fds with
-  | cps.Fcons f ft xs e fds =>
-    Ffun (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_exp e) :: proto_of_fundefs fds
-  | cps.Fnil => []
-  end.
-
-Definition proto_of_ce := proto_of_ce' proto_of_exp.
-Definition proto_of_ces := proto_of_ces' proto_of_exp.
-
-Lemma strip_vars_map xs : strip_vars (map mk_var xs) = xs.
-Proof. induction xs as [|x xs IHxs]; simpl; congruence. Qed.
-
-Fixpoint exp_proto_exp e : exp_of_proto (proto_of_exp e) = e.
-Proof.
-  destruct e; simpl; try rewrite strip_vars_map; try congruence.
-  induction l as [ | [c e] ces IHces]; [reflexivity|]; simpl.
-  inversion IHces.
-  repeat rewrite H0.
-  repeat f_equal.
-  now apply exp_proto_exp.
-  induction f as [f ft xs e_body fds IHfds|]; [cbn|now rewrite exp_proto_exp].
-  inversion IHfds.
-  now rewrite H0, H0, H1, H1, strip_vars_map, exp_proto_exp.
-Qed.
-
-Lemma fundefs_proto_fundefs fds : fundefs_of_proto (proto_of_fundefs fds) = fds.
-Proof.
-  pose (H := exp_proto_exp (cps.Efun fds (cps.Ehalt xH))); clearbody H; cbn in H.
-  inversion H; now rewrite H1.
-Qed.
-
-Lemma ces_proto_ces ces : ces_of_proto (proto_of_ces ces) = ces.
-Proof. induction ces as [| [c e] ces IHces]; [reflexivity|simpl]; now rewrite exp_proto_exp, IHces. Qed.
-
-Lemma map_strip_vars xs : map mk_var (strip_vars xs) = xs.
-Proof. induction xs as [| [x] xs IHxs]; simpl; congruence. Qed.
-
-Local Ltac destruct_sings :=
-  repeat match goal with |- context [match ?x with _ => _ end] => destruct x as [x]; simpl end.
-
-Fixpoint proto_exp_proto e : proto_of_exp (exp_of_proto e) = e.
-Proof.
-  destruct e; simpl; destruct_sings; try rewrite map_strip_vars; try congruence.
-  induction ces as [| [[c] e] ces IHces]; [reflexivity|]; simpl.
-  inversion IHces.
-  repeat rewrite H0.
-  repeat f_equal.
-  now apply proto_exp_proto.
-  induction fds as [| [[f] [ft] xs e_body] fds IHfds]; [now rewrite proto_exp_proto|cbn].
-  inversion IHfds; repeat rewrite H0, H1; now rewrite map_strip_vars, proto_exp_proto.
-Qed.
-
-Lemma proto_fundefs_proto fds : proto_of_fundefs (fundefs_of_proto fds) = fds.
-Proof.
-  pose (H := proto_exp_proto (Efun fds (Ehalt (mk_var xH)))); clearbody H; cbn in H.
-  inversion H; now rewrite H1.
-Qed.
-
-Lemma proto_ces_proto ces : proto_of_ces (ces_of_proto ces) = ces.
-Proof.
-  induction ces as [| [[c] e] ces IHces]; [reflexivity|simpl];
-  now rewrite proto_exp_proto, IHces.
-Qed.
 
 (* ---------- exp_c with the right indices is isomorphic to cps.exp_ctx and cps.fundefs_ctx ---------- *)
 
@@ -154,7 +35,7 @@ Definition c_of_ces (ces : list (cps.ctor_tag * cps.exp)) :
   exp_c exp_univ_list_prod_ctor_tag_exp exp_univ_list_prod_ctor_tag_exp :=
   fold_right
     (fun '(c, e) frames =>
-      <[cons_prod_ctor_tag_exp1 (mk_ctor_tag c, proto_of_exp e)]> >++ frames)
+      <[cons_prod_ctor_tag_exp1 (c, e)]> >++ frames)
     <[]>
     ces.
 
@@ -162,32 +43,27 @@ Definition c_of_ces_ctx' c_of_exp_ctx (ces1 : list (cps.ctor_tag * cps.exp)) (c 
            (C : exp_ctx) (ces2 : list (cps.ctor_tag * cps.exp))
   : exp_c exp_univ_exp exp_univ_list_prod_ctor_tag_exp :=
   c_of_ces ces1
-    >++ <[cons_prod_ctor_tag_exp0 (proto_of_ces ces2); pair_ctor_tag_exp1 (mk_ctor_tag c)]>
+    >++ <[cons_prod_ctor_tag_exp0 ces2; pair_ctor_tag_exp1 c]>
     >++ c_of_exp_ctx C.
 
 Fixpoint c_of_exp_ctx (C : exp_ctx) : exp_c exp_univ_exp exp_univ_exp
-with c_of_fundefs_ctx (C : fundefs_ctx) : exp_c exp_univ_exp exp_univ_list_fundef.
+with c_of_fundefs_ctx (C : fundefs_ctx) : exp_c exp_univ_exp exp_univ_fundefs.
 Proof.
   - refine (
       match C with
       | Hole_c => <[]>
-      | Econstr_c x c ys C => <[Econstr3 (mk_var x) (mk_ctor_tag c) (map mk_var ys)]> >++ c_of_exp_ctx C
-      | Eproj_c x c n y C => <[Eproj4 (mk_var x) (mk_ctor_tag c) n (mk_var y)]> >++ c_of_exp_ctx C
-      | Eprim_c x p ys C => <[Eprim3 (mk_var x) (mk_prim p) (map mk_var ys)]> >++ c_of_exp_ctx C
-      | Eletapp_c x f ft ys C =>
-        <[Eletapp4 (mk_var x) (mk_var f) (mk_fun_tag ft) (map mk_var ys)]> >++ c_of_exp_ctx C
-      | Ecase_c x ces1 c C ces2 => <[Ecase1 (mk_var x)]> >++ c_of_ces_ctx' c_of_exp_ctx ces1 c C ces2
-      | Efun1_c fds C => <[Efun1 (proto_of_fundefs fds)]> >++ c_of_exp_ctx C
-      | Efun2_c C e => <[Efun0 (proto_of_exp e)]> >++ c_of_fundefs_ctx C
+      | Econstr_c x c ys C => <[Econstr3 x c ys]> >++ c_of_exp_ctx C
+      | Eproj_c x c n y C => <[Eproj4 x c n y]> >++ c_of_exp_ctx C
+      | Eprim_c x p ys C => <[Eprim3 x p ys]> >++ c_of_exp_ctx C
+      | Eletapp_c x f ft ys C => <[Eletapp4 x f ft ys]> >++ c_of_exp_ctx C
+      | Ecase_c x ces1 c C ces2 => <[Ecase1 x]> >++ c_of_ces_ctx' c_of_exp_ctx ces1 c C ces2
+      | Efun1_c fds C => <[Efun1 fds]> >++ c_of_exp_ctx C
+      | Efun2_c C e => <[Efun0 e]> >++ c_of_fundefs_ctx C
       end).
   - refine (
       match C with
-      | Fcons1_c f ft xs C fds =>
-        <[cons_fundef0 (proto_of_fundefs fds); Ffun3 (mk_var f) (mk_fun_tag ft) (map mk_var xs)]>
-          >++ c_of_exp_ctx C
-      | Fcons2_c f ft xs e C =>
-        <[cons_fundef1 (Ffun (mk_var f) (mk_fun_tag ft) (map mk_var xs) (proto_of_exp e))]>
-          >++ c_of_fundefs_ctx C
+      | Fcons1_c f ft xs C fds => <[Fcons3 f ft xs fds]> >++ c_of_exp_ctx C
+      | Fcons2_c f ft xs e C => <[Fcons4 f ft xs e]> >++ c_of_fundefs_ctx C
       end).
 Defined.
 
@@ -198,49 +74,37 @@ Definition c_of_ces_ctx := c_of_ces_ctx' c_of_exp_ctx.
    ctx |-> slice + ctx. Then all the functions can be composed together and initialized with 
    the empty context. *)
 
-Inductive zero : Set :=.
 Definition univ_rep (A : exp_univ) : Set :=
   match A with
   | exp_univ_prod_ctor_tag_exp => cps.ctor_tag * exp_ctx
   | exp_univ_list_prod_ctor_tag_exp =>
     list (cps.ctor_tag * cps.exp) * cps.ctor_tag * exp_ctx * list (cps.ctor_tag * cps.exp)
-  | exp_univ_list_fundef => fundefs_ctx
-  | exp_univ_fundef => cps.var * cps.fun_tag * list cps.var * exp_ctx
+  | exp_univ_fundefs => fundefs_ctx
   | exp_univ_exp => exp_ctx
-  | exp_univ_var => zero
-  | exp_univ_fun_tag => zero
-  | exp_univ_ctor_tag => zero
-  | exp_univ_prim => zero
-  | exp_univ_N => zero
-  | exp_univ_list_var => zero
-  end.
-
-Ltac unbox_newtypes :=
-  repeat lazymatch goal with
-  | x : var |- _ => destruct x as [x]
-  | x : prim |- _ => destruct x as [x]
-  | x : fun_tag |- _ => destruct x as [x]
-  | x : ctor_tag |- _ => destruct x as [x]
+  | exp_univ_var => False
+  | exp_univ_fun_tag => False
+  | exp_univ_ctor_tag => False
+  | exp_univ_prim => False
+  | exp_univ_N => False
+  | exp_univ_list_var => False
   end.
 
 Definition exp_frame_rep {A B} (f : exp_frame_t A B) : univ_rep A -> univ_rep B.
 Proof.
-  destruct f eqn:Hf; simpl; unbox_newtypes;
-  try lazymatch goal with |- zero -> _ => inversion 1 end.
+  destruct f eqn:Hf; cbn;
+  try lazymatch goal with |- False -> _ => inversion 1 end.
   - exact (fun ctx => (c, ctx)).
-  - exact (fun '(c, e) => ([], c, e, ces_of_proto l)).
-  - exact (fun '(ces1, c, e, ces2) => (ce_of_proto p :: ces1, c, e, ces2)).
-  - exact (fun ctx => (v, f0, strip_vars l, ctx)).
-  - exact (fun '(f, ft, xs, ctx) => Fcons1_c f ft xs ctx (fundefs_of_proto l)).
-  - destruct f0 as [[f0] [ft] xs e].
-    exact (fun ctx => Fcons2_c f0 ft (strip_vars xs) (exp_of_proto e) ctx).
-  - exact (fun ctx => Econstr_c v c (strip_vars l) ctx).
+  - exact (fun '(c, e) => ([], c, e, l)).
+  - exact (fun '(ces1, c, e, ces2) => (p :: ces1, c, e, ces2)).
+  - exact (fun ctx => Fcons1_c v f0 l ctx f1).
+  - exact (fun ctx => Fcons2_c v f0 l e ctx).
+  - exact (fun ctx => Econstr_c v c l ctx).
   - exact (fun '(ces1, c, e, ces2) => Ecase_c v ces1 c e ces2).
   - exact (fun ctx => Eproj_c v c n v0 ctx).
-  - exact (fun ctx => Eletapp_c v v0 f0 (strip_vars l) ctx).
-  - exact (fun ctx => Efun2_c ctx (exp_of_proto e)).
-  - exact (fun ctx => Efun1_c (fundefs_of_proto l) ctx).
-  - exact (fun ctx => Eprim_c v p (strip_vars l) ctx).
+  - exact (fun ctx => Eletapp_c v v0 f0 l ctx).
+  - exact (fun ctx => Efun2_c ctx e).
+  - exact (fun ctx => Efun1_c f0 ctx).
+  - exact (fun ctx => Eprim_c v p l ctx).
 Defined.
 
 Fixpoint exp_c_rep {A B} (C : exp_c A B) : univ_rep A -> univ_rep B :=
@@ -252,23 +116,12 @@ Fixpoint exp_c_rep {A B} (C : exp_c A B) : univ_rep A -> univ_rep B :=
 Definition exp_ctx_of_c (C : exp_c exp_univ_exp exp_univ_exp) : exp_ctx :=
   exp_c_rep C Hole_c.
 
-Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_list_fundef) : fundefs_ctx :=
+Definition fundefs_ctx_of_c (C : exp_c exp_univ_exp exp_univ_fundefs) : fundefs_ctx :=
   exp_c_rep C Hole_c.
 
 Lemma exp_c_rep_compose {A B C} (fs : exp_c A B) (gs : exp_c B C) x :
   exp_c_rep (gs >++ fs) x = exp_c_rep gs (exp_c_rep fs x).
 Proof. induction fs as [ |A' AB B' f fs IHfs]; [reflexivity|cbn; now rewrite IHfs]. Qed.
-
-Local Ltac normalize_roundtrips' :=
-  try rewrite exp_c_rep_compose; simpl;
-  try rewrite strip_vars_map;
-  try rewrite exp_proto_exp;
-  try rewrite ces_proto_ces;
-  try rewrite fundefs_proto_fundefs;
-  try rewrite map_strip_vars;
-  try rewrite proto_exp_proto;
-  try rewrite proto_ces_proto;
-  try rewrite proto_fundefs_proto.
 
 (* exp_ctx -> exp_c -> exp_ctx *)
 
@@ -281,7 +134,7 @@ Lemma ces_ctx_c_ces_ctx : forall ces ces1 c C ces2,
 Proof.
   clear; induction ces as [| [c e] ces IHces]; [reflexivity|]; intros ces1 ctr C ces2.
   unfold c_of_ces; rewrite fold_right_cons, exp_c_rep_compose.
-  rewrite IHces; simpl; now normalize_roundtrips'.
+  now rewrite IHces.
 Qed.
 
 Fixpoint exp_ctx_c_exp_ctx (C : exp_ctx) : exp_ctx_of_c (c_of_exp_ctx C) = C
@@ -290,11 +143,10 @@ Proof.
   all: unfold exp_ctx_of_c, fundefs_ctx_of_c in *;
     destruct C; simpl;
     try reflexivity;
-    normalize_roundtrips';
+    rewrite ?exp_c_rep_compose;
     try solve [(rewrite exp_ctx_c_exp_ctx + rewrite fundefs_ctx_c_fundefs_ctx); reflexivity].
   unfold c_of_ces_ctx'.
-  rewrite exp_c_rep_compose.
-  normalize_roundtrips'.
+  rewrite !exp_c_rep_compose; cbn.
   now rewrite ces_ctx_c_ces_ctx, app_nil_r, exp_ctx_c_exp_ctx.
 Qed.
 
@@ -315,13 +167,10 @@ Qed.
 Definition c_ctx_c_stmt {A B} : exp_c A B -> Prop :=
   match A, B with
   | exp_univ_exp, exp_univ_exp => fun C => c_of_exp_ctx (exp_ctx_of_c C) = C
-  | exp_univ_exp, exp_univ_fundef => fun C =>
-    let '(f, ft, xs, ctx) := exp_c_rep C Hole_c in
-    <[Ffun3 (mk_var f) (mk_fun_tag ft) (map mk_var xs)]> >++ c_of_exp_ctx ctx = C
-  | exp_univ_exp, exp_univ_list_fundef => fun C => c_of_fundefs_ctx (fundefs_ctx_of_c C) = C
+  | exp_univ_exp, exp_univ_fundefs => fun C => c_of_fundefs_ctx (fundefs_ctx_of_c C) = C
   | exp_univ_exp, exp_univ_prod_ctor_tag_exp => fun C =>
     let '(c, ctx) := exp_c_rep C Hole_c in
-    <[pair_ctor_tag_exp1 (mk_ctor_tag c)]> >++ c_of_exp_ctx ctx = C
+    <[pair_ctor_tag_exp1 c]> >++ c_of_exp_ctx ctx = C
   | exp_univ_exp, exp_univ_list_prod_ctor_tag_exp => fun C =>
     let '(ces1, c, ctx, ces2) := exp_c_rep C Hole_c in
     c_of_ces_ctx ces1 c ctx ces2 = C
@@ -333,13 +182,11 @@ Proof.
   induction C as [|A AB B g gs IHgs] using frames_rev_ind.
   - destruct A; try exact I; reflexivity.
   - destruct g, A; try exact I;
-      try match goal with f : fundef |- _ => destruct f as [f ft xs e] end;
-      unbox_newtypes; simpl;
-      unfold exp_ctx_of_c, fundefs_ctx_of_c;
-      try rewrite exp_c_rep_compose; simpl;
+      cbn; unfold exp_ctx_of_c, fundefs_ctx_of_c;
+      rewrite ?exp_c_rep_compose; cbn;
       try match goal with
       | |- context [match ?e with end] =>
-        let H := fresh "H" in assert (H : zero) by exact e; inversion H
+        let H := fresh "H" in assert (H : False) by exact e; inversion H
       end;
       match goal with |- context [exp_c_rep gs Hole_c] =>
         match type of gs with
@@ -348,41 +195,29 @@ Proof.
           unfold exp_ctx_of_c, fundefs_ctx_of_c in IHgs
         end
       end;
-      normalize_roundtrips';
       try solve [erewrite IHgs; eauto; rewrite frames_len_compose; simpl; lia].
     + destruct (exp_c_rep gs Hole_c) as [c e] eqn:Hce.
-      unfold c_of_ces_ctx, c_of_ces_ctx'; simpl; normalize_roundtrips'.
-      rewrite <- IHgs. now rewrite frames_rev_assoc.
+      unfold c_of_ces_ctx, c_of_ces_ctx'.
+      now rewrite <- IHgs, frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
-      destruct p as [[c'] e']; simpl.
-      unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      rewrite <- IHgs. now rewrite frames_rev_assoc.
+      destruct p as [c' e']; simpl.
+      unfold c_of_ces_ctx, c_of_ces_ctx' in *.
+      now rewrite <- IHgs, frames_rev_assoc.
     + destruct (exp_c_rep gs Hole_c) as [[[f ft] xs] ctx] eqn:Hces12.
-      simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      erewrite <- IHgs. now rewrite frames_rev_assoc.
-    + destruct (exp_c_rep gs Hole_c) as [[[ces1 c] e] ces2] eqn:Hces12.
-      simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *; simpl; normalize_roundtrips'.
-      now erewrite <- IHgs.
+      simpl; unfold c_of_ces_ctx, c_of_ces_ctx' in *.
+      now erewrite <- IHgs, frames_rev_assoc.
 Qed.
 
 Corollary c_exp_ctx_c (C : exp_c exp_univ_exp exp_univ_exp) :
   c_of_exp_ctx (exp_ctx_of_c C) = C.
 Proof. apply (c_ctx_c C). Qed.
 
-Corollary c_fundefs_ctx_c (C : exp_c exp_univ_exp exp_univ_list_fundef) :
+Corollary c_fundefs_ctx_c (C : exp_c exp_univ_exp exp_univ_fundefs) :
   c_of_fundefs_ctx (fundefs_ctx_of_c C) = C.
 Proof. apply (c_ctx_c C). Qed.
 
 Ltac normalize_roundtrips :=
   try rewrite exp_c_rep_compose; simpl;
-  try rewrite strip_vars_map in *;
-  try rewrite exp_proto_exp in *;
-  try rewrite ces_proto_ces in *;
-  try rewrite fundefs_proto_fundefs in *;
-  try rewrite map_strip_vars in *;
-  try rewrite proto_exp_proto in *;
-  try rewrite proto_ces_proto in *;
-  try rewrite proto_fundefs_proto in *;
   try rewrite c_exp_ctx_c in *;
   try rewrite c_fundefs_ctx_c in *;
   try rewrite exp_ctx_c_exp_ctx in *;
@@ -399,61 +234,13 @@ Class Iso A B := {
 Notation "'![' e ']'" := (isoBofA e).
 Notation "'[' e ']!'" := (isoAofB e).
 
-Instance Iso_var : Iso var cps.var := {
-  isoAofB := mk_var;
-  isoBofA := un_var;
-  isoABA := fun '(mk_var x) => eq_refl;
-  isoBAB := fun x => eq_refl }.
-
-Instance Iso_vars : Iso (list var) (list cps.var) := {
-  isoAofB := map mk_var;
-  isoBofA := strip_vars;
-  isoABA := map_strip_vars;
-  isoBAB := strip_vars_map }.
-
-Instance Iso_fun_tag : Iso fun_tag cps.fun_tag := {
-  isoAofB := mk_fun_tag;
-  isoBofA := un_fun_tag;
-  isoABA := fun '(mk_fun_tag x) => eq_refl;
-  isoBAB := fun x => eq_refl }.
-
-Instance Iso_ctor_tag : Iso ctor_tag cps.ctor_tag := {
-  isoAofB := mk_ctor_tag;
-  isoBofA := un_ctor_tag;
-  isoABA := fun '(mk_ctor_tag x) => eq_refl;
-  isoBAB := fun x => eq_refl }.
-
-Instance Iso_prim : Iso prim cps.prim := {
-  isoAofB := mk_prim;
-  isoBofA := un_prim;
-  isoABA := fun '(mk_prim x) => eq_refl;
-  isoBAB := fun x => eq_refl }.
-
-Instance Iso_exp : Iso exp cps.exp := {
-  isoAofB := proto_of_exp;
-  isoBofA := exp_of_proto;
-  isoABA := proto_exp_proto;
-  isoBAB := exp_proto_exp }.
-
-Instance Iso_ces : Iso (list (ctor_tag * exp)) (list (cps.ctor_tag * cps.exp)) := {
-  isoAofB := proto_of_ces;
-  isoBofA := ces_of_proto;
-  isoABA := proto_ces_proto;
-  isoBAB := ces_proto_ces }.
-
-Instance Iso_fundefs : Iso fundefs cps.fundefs := {
-  isoAofB := proto_of_fundefs;
-  isoBofA := fundefs_of_proto;
-  isoABA := proto_fundefs_proto;
-  isoBAB := fundefs_proto_fundefs }.
-
 Instance Iso_exp_c_exp_ctx : Iso (exp_c exp_univ_exp exp_univ_exp) exp_ctx := {
   isoAofB := c_of_exp_ctx;
   isoBofA := exp_ctx_of_c;
   isoABA := c_exp_ctx_c;
   isoBAB := exp_ctx_c_exp_ctx }.
 
-Instance Iso_fundefs_c_fundefs_ctx : Iso (exp_c exp_univ_exp exp_univ_list_fundef) fundefs_ctx := {
+Instance Iso_fundefs_c_fundefs_ctx : Iso (exp_c exp_univ_exp exp_univ_fundefs) fundefs_ctx := {
   isoAofB := c_of_fundefs_ctx;
   isoBofA := fundefs_ctx_of_c;
   isoABA := c_fundefs_ctx_c;
@@ -482,9 +269,9 @@ Qed.
 (* ---------- exp_c application agrees with app_ctx_f + app_f_ctx_f ---------- *)
 
 Fixpoint app_exp_ctx_eq (C : exp_ctx) e {struct C} :
-  C |[ e ]| = ![([C]! : exp_c exp_univ_exp exp_univ_exp) ⟦ [e]! ⟧]
+  C |[ e ]| = ([C]! : exp_c exp_univ_exp exp_univ_exp) ⟦ e ⟧
 with app_fundefs_ctx_eq (C : fundefs_ctx) e {struct C} :
-  app_f_ctx_f C e = ![([C]! : exp_c exp_univ_exp exp_univ_list_fundef) ⟦ [e]! ⟧].
+  app_f_ctx_f C e = ([C]! : exp_c exp_univ_exp exp_univ_fundefs) ⟦ e ⟧.
 Proof.
   all: destruct C; simpl;
     try lazymatch goal with
@@ -495,15 +282,12 @@ Proof.
   - f_equal.
     unfold c_of_ces_ctx'.
     repeat rewrite frames_compose_law.
-    rewrite <- (proto_exp_proto (c_of_exp_ctx C ⟦ proto_of_exp e ⟧)).
     rewrite <- app_exp_ctx_eq.
     simpl.
-    assert (Harms : forall ces1 ces2, c_of_ces ces1 ⟦ ces2 ⟧ = proto_of_ces ces1 ++ ces2). {
+    assert (Harms : forall ces1 ces2, c_of_ces ces1 ⟦ ces2 ⟧ = ces1 ++ ces2). {
       clear; induction ces1 as [| [c e] ces1 IHces]; intros ces2; [reflexivity|].
       unfold c_of_ces; now rewrite fold_right_cons, frames_compose_law, IHces. }
-    unfold ces_of_proto'; rewrite Harms, map_app; normalize_roundtrips.
-    now rewrite ces_proto_ces.
-  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto; now rewrite <- app_fundefs_ctx_eq.
+    now rewrite Harms.
 Qed.
 
 Local Ltac mk_corollary parent :=
@@ -511,12 +295,12 @@ Local Ltac mk_corollary parent :=
   symmetry; apply parent.
 
 Corollary app_exp_c_eq (C : exp_c exp_univ_exp exp_univ_exp) :
-  forall e, C ⟦ e ⟧ = [![C] |[ ![e] ]|]!.
-Proof. iso C; intros e; iso e; mk_corollary app_exp_ctx_eq. Qed.
+  forall e, C ⟦ e ⟧ = ![C] |[ e ]|.
+Proof. iso C; intros e; now rewrite app_exp_ctx_eq, isoABA. Qed.
 
-Corollary app_f_exp_c_eq (C : exp_c exp_univ_exp exp_univ_list_fundef) :
-  forall e, C ⟦ e ⟧ = [app_f_ctx_f ![C] ![e]]!.
-Proof. iso C; intros e; iso e; mk_corollary app_fundefs_ctx_eq. Qed.
+Corollary app_f_exp_c_eq (C : exp_c exp_univ_exp exp_univ_fundefs) :
+  forall e, C ⟦ e ⟧ = app_f_ctx_f ![C] e.
+Proof. iso C; intros e. now rewrite app_fundefs_ctx_eq, isoABA. Qed.
 
 (* ---------- exp_c composition agrees with comp_ctx_f + comp_f_ctx_f ---------- *)
 
@@ -567,22 +351,21 @@ Proof. revert D; iso C; intros D; iso D; mk_corollary comp_fundefs_ctx_eq. Qed.
 Fixpoint used_ces (ces : list (ctor_tag * exp)) : Ensemble cps.var :=
   match ces with
   | [] => Empty_set _
-  | (_, e) :: ces => used_vars ![e] :|: used_ces ces
+  | (_, e) :: ces => used_vars e :|: used_ces ces
   end.
 
 Definition used {A} : univD A -> Ensemble cps.var :=
   match A with
-  | exp_univ_prod_ctor_tag_exp => fun '(_, e) => used_vars ![e]
+  | exp_univ_prod_ctor_tag_exp => fun '(_, e) => used_vars e
   | exp_univ_list_prod_ctor_tag_exp => used_ces
-  | exp_univ_fundef => fun '(Ffun (mk_var x) _ xs e) => x |: FromList ![xs] :|: used_vars ![e]
-  | exp_univ_list_fundef => fun fds => used_vars_fundefs ![fds]
-  | exp_univ_exp => fun e => used_vars ![e]
-  | exp_univ_var => fun '(mk_var x) => [set x]
+  | exp_univ_fundefs => fun fds => used_vars_fundefs fds
+  | exp_univ_exp => fun e => used_vars e
+  | exp_univ_var => fun x => [set x]
   | exp_univ_fun_tag => fun _ => Empty_set _
   | exp_univ_ctor_tag => fun _ => Empty_set _
   | exp_univ_prim => fun _ => Empty_set _
   | exp_univ_N => fun _ =>  Empty_set _
-  | exp_univ_list_var => fun xs => FromList ![xs]
+  | exp_univ_list_var => fun xs => FromList xs
   end.
 
 (*
@@ -619,41 +402,40 @@ Qed. *)
 
 Definition used_frame {A B} (f : exp_frame_t A B) : Ensemble cps.var. refine (
   match f with
-  | pair_ctor_tag_exp0 e => used_vars ![e]
+  | pair_ctor_tag_exp0 e => used_vars e
   | pair_ctor_tag_exp1 c => Empty_set _
   | cons_prod_ctor_tag_exp0 ces => used_ces ces
-  | cons_prod_ctor_tag_exp1 (_, e) => used_vars ![e]
-  | Ffun0 ft xs e => FromList ![xs] :|: used_vars ![e] 
-  | Ffun1 f xs e => ![f] |: FromList ![xs] :|: used_vars ![e] 
-  | Ffun2 f ft e => ![f] |: used_vars ![e] 
-  | Ffun3 f ft xs => ![f] |: FromList ![xs] 
-  | cons_fundef0 fds => used_vars_fundefs ![fds]
-  | cons_fundef1 fd => @used exp_univ_fundef fd
-  | Econstr0 c ys e => FromList ![ys] :|: used_vars ![e]
-  | Econstr1 x ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
-  | Econstr2 x c e => ![x] |: used_vars ![e]
-  | Econstr3 x c ys => ![x] |: FromList ![ys]
+  | cons_prod_ctor_tag_exp1 (_, e) => used_vars e
+  | Fcons0 ft xs e fds => FromList xs :|: used_vars e :|: used_vars_fundefs fds
+  | Fcons1 f xs e fds => f |: FromList xs :|: used_vars e :|: used_vars_fundefs fds
+  | Fcons2 f ft e fds => f |: used_vars e :|: used_vars_fundefs fds
+  | Fcons3 f ft xs fds => f |: FromList xs :|: used_vars_fundefs fds
+  | Fcons4 f ft xs e => f |: FromList xs :|: used_vars e
+  | Econstr0 c ys e => FromList ys :|: used_vars e
+  | Econstr1 x ys e => x |: FromList ys :|: used_vars e
+  | Econstr2 x c e => x |: used_vars e
+  | Econstr3 x c ys => x |: FromList ys
   | Ecase0 ces => used_ces ces
-  | Ecase1 x => [set ![x]]
-  | Eproj0 c n y e => ![y] |: used_vars ![e]
-  | Eproj1 x n y e => ![x] |: (![y] |: used_vars ![e])
-  | Eproj2 x c y e => ![x] |: (![y] |: used_vars ![e])
-  | Eproj3 x c n e => ![x] |: used_vars ![e]
-  | Eproj4 x c n y => ![x] |: [set ![y]]
-  | Eletapp0 f ft ys e => ![f] |: FromList ![ys] :|: used_vars ![e]
-  | Eletapp1 x ft ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
-  | Eletapp2 x f ys e => ![x] |: (![f] |: FromList ![ys] :|: used_vars ![e])
-  | Eletapp3 x f ft e => ![x] |: (![f] |: used_vars ![e])
-  | Eletapp4 x f ft ys => ![x] |: (![f] |: FromList ![ys])
-  | Efun0 e => used_vars ![e]
-  | Efun1 fds => used_vars_fundefs ![fds]
-  | Eapp0 ft xs => FromList ![xs]
-  | Eapp1 f xs => ![f] |: FromList ![xs]
-  | Eapp2 f ft => [set ![f]]
-  | Eprim0 p ys e => FromList ![ys] :|: used_vars ![e]
-  | Eprim1 x ys e => ![x] |: FromList ![ys] :|: used_vars ![e]
-  | Eprim2 x p e => ![x] |: used_vars ![e]
-  | Eprim3 x p ys => ![x] |: FromList ![ys]
+  | Ecase1 x => [set x]
+  | Eproj0 c n y e => y |: used_vars e
+  | Eproj1 x n y e => x |: (y |: used_vars e)
+  | Eproj2 x c y e => x |: (y |: used_vars e)
+  | Eproj3 x c n e => x |: used_vars e
+  | Eproj4 x c n y => x |: [set y]
+  | Eletapp0 f ft ys e => f |: FromList ys :|: used_vars e
+  | Eletapp1 x ft ys e => x |: FromList ys :|: used_vars e
+  | Eletapp2 x f ys e => x |: (f |: FromList ys :|: used_vars e)
+  | Eletapp3 x f ft e => x |: (f |: used_vars e)
+  | Eletapp4 x f ft ys => x |: (f |: FromList ys)
+  | Efun0 e => used_vars e
+  | Efun1 fds => used_vars_fundefs fds
+  | Eapp0 ft xs => FromList xs
+  | Eapp1 f xs => f |: FromList xs
+  | Eapp2 f ft => [set f]
+  | Eprim0 p ys e => FromList ys :|: used_vars e
+  | Eprim1 x ys e => x |: FromList ys :|: used_vars e
+  | Eprim2 x p e => x |: used_vars e
+  | Eprim3 x p ys => x |: FromList ys
   | Ehalt0 => Empty_set _
   end).
 Defined.
@@ -662,15 +444,13 @@ Lemma used_frameD {A B} (f : exp_frame_t A B) (x : univD A) :
   used (frameD f x) <--> used_frame f :|: used x.
 Proof.
   destruct f; simpl in *|-;
-  repeat (
-    try match goal with p : _ * _ |- _ => destruct p | f : fundef |- _ => destruct f end;
-    unbox_newtypes); simpl;
+  repeat match goal with p : _ * _ |- _ => destruct p end; simpl;
   repeat normalize_used_vars;
   repeat normalize_sets;
   try solve [rewrite Ensemble_iff_In_iff; intros arbitrary; repeat rewrite In_or_Iff_Union; tauto].
-  - induction l as [| [[c] e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
+  - induction l as [| [c e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
     rewrite IHces; eauto with Ensembles_DB.
-  - induction x as [| [[c] e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
+  - induction x as [| [c e] ces IHces]; simpl; repeat normalize_used_vars; [eauto with Ensembles_DB|].
     rewrite IHces; eauto with Ensembles_DB.
 Qed.
 
@@ -691,42 +471,50 @@ Proof.
   rewrite IHC, used_frameD; eauto with Ensembles_DB.
 Qed.
 
-Definition used_iso (e : cps.exp) : used_vars e <--> @used exp_univ_exp [e]!.
-Proof. simpl; normalize_roundtrips; reflexivity. Qed.
+Corollary used_vars_app (C : exp_c exp_univ_exp exp_univ_exp) (e : exp) :
+  used_vars (C ⟦ e ⟧) <--> used_c C :|: used_vars e.
+Proof. change (used_vars ?e) with (@used exp_univ_exp e); apply @used_app. Qed.
 
-Definition used_vars_iso (e : univD exp_univ_exp) : used e <--> used_vars ![e].
-Proof. reflexivity. Qed.
+Corollary used_vars_fundefs_app (C : exp_c exp_univ_fundefs exp_univ_exp) (fds : fundefs) :
+  used_vars (C ⟦ fds ⟧) <--> used_c C :|: used_vars_fundefs fds.
+Proof. change (used_vars ?e) with (@used exp_univ_exp e); apply @used_app. Qed.
 
 (* Useful fact for some of the passes: every C : exp_c exp_univ_fundefs exp_univ_exp
    can be decomposed into D, fds, e such that C = D ∘ (Efun (rev fds ++ _) e) *)
 
-Fixpoint ctx_of_fds (fds : fundefs) : exp_c exp_univ_list_fundef exp_univ_list_fundef :=
+Fixpoint ctx_of_fds (fds : fundefs) : exp_c exp_univ_fundefs exp_univ_fundefs :=
   match fds with
-  | [] => <[]>
-  | fd :: fds => ctx_of_fds fds >:: cons_fundef1 fd
+  | Fnil => <[]>
+  | Fcons f ft xs e fds => ctx_of_fds fds >:: Fcons4 f ft xs e
   end.
 
-Lemma ctx_of_fds_app (fds1 : list fundef) : forall fds2 : fundefs,
-  ctx_of_fds fds1 ⟦ fds2 ⟧ = rev fds1 ++ fds2.
+Fixpoint fundefs_rev (fds : fundefs) : fundefs :=
+  match fds with
+  | Fnil => Fnil
+  | Fcons f ft xs e fds => fundefs_append (fundefs_rev fds) (Fcons f ft xs e Fnil)
+  end.
+
+Lemma ctx_of_fds_app (fds1 : fundefs) : forall fds2 : fundefs,
+  ctx_of_fds fds1 ⟦ fds2 ⟧ = fundefs_append (fundefs_rev fds1) fds2.
 Proof.
-  induction fds1 as [| [f ft xs e] fds1 IHfds1]; [reflexivity|].
-  simpl; intros fds2; rewrite IHfds1, <- app_assoc; reflexivity.
+  induction fds1 as [f ft xs e fds1 IHfds1|]; [|reflexivity].
+  intros fds2; cbn. rewrite IHfds1, <- fundefs_append_assoc. reflexivity.
 Qed.
 
 Fixpoint decompose_fd_c' {A B} (C : exp_c A B) {struct C} :
   match A as A', B as B' return exp_c A' B' -> Set with
-  | exp_univ_list_fundef, exp_univ_exp => fun C => {'(D, fds, e) | C = D >:: Efun0 e >++ ctx_of_fds fds}
+  | exp_univ_fundefs, exp_univ_exp => fun C => {'(D, fds, e) | C = D >:: Efun0 e >++ ctx_of_fds fds}
   | _, _ => fun _ => unit
   end C.
 Proof.
   destruct C as [|A AB B f C]; [destruct A; exact tt|destruct f, B; try exact tt].
-  - specialize (decompose_fd_c' exp_univ_list_fundef exp_univ_exp C); simpl in decompose_fd_c'.
+  - specialize (decompose_fd_c' exp_univ_fundefs exp_univ_exp C); simpl in decompose_fd_c'.
     destruct decompose_fd_c' as [[[C' fds'] e'] HCfdse'].
-    exists (C', f :: fds', e'); now simpl.
-  - exists (C, [], e); now simpl.
+    exists (C', Fcons v f l e fds', e'); now simpl.
+  - exists (C, Fnil, e); now simpl.
 Defined.
 
-Definition decompose_fd_c := @decompose_fd_c' exp_univ_list_fundef exp_univ_exp.
+Definition decompose_fd_c := @decompose_fd_c' exp_univ_fundefs exp_univ_exp.
 
 (* Misc. facts that may or may not be useful when dealing with dependently typed [exp_c]s *)
 
@@ -745,24 +533,19 @@ Ltac inv_ex :=
 Class Inhabited A := inhabitant : A.
 
 Instance Inhabited_pos : Inhabited positive := xH.
-Instance Inhabited_var : Inhabited var := mk_var inhabitant.
-Instance Inhabited_fun_tag : Inhabited fun_tag := mk_fun_tag inhabitant.
-Instance Inhabited_ctor_tag : Inhabited ctor_tag := mk_ctor_tag inhabitant.
-Instance Inhabited_prim : Inhabited prim := mk_prim inhabitant.
 Instance Inhabited_N : Inhabited N := N0.
 
 Instance Inhabited_list A : Inhabited (list A) := [].
 Instance Inhabited_prod A B `{Inhabited A} `{Inhabited B} : Inhabited (A * B) := (inhabitant, inhabitant).
 
 Instance Inhabited_exp : Inhabited exp := Ehalt inhabitant.
-Instance Inhabited_fundef : Inhabited fundef := Ffun inhabitant inhabitant inhabitant inhabitant.
+Instance Inhabited_fundefs : Inhabited fundefs := Fnil.
 
 Definition univ_inhabitant {A} : univD A :=
   match A with
   | exp_univ_prod_ctor_tag_exp => inhabitant
   | exp_univ_list_prod_ctor_tag_exp => inhabitant
-  | exp_univ_fundef => inhabitant
-  | exp_univ_list_fundef => inhabitant
+  | exp_univ_fundefs => inhabitant
   | exp_univ_exp => inhabitant
   | exp_univ_var => inhabitant
   | exp_univ_fun_tag => inhabitant
@@ -777,17 +560,13 @@ Definition univ_inhabitant {A} : univD A :=
 Class Inhabited' A := inhabitant' : A.
 
 Instance Inhabited'_pos : Inhabited' positive := xO xH.
-Instance Inhabited'_var : Inhabited' var := mk_var inhabitant'.
-Instance Inhabited'_fun_tag : Inhabited' fun_tag := mk_fun_tag inhabitant'.
-Instance Inhabited'_ctor_tag : Inhabited' ctor_tag := mk_ctor_tag inhabitant'.
-Instance Inhabited'_prim : Inhabited' prim := mk_prim inhabitant'.
 Instance Inhabited'_N : Inhabited' N := Npos inhabitant'.
 
 Instance Inhabited'_list A `{Inhabited' A} : Inhabited' (list A) := [inhabitant'].
 Instance Inhabited'_prod A B `{Inhabited' A} `{Inhabited' B} : Inhabited' (A * B) := (inhabitant', inhabitant').
 
 Instance Inhabited'_exp : Inhabited' exp := Ehalt inhabitant'.
-Instance Inhabited'_fundef : Inhabited' fundef := Ffun inhabitant' inhabitant' inhabitant' inhabitant'.
+Instance Inhabited'_fundefs : Inhabited' fundefs := Fcons inhabitant' inhabitant' inhabitant' inhabitant' Fnil.
 
 Lemma frame_ext_eq' {A B A' B'} (f : exp_frame_t A B) (g : exp_frame_t A' B') :
   A = A' -> B = B' ->
@@ -811,18 +590,7 @@ Qed.
 
 Class Sized A := size : A -> nat.
 
-Fixpoint size_pos (n : positive) :=
-  match n with
-  | xI x => S (size_pos x)
-  | xO x => S (size_pos x)
-  | xH => 1%nat
-  end.
-Instance Sized_pos : Sized positive := size_pos.
-
-Instance Sized_var : Sized var := fun _ => S O.
-Instance Sized_fun_tag : Sized fun_tag := fun _ => S O.
-Instance Sized_ctor_tag : Sized ctor_tag := fun _ => S O.
-Instance Sized_prim : Sized prim := fun _ => S O.
+Instance Sized_pos : Sized positive := fun _ => S O.
 Instance Sized_N : Sized N := fun _ => S O.
 
 Definition size_list {A} (size : A -> nat) : list A -> nat := fold_right (fun x n => S (size x + n)) 1%nat.
@@ -831,33 +599,33 @@ Definition size_prod {A B} (sizeA : A -> nat) (sizeB : B -> nat) : A * B -> nat 
 Instance Size_list A `{Sized A} : Sized (list A) := size_list size.
 Instance Size_prod A B `{Sized A} `{Sized B} : Sized (A * B) := size_prod size size.
 
-Definition size_fundef' size_exp : fundef -> nat :=
-  fun '(Ffun f ft xs e) => S (size f + size ft + size xs + size_exp e).
-Definition size_fundefs' size_exp := size_list (size_fundef' size_exp).
-
-Fixpoint size_exp (e : exp) : nat.
+Fixpoint size_exp (e : exp) : nat
+with size_fundefs (fds : fundefs) : nat.
 Proof.
 - refine (match e with
   | Econstr x c ys e => S (size x + size c + size ys + size_exp e)
   | Ecase x ces => S (size x + size_list (size_prod size size_exp) ces)
   | Eproj x c n y e => S (size x + size c + size n + size y + size_exp e)
   | Eletapp x f ft ys e => S (size x + size f + size ft + size ys + size_exp e)
-  | Efun fds e => S (size_fundefs' size_exp fds + size_exp e)
+  | Efun fds e => S (size_fundefs fds + size_exp e)
   | Eapp f ft xs => S (size f + size ft + size xs)
   | Eprim x p ys e => S (size x + size p + size ys + size_exp e)
   | Ehalt x => S (size x)
   end).
+- refine (match fds with
+  | Fnil => 1%nat
+  | Fcons f ft xs e fds => S (size f + size ft + size xs + size_exp e + size_fundefs fds)
+  end).
 Defined.
 
 Instance Sized_exp : Sized exp := size_exp.
-Instance Sized_fundef : Sized fundef := size_fundef' size_exp.
+Instance Sized_fundefs : Sized fundefs := size_fundefs.
 
 Definition univ_size {A} : univD A -> nat :=
   match A with
   | exp_univ_prod_ctor_tag_exp => size
   | exp_univ_list_prod_ctor_tag_exp => size
-  | exp_univ_fundef => size
-  | exp_univ_list_fundef => size
+  | exp_univ_fundefs => size
   | exp_univ_exp => size
   | exp_univ_var => size
   | exp_univ_fun_tag => size
@@ -875,7 +643,7 @@ Lemma frame_size_gt {A B} (f : exp_frame_t A B) (x : univD A) :
 Proof.
   destruct f; cbn;
   try change (size_exp x) with (size x); cbn;
-  try change (size_fundefs' size x) with (size x); cbn;
+  try change (size_fundefs x) with (size x); cbn;
   try change (size_list (size_prod size size) x) with (size x); cbn;
   try change (size x) with 1; cbn;
   try lia.

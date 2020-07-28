@@ -1,12 +1,12 @@
 Require Import Coq.Strings.String Coq.Classes.Morphisms Coq.Relations.Relations.
 Require Import Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
-Require Import L6.identifiers L6.Prototype L6.cps_proto.
+Require Import L6.identifiers L6.Prototype L6.cps_proto L6.cps L6.cps_util.
 Require Import L6.Ensembles_util L6.shrink_cps L6.map_util.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-Definition fresher_than (x : cps.var) (S : Ensemble cps.var) : Prop :=
+Definition fresher_than (x : var) (S : Ensemble var) : Prop :=
   forall y, y \in S -> (x > y)%positive.
 
 Lemma fresher_than_not_In x S : fresher_than x S -> ~ x \in S.
@@ -27,30 +27,30 @@ Proof.
   intros x y Hxy x0 y0 Hxy0; subst; split; intros Hforall dummy; now (rewrite <- Hxy0 || rewrite Hxy0).
 Qed.
 
-Definition fresh_copies (S : Ensemble cps.var) (l : list var) : Prop := Disjoint _ S (FromList ![l]) /\ NoDup l.
+Definition fresh_copies (S : Ensemble var) (l : list var) : Prop := Disjoint _ S (FromList l) /\ NoDup l.
 
-Definition gensym (x : cps.var) : cps.var * var := (x + 1, [x]!)%positive.
+Definition gensym (x : var) : var * var := (x + 1, x)%positive.
 
 Lemma gensym_spec x S x' y : 
   fresher_than x S ->
   (x', y) = gensym x ->
-  ~ ![y] \in S /\ fresher_than x' (![y] |: S).
+  ~ y \in S /\ fresher_than x' (y |: S).
 Proof.
-  destruct y as [y]; unfold gensym; intros Hfresh Hgen; split.
+  unfold gensym; intros Hfresh Hgen; split.
   - intros Hy.
     assert (y = x) by now simpl in *.
     assert (x > y)%positive by now apply Hfresh.
     lia.
-  - unfold isoAofB, Iso_var in *; assert (x' = (x + 1)%positive) by easy; assert (y = x) by easy.
+  - assert (x' = (x + 1)%positive) by easy; assert (y = x) by easy.
     assert (x' > y)%positive by lia.
     apply fresher_than_Union; [|eapply fresher_than_monotonic; try eassumption; lia].
     simpl; intros z Hz; inversion Hz; lia.
 Qed.
 
-Fixpoint gensyms {A} (x : cps.var) (xs : list A) : cps.var * list var :=
+Fixpoint gensyms {A} (x : var) (xs : list A) : var * list var :=
   match xs with
   | [] => (x, [])
-  | _ :: xs => let '(x', xs') := gensyms (x + 1)%positive xs in (x', mk_var x :: xs')
+  | _ :: xs => let '(x', xs') := gensyms (x + 1)%positive xs in (x', x :: xs')
   end.
 
 Lemma gensyms_len' {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> length xs' = length xs.
@@ -62,16 +62,16 @@ Qed.
 
 Lemma gensyms_increasing' {A} :
   forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> 
-  forall y, List.In y xs' -> (![y] >= x)%positive.
+  forall y, List.In y xs' -> (y >= x)%positive.
 Proof.
-  intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen [y] Hy;
+  intros x xs; revert x; induction xs as [|x xs IHxs]; intros x0 x' xs' Hgen y Hy;
     [simpl in Hgen; now inv Hgen|].
   unfold gensyms in Hgen; fold @gensyms in Hgen.
   destruct (gensyms (x0 + 1)%positive xs) as [x'' xs''] eqn:Hx0; inv Hgen; simpl.
   simpl in Hy; destruct Hy as [H|H]; [inversion H; simpl; lia|].
-  specialize IHxs with (x := (x0 + 1)%positive) (y := mk_var y).
+  specialize IHxs with (x := (x0 + 1)%positive) (y := y).
   rewrite Hx0 in IHxs; unfold snd in IHxs.
-  specialize (IHxs x'' xs'' eq_refl H); unfold isoBofA, Iso_var, un_var in IHxs; lia.
+  specialize (IHxs x'' xs'' eq_refl H); lia.
 Qed.
 
 Local Ltac mk_corollary parent := 
@@ -81,9 +81,9 @@ Local Ltac mk_corollary parent :=
 
 Lemma gensyms_upper {A} x (xs : list A) :
   (fst (gensyms x xs) >= x)%positive /\
-  forall y, List.In y (snd (gensyms x xs)) -> (fst (gensyms x xs) > ![y])%positive.
+  forall y, List.In y (snd (gensyms x xs)) -> (fst (gensyms x xs) > y)%positive.
 Proof.
-  revert x; induction xs; [simpl; split; [lia|easy]|intros x; split; [|intros [y] Hy]].
+  revert x; induction xs; [simpl; split; [lia|easy]|intros x; split; [|intros y Hy]].
   - unfold gensyms; fold @gensyms.
     destruct (gensyms _ _) as [x' xs'] eqn:Hxs'; unfold fst.
     specialize (IHxs (x + 1)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
@@ -93,7 +93,7 @@ Proof.
     specialize (IHxs (x + 1)%positive); rewrite Hxs' in IHxs; unfold fst in IHxs.
     destruct IHxs as [IHxs IHxsy].
     destruct Hy as [Hy|Hy]; [inversion Hy; simpl; lia|].
-    now specialize (IHxsy (mk_var y) Hy).
+    now specialize (IHxsy y Hy).
 Qed.
 
 Corollary gensyms_upper1 {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> (x' >= x)%positive.
@@ -101,7 +101,7 @@ Proof. mk_corollary @gensyms_upper. Qed.
 
 Corollary gensyms_upper2 {A} :
   forall x (xs : list A) x' xs', (x', xs') = gensyms x xs ->
-  forall y, List.In y xs' -> (x' > ![y])%positive.
+  forall y, List.In y xs' -> (x' > y)%positive.
 Proof. mk_corollary @gensyms_upper. Qed.
 
 Lemma gensyms_NoDup {A} x (xs : list A) : NoDup (snd (gensyms x xs)).
@@ -117,8 +117,8 @@ Proof.
   induction xs'; auto.
   specialize (Hinc x' (a :: xs')).
   intros [|Hin_ys]; [|apply IHxs'; auto; intros; apply Hinc; auto; now right].
-  assert (Hxa : In (mk_var x) (a :: xs')) by now left.
-  specialize (Hinc eq_refl (mk_var x) Hxa); unfold isoBofA, Iso_var, un_var in Hinc; lia.
+  assert (Hxa : In x (a :: xs')) by now left.
+  specialize (Hinc eq_refl x Hxa); lia.
 Qed.
 
 Corollary gensyms_NoDup' {A} : forall x (xs : list A) x' xs', (x', xs') = gensyms x xs -> NoDup xs'.
@@ -129,7 +129,7 @@ Lemma gensyms_fresher_than {A} (xs : list A) :
   fresher_than x S ->
   (y >= x)%positive ->
   (x', xs') = gensyms y xs ->
-  Disjoint _ S (FromList ![xs']).
+  Disjoint _ S (FromList xs').
 Proof.
   induction xs.
   - simpl; intros x y S x' xs' Hfresh Hyx Hgen; inversion Hgen; subst.
@@ -153,14 +153,12 @@ Ltac show_Disjoint arb Harbx Harby :=
 Lemma gensyms_disjoint {A B} (xs : list A) (ys : list B) x0 x1 x2 xs' ys' :
   (x1, xs') = gensyms x0 xs ->
   (x2, ys') = gensyms x1 ys ->
-  Disjoint _ (FromList ![xs']) (FromList ![ys']).
+  Disjoint _ (FromList xs') (FromList ys').
 Proof.
   intros Hxs' Hys'; show_Disjoint arb Harbx Harby.
   unfold Ensembles.In, FromList in Harbx, Harby.
-  apply (in_map mk_var) in Harbx; apply (in_map mk_var) in Harby.
-  simpl in Harbx, Harby; normalize_roundtrips.
-  assert (x1 > ![mk_var arb])%positive by (eapply gensyms_upper2; eassumption); simpl in *.
-  assert (![mk_var arb] >= x1)%positive by (eapply gensyms_increasing'; eassumption); simpl in *.
+  assert (x1 > arb)%positive by (eapply gensyms_upper2; eassumption); simpl in *.
+  assert (arb >= x1)%positive by (eapply gensyms_increasing'; eassumption); simpl in *.
   lia.
 Qed.
 
@@ -168,12 +166,11 @@ Lemma gensyms_list_fresher {A} x y (ys : list A) y' ys' S :
   fresher_than x S ->
   (y >= x)%positive ->
   (y', ys') = gensyms y ys ->
-  Disjoint _ S (FromList ![ys']).
+  Disjoint _ S (FromList ys').
 Proof.
   intros Hfresh Hyx Hgen; show_Disjoint arb Harbx Harby.
   unfold Ensembles.In, FromList in Harby.
-  apply (in_map mk_var) in Harby; simpl in Harby; normalize_roundtrips.
-  assert (![mk_var arb] >= y)%positive by (eapply gensyms_increasing'; eauto); simpl in *.
+  assert (arb >= y)%positive by (eapply gensyms_increasing'; eauto); simpl in *.
   assert (x > arb)%positive by now apply Hfresh.
   lia.
 Qed.
@@ -181,22 +178,20 @@ Qed.
 Lemma gensyms_spec {A} x S (xs : list A) x' xs' : 
   fresher_than x S ->
   (x', xs') = gensyms x xs ->
-  fresh_copies S xs' /\ fresher_than x' (S :|: FromList ![xs']) /\ length xs' = length xs.
+  fresh_copies S xs' /\ fresher_than x' (S :|: FromList xs') /\ length xs' = length xs.
 Proof.
   intros Hfresh Hgen; unfold fresh_copies; split; [split|split].
   - show_Disjoint arb Harbx Harby.
-    unfold Ensembles.In, FromList in Harby; apply (in_map mk_var) in Harby.
-    simpl in Harby; normalize_roundtrips.
+    unfold Ensembles.In, FromList in Harby.
     assert (x > arb)%positive by now apply Hfresh.
-    assert (![mk_var arb] >= x)%positive by (eapply gensyms_increasing'; eauto).
+    assert (arb >= x)%positive by (eapply gensyms_increasing'; eauto).
     simpl in *; lia.
   - eapply gensyms_NoDup'; eauto.
   - intros y Hy; destruct Hy as [y Hy|y Hy].
     + assert (x > y)%positive by now apply Hfresh.
       assert (x' >= x)%positive by (eapply gensyms_upper1; eauto); lia.
-    + unfold Ensembles.In, FromList in Hy; apply (in_map mk_var) in Hy.
+    + unfold Ensembles.In, FromList in Hy.
       simpl in Hy; normalize_roundtrips.
-      change y with ![mk_var y].
       eapply gensyms_upper2; eauto.
   - eapply gensyms_len'; eauto.
 Qed.
@@ -242,8 +237,8 @@ Definition run_rewriter (e : univD Root)
 
 End RunRewriter.
 
-Definition I_S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) (x : cps.var) : Prop :=
-  fresher_than x (used_vars ![C ⟦ e ⟧]).
+Definition I_S_fresh {A} (C : exp_c A exp_univ_exp) (e : univD A) (x : var) : Prop :=
+  fresher_than x (used_vars (C ⟦ e ⟧)).
 
 (* We don't have to do anything to preserve a fresh variable as we move around *)
 Instance Preserves_S_dn_S_fresh : Preserves_S_dn (@I_S_fresh).
@@ -255,15 +250,15 @@ Extraction Inline Preserves_S_dn_S_fresh Preserves_S_up_S_fresh.
 (* Compute an initial fresh variable *)
 Definition initial_fresh (e : exp) : State (@I_S_fresh) (erase <[]>) e.
 Proof.
-  exists (1 + max_var ![e] 1)%positive; unerase; unfold I_S_fresh.
-  change (![ <[]> ⟦ ?e ⟧ ]) with ![e]; unfold fresher_than.
-  intros y Hy; enough (y <= max_var ![e] 1)%positive by lia.
+  exists (1 + max_var e 1)%positive; unerase; unfold I_S_fresh.
+  change (![ <[]> ⟦ ?e ⟧ ]) with e; unfold fresher_than.
+  intros y Hy; enough (y <= max_var e 1)%positive by lia.
   destruct Hy; [now apply bound_var_leq_max_var|now apply occurs_free_leq_max_var].
 Defined.
 
 (* Some passes assume unique bindings *)
 Definition I_S_uniq {A} (C : exp_c A exp_univ_exp) (e : univD A) (_ : unit) : Prop :=
-  unique_bindings ![C ⟦ e ⟧].
+  unique_bindings (C ⟦ e ⟧).
 Instance Preserves_S_dn_S_uniq : Preserves_S_dn (@I_S_uniq).
 Proof. unfold Preserves_S_dn; intros A B C C_ok f x s; exact s. Defined.
 Instance Preserves_S_up_S_uniq : Preserves_S_up (@I_S_uniq).
@@ -300,93 +295,13 @@ Qed.
 
 (* Renaming *)
 
-Definition r_map : Set := M.tree cps.var.
+(* TODO: combine with shrink_cps renaming *)
 
-Definition fun_name : fundef -> var := fun '(Ffun f _ _ _) => f.
+Definition r_map : Set := M.tree var.
 
-Definition apply_r' (σ : r_map) (x : var) : var := [apply_r σ ![x]]!.
-Definition apply_r_list' σ (xs : list var) := map (apply_r' σ) xs.
+Require Import L6.shrink_cps_correct.
 
-(* Assume UB(e) and dom(σ) ∩ BV(e) = ran(σ) ∩ BV(e) = ∅ *)
-Fixpoint rename_all' (σ:r_map) (e:exp) : exp :=
-  match e with
-  | Econstr x t ys e' => Econstr x t (apply_r_list' σ ys) (rename_all' σ e')
-  | Eprim x f ys e' => Eprim x f (apply_r_list' σ ys) (rename_all' σ e')
-  | Eletapp x f ft ys e' => Eletapp x (apply_r' σ f) ft (apply_r_list' σ ys)
-                                    (rename_all' σ e')
-  | Eproj v t n y e' => Eproj v t n (apply_r' σ y) (rename_all' σ e')
-  | Ecase v cl =>
-    Ecase (apply_r' σ v) (List.map (fun (p:ctor_tag*exp) => let (k, e) := p in
-                                                          (k, rename_all' σ e)) cl)
-  | Efun fl e' =>
-    let fs := map fun_name fl in
-    let rename_all_fun' σ fd :=
-      let 'Ffun v' t ys e := fd in
-      Ffun v' t ys (rename_all' σ e)
-    in
-    let fl' := map (rename_all_fun' σ) fl in
-    Efun fl' (rename_all' σ e')
-  | Eapp f t ys =>
-    Eapp (apply_r' σ f) t (apply_r_list' σ ys)
-  | Ehalt v => Ehalt (apply_r' σ v)
-  end.
-
-Fixpoint rename_all_bv σ e : bound_var ![e] <--> bound_var ![rename_all' σ e].
-Proof.
-  destruct e; unbox_newtypes; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
-  Guarded.
-  - induction ces as [|[[c] e] ces IHces]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB.
-    Guarded.
-  - induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
-    Guarded.
-    change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *; repeat normalize_bound_var.
-    rewrite <- (rename_all_bv σ e_body). Guarded.
-    repeat rewrite <- Union_assoc.
-    rewrite IHfds; clear rename_all_bv; eauto with Ensembles_DB.
-Qed.
-
-Lemma rename_all_bv_fds σ fds :
-  bound_var_fundefs ![fds] <-->
-  bound_var_fundefs ![map (fun '(Ffun f ft xs e) => Ffun f ft xs (rename_all' σ e)) fds].
-Proof.
-  assert (Hbundle : forall fds x, bound_var_fundefs ![fds] <--> bound_var ![Efun fds (Ehalt x)]). {
-    intros fds' [x]; cbn; repeat normalize_bound_var; eauto with Ensembles_DB. }
-  rewrite (Hbundle _ (mk_var 1)), (Hbundle _ (apply_r' σ (mk_var 1))).
-  change (Efun (map ?f fds) (Ehalt (apply_r' σ (mk_var 1))))
-    with (rename_all' σ (Efun fds (Ehalt (mk_var 1)))).
-  apply rename_all_bv.
-Qed.
-
-Fixpoint rename_all_uniq σ e : unique_bindings ![e] -> unique_bindings ![rename_all' σ e].
-Proof.
-  destruct e; unbox_newtypes; cbn; try solve [
-    intros Huniq; inv Huniq; constructor; auto;
-    change (~ bound_var ?e ?x) with (~ x \in bound_var e); now rewrite <- rename_all_bv].
-  - change (ces_of_proto' exp_of_proto) with ces_of_proto in *.
-    induction ces as [|[c e] ces IHces]; [constructor|unbox_newtypes; cbn].
-    intros Huniq; inv Huniq; constructor; auto. Guarded.
-    match goal with
-    | |- Disjoint _ _ (bound_var (cps.Ecase ?e (ces_of_proto (map ?g ?ces)))) =>
-      change (bound_var (cps.Ecase ?e (ces_of_proto (map g ces))))
-       with (bound_var ![rename_all' σ (Ecase (mk_var x) ces)])
-    end.
-    repeat rewrite <- rename_all_bv; cbn.
-    now rewrite bound_var_Ecase in *.
-    Guarded.
-  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto in *.
-    intros Huniq; inv Huniq; constructor; auto. 2: {
-      now rewrite <- rename_all_bv, <- rename_all_bv_fds. }
-    induction fds as [|[f ft xs e_body] fds IHfds]; [constructor|unbox_newtypes; cbn in *].
-    inv H2; constructor; 
-    change (~ bound_var ?e ?x) with (~ x \in bound_var e) in *;
-    change (~ bound_var_fundefs ?fds ?x) with (~ x \in bound_var_fundefs fds) in *;
-    try solve [auto|try rewrite <- rename_all_bv; try rewrite <- rename_all_bv_fds; easy].
-    apply IHfds; auto.
-    eapply Disjoint_Included_r; eauto.
-    repeat normalize_bound_var; eauto with Ensembles_DB.
-Qed.
-
-Definition image'' σ : Ensemble cps.var := fun y => exists x, M.get x σ = Some y.
+Definition image'' σ : Ensemble var := fun y => exists x, M.get x σ = Some y.
 
 Lemma apply_r_vars σ x : [set apply_r σ x] \subset x |: image'' σ.
 Proof.
@@ -396,9 +311,9 @@ Proof.
 Qed.
   
 Lemma apply_r_list_vars σ xs :
-  FromList ![apply_r_list' σ xs] \subset FromList ![xs] :|: image'' σ.
+  FromList (apply_r_list σ xs) \subset FromList xs :|: image'' σ.
 Proof.
-  induction xs as [|x xs IHxs]; [eauto with Ensembles_DB|unbox_newtypes; cbn in *].
+  induction xs as [|x xs IHxs]; [eauto with Ensembles_DB|cbn in *].
   repeat normalize_sets.
   apply Union_Included.
   - eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB.
@@ -406,29 +321,27 @@ Proof.
 Qed.
 
 Fixpoint rename_all_used σ e {struct e} :
-  used_vars ![rename_all' σ e] \subset used_vars ![e] :|: image'' σ.
+  used_vars (rename_all_ns σ e) \subset used_vars e :|: image'' σ.
 Proof.
-  destruct e; unbox_newtypes; cbn in *; repeat normalize_used_vars.
+  destruct e; cbn in *; repeat normalize_used_vars.
   Ltac solve_easy_rename_used IH :=
     lazymatch goal with
     | |- _ :|: _ \subset _ => apply Union_Included; solve_easy_rename_used IH
     | |- [set apply_r _ _] \subset _ =>
       clear IH; eapply Included_trans; [apply apply_r_vars|]; eauto with Ensembles_DB
-    | |- FromList (strip_vars (apply_r_list' _ _)) \subset _ =>
+    | |- FromList (apply_r_list _ _) \subset _ =>
       clear IH; eapply Included_trans; [apply apply_r_list_vars|]; eauto with Ensembles_DB
     | |- used_vars _ \subset _ => eapply Included_trans; [apply IH|]; eauto with Ensembles_DB
     | |- _ => solve [eauto with Ensembles_DB]
     end.
   all: try solve [solve_easy_rename_used rename_all_used]. Guarded.
   - rewrite used_vars_Ecase; apply Union_Included; [solve_easy_rename_used rename_all_used|].
-    change (ces_of_proto' exp_of_proto) with ces_of_proto; induction ces as [|[[c] e] ces IHces]; cbn;
-    [eauto with Ensembles_DB|].
+    induction l as [|[c e] ces IHces]; cbn; [eauto with Ensembles_DB|].
     repeat normalize_used_vars.
     apply Union_Included; [solve_easy_rename_used rename_all_used|].
     eapply Included_trans; [apply IHces|]; eauto with Ensembles_DB.
-  - change (fundefs_of_proto' exp_of_proto) with fundefs_of_proto.
-    apply Union_Included; [|solve_easy_rename_used rename_all_used].
-    induction fds as [|[[f] [ft] xs e_body] fds IHfds]; cbn; [eauto with Ensembles_DB|].
+  - apply Union_Included; [|solve_easy_rename_used rename_all_used].
+    induction f as [f ft xs e_body fds IHfds|]; cbn; [|eauto with Ensembles_DB].
     repeat normalize_used_vars.
     apply Union_Included; [solve_easy_rename_used rename_all_used|].
     eapply Included_trans; [apply IHfds|]; eauto with Ensembles_DB.
@@ -465,17 +378,19 @@ Definition fun_map : Set := M.tree (fun_tag * list var * exp).
 
 Fixpoint add_fundefs (fds : fundefs) (ρ : fun_map) : fun_map :=
   match fds with
-  | Ffun f ft xs e :: fds => M.set ![f] (ft, xs, e) (add_fundefs fds ρ)
-  | [] => ρ
+  | Fcons f ft xs e fds => M.set f (ft, xs, e) (add_fundefs fds ρ)
+  | Fnil => ρ
   end.
 
 Fixpoint add_fundefs_Some f ft xs e ρ fds {struct fds} :
   M.get f (add_fundefs fds ρ) = Some (ft, xs, e) ->
-  In (Ffun (mk_var f) ft xs e) fds \/ M.get f ρ = Some (ft, xs, e).
+  (exists fds1 fds2, fds = fundefs_append fds1 (Fcons f ft xs e fds2)) \/
+  M.get f ρ = Some (ft, xs, e).
 Proof.
-  destruct fds as [|[[g] gt ys e'] fds]; [now right|cbn; intros Hget].
-  destruct (Pos.eq_dec f g); [subst; rewrite M.gss in Hget; now inv Hget|].
+  destruct fds as [g gt ys e' fds|]; [cbn; intros Hget|now right].
+  destruct (Pos.eq_dec f g); [subst; rewrite M.gss in Hget; inv Hget; left; now exists Fnil, fds|].
   rewrite M.gso in Hget by auto.
   specialize (add_fundefs_Some _ _ _ _ ρ fds Hget).
-  now destruct add_fundefs_Some as [Hin|Hin].
+  destruct add_fundefs_Some as [[fds1 [fds2 Heq]]|Hin]; [|now right].
+  left; subst fds. exists (Fcons g gt ys e' fds1), fds2. reflexivity.
 Qed.

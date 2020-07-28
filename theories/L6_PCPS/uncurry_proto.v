@@ -4,14 +4,12 @@ Require Import Coq.Strings.String Coq.Classes.Morphisms.
 Require Import Coq.NArith.BinNat Coq.PArith.BinPos Coq.Sets.Ensembles Lia.
 Require Import L6.Prototype.
 Require Import L6.proto_util.
-Require Import L6.cps_proto.
+Require Import L6.cps L6.cps_proto.
 Require Import identifiers.  (* for max_var, occurs_in_exp, .. *)
 Require Import L6.Ensembles_util L6.List_util L6.cps_util L6.state.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
-
-Require L6.cps.
 
 Set Universe Polymorphism.
 Unset Strict Unquote Universe Mode.
@@ -66,9 +64,8 @@ Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
   | None =>
     let '(mft, (cdata, tt)) := compM.runState (get_ftag n) tt (cdata, tt) in
     match mft with
-    | compM.Err _ => (mk_fun_tag xH, ms) (* bogus *)
+    | compM.Err _ => (xH, ms) (* bogus *)
     | compM.Ret ft =>
-      let ft := mk_fun_tag ft in
       (ft, (b, M.set n' ft aenv, lm, s, cdata))
     end
   end.
@@ -76,63 +73,61 @@ Definition get_fun_tag (n : N) (ms : S_misc) : fun_tag * S_misc :=
 Inductive uncurry_step : exp -> exp -> Prop :=
 (* Uncurrying for CPS *)
 | uncurry_cps :
-  forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
+  forall (C : @frames_t exp_univ Frame_exp exp_univ_fundefs exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (k k' : var) (kt : fun_tag) (fv fv1 : list var)
-    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
-    (lhs fds' rhs : list fundef) fp_numargs (ms ms' : S_misc),
+    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : fundefs)
+    (lhs fds' rhs : fundefs) fp_numargs (ms ms' : S_misc),
   (* Non-linear LHS constraints *)
   k = k' /\
   g = g' /\
   (* Guards: *)
   (* (1) g can't be recursive or invoke k *)
-  ~ ![g] \in used_vars ![ge] /\
-  ~ ![k] \in used_vars ![ge] /\
+  ~ g \in used_vars ge /\
+  ~ k \in used_vars ge /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
-  lhs = Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds /\
-  fds' = Ffun f1 ft1 (gv ++ fv) ge :: fds /\
-  rhs = Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
-        :: fds' /\
-  fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧))) gv1 /\ length gv1 = length gv /\
-  fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
-  ~ ![f1] \in (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1] :|: FromList ![fv1]) /\
+  lhs = Fcons f ft (k :: fv) (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds /\
+  fds' = Fcons f1 ft1 (gv ++ fv) ge fds /\
+  rhs = Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g])) fds' /\
+  fresh_copies (used_vars (C ⟦ lhs ⟧)) gv1 /\ length gv1 = length gv /\
+  fresh_copies (used_vars (C ⟦ lhs ⟧) :|: FromList gv1) fv1 /\ length fv1 = length fv /\
+  ~ f1 \in (used_vars (C ⟦ lhs ⟧) :|: FromList gv1 :|: FromList fv1) /\
   (* (3) generate fun_tag + update ms *)
   fp_numargs = length fv + length gv /\
   (ft1, ms') = get_fun_tag (N.of_nat fp_numargs) ms ->
   (* The rewrite *)
   uncurry_step
-    (C ⟦ Ffun f ft (k :: fv) (Efun [Ffun g gt gv ge] (Eapp k' kt [g'])) :: fds ⟧)
+    (C ⟦ Fcons f ft (k :: fv) (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds ⟧)
     (C ⟦ (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
-         (Ffun f ft (k :: fv1) (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Eapp k kt [g]))
-          :: Rec fds') ⟧)
+         (Fcons f ft (k :: fv1) (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Eapp k kt [g]))
+          (Rec fds')) ⟧)
 (* Uncurrying for ANF *)
 | uncurry_anf :
-  forall (C : frames_t exp_univ_list_fundef exp_univ_exp)
+  forall (C : frames_t exp_univ_fundefs exp_univ_exp)
     (f f1 : var) (ft ft1 : fun_tag) (fv fv1 : list var)
-    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : list fundef)
-    (lhs fds' rhs : list fundef)
+    (g g' : var) (gt : fun_tag) (gv gv1 : list var) (ge : exp) (fds : fundefs)
+    (lhs fds' rhs : fundefs)
     fp_numargs (ms ms' : S_misc),
   (* Non-linear LHS constraints *)
   g = g' /\
   (* Guards: *)
   (* (1) g can't be recursive *)
-  ~ ![g] \in used_vars ![ge] /\
+  ~ g \in used_vars ge /\
   (* (2) gv1, fv1, f1 must be fresh and contain no duplicates *)
-  lhs = Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds /\
-  fds' = Ffun f1 ft1 (gv ++ fv) ge :: fds /\
-  rhs = Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
-        :: fds' /\
-  fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧))) gv1 /\ length gv1 = length gv /\
-  fresh_copies (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1]) fv1 /\ length fv1 = length fv /\
-  ~ ![f1] \in (used_vars (exp_of_proto (C ⟦ lhs ⟧)) :|: FromList ![gv1] :|: FromList ![fv1]) /\
+  lhs = Fcons f ft fv (Efun (Fcons g gt gv ge Fnil) (Ehalt g')) fds /\
+  fds' = Fcons f1 ft1 (gv ++ fv) ge fds /\
+  rhs = Fcons f ft fv1 (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Ehalt g)) fds' /\
+  fresh_copies (used_vars (C ⟦ lhs ⟧)) gv1 /\ length gv1 = length gv /\
+  fresh_copies (used_vars (C ⟦ lhs ⟧) :|: FromList gv1) fv1 /\ length fv1 = length fv /\
+  ~ f1 \in (used_vars (C ⟦ lhs ⟧) :|: FromList gv1 :|: FromList fv1) /\
   (* (3) generate fun_tag + update ms *)
   fp_numargs = length fv + length gv /\
   (ft1, ms') = get_fun_tag (N.of_nat fp_numargs) ms ->
   (* The rewrite *)
   uncurry_step
-    (C ⟦ Ffun f ft fv (Efun [Ffun g gt gv ge] (Ehalt g')) :: fds ⟧)
+    (C ⟦ Fcons f ft fv (Efun (Fcons g gt gv ge Fnil) (Ehalt g')) fds ⟧)
     (C ⟦ (* Rewrite f as a wrapper around the uncurried f1 and recur on fds *)
-         (Ffun f ft fv1 (Efun [Ffun g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1))] (Ehalt g))
-          :: Rec fds') ⟧).
+         (Fcons f ft fv1 (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Ehalt g))
+          (Rec fds')) ⟧).
 
 Definition I_S : forall {A}, frames_t A exp_univ_exp -> univD A -> _ -> Prop :=
   I_S_prod (I_S_plain (S:=S_misc)) (@I_S_fresh).
@@ -151,14 +146,14 @@ Definition metadata_update (f g f1 : var) fp_numargs (fv gv fv1 gv1 : list var) 
   (* Set flag to indicate that a rewrite was performed (used to iterate to fixed point) *)
   let b := true in
   (* Mark g as uncurried *)
-  let lm := M.set ![g] true lm in
+  let lm := M.set g true lm in
   (* Update inlining heuristic so inliner knows to inline fully saturated calls to f *)
-  let s := (max (fst s) fp_numargs, (M.set ![f] 1 (M.set ![g] 2 (snd s)))) in
+  let s := (max (fst s) fp_numargs, (M.set f 1 (M.set g 2 (snd s)))) in
   (* Hack: update cdata to agree with fresh names generated above *)
   let cdata :=
-    set_name ![f] ![f1] "_uncurried"
-    (set_names_lst ![fv] ![fv1] ""
-    (set_names_lst ![gv] ![gv1] "" cdata))
+    set_name f f1 "_uncurried"
+    (set_names_lst fv fv1 ""
+    (set_names_lst gv gv1 "" cdata))
   in
   (b, aenv, lm, s, cdata).
 
@@ -173,13 +168,12 @@ Proof.
       intros _; cbn in *;
         try change (size_exp ?e) with (size e);
         try change (size_list _ ?x) with (size x);
-        try change (size_fundefs' _ ?x) with (size x);
+        try change (size_fundefs ?x) with (size x);
         lia
     end.
   (* Obligation 1: uncurry_cps side conditions *)
   - intros; unfold delayD, Delayed_id_Delay in *.
     (* Check nonlinearities *)
-    destruct k as [k], k' as [k'], g as [g], g' as [g'].
     destruct (eq_var k k') eqn:Hkk'; [|cond_failure].
     destruct (eq_var g g') eqn:Hgg'; [|cond_failure].
     rewrite Pos.eqb_eq in Hkk', Hgg'.
@@ -191,8 +185,8 @@ Proof.
     destruct (mr && negb (match M.get g lm with Some true => true | _ => false end))%bool
       as [|] eqn:Huncurried; [|cond_failure].
     (* Check that {g, k} ∩ vars(ge) = ∅ *)
-    destruct (occurs_in_exp g ![ge]) eqn:Hocc_g; [cond_failure|]. (* TODO: avoid the conversion *)
-    destruct (occurs_in_exp k ![ge]) eqn:Hocc_k; [cond_failure|]. (* TODO: avoid the conversion *)
+    destruct (occurs_in_exp g ge) eqn:Hocc_g; [cond_failure|].
+    destruct (occurs_in_exp k ge) eqn:Hocc_k; [cond_failure|].
     apply bool_true_false in Hocc_g; apply bool_true_false in Hocc_k.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g, Hocc_k.
     (* Generate ft1 + new misc state ms *)
@@ -203,16 +197,16 @@ Proof.
     clearpose Hxgv1 xgv1 (gensyms next_x gv); destruct xgv1 as [next_x0 gv1].
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
-    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
+    specialize success with (f1 := f1) (fv1 := fv1) (gv1 := gv1).
     (* Prove that all the above code actually satisfies the side condition *)
     unfold I_S, I_S_prod, I_S_plain, I_S_fresh in *.
-    pose (fds' := Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
-    specialize (success fds' d f ft (mk_var k) fv (mk_var g) gt gv ge (mk_var k') kt (mk_var g') fds ft1).
-    pose (lhs := Ffun f ft (mk_var k :: fv)
-                   (Efun [Ffun (mk_var g) gt gv ge] (Eapp (mk_var k') kt [mk_var g'])) :: fds).
-    pose (rhs := Ffun f ft (mk_var k :: fv1)
-                  (Efun [Ffun (mk_var g) gt gv1 (Eapp (mk_var f1) ft1 (gv1 ++ fv1))]
-                    (Eapp (mk_var k) kt [mk_var g])) :: fds').
+    pose (fds' := Fcons f1 ft1 (gv ++ fv) ge fds).
+    specialize (success fds' d f ft k fv g gt gv ge k' kt g' fds ft1).
+    pose (lhs := Fcons f ft (k :: fv)
+                   (Efun (Fcons g gt gv ge Fnil) (Eapp k' kt [g'])) fds).
+    pose (rhs := Fcons f ft (k :: fv1)
+                  (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil)
+                    (Eapp k kt [g])) fds').
     specialize (success lhs fds' rhs ms').
     eapply success; [|reflexivity|reflexivity| |];
     try lazymatch goal with
@@ -227,7 +221,7 @@ Proof.
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
     + (* Explain how to update state.
          There are two parts: update various pieces of metadata and show that next_x is still fresh *)
-      exists (metadata_update f [g]! [f1]! fp_numargs fv gv fv1 gv1 ms', next_x1 + 1)%positive.
+      exists (metadata_update f g f1 fp_numargs fv gv fv1 gv1 ms', next_x1 + 1)%positive.
       unerase; split; [exact I|].
       destruct Hnext_x as [? Hnext_x];
       edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
@@ -239,17 +233,14 @@ Proof.
       apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
       eapply fresher_than_monotonic; eauto; lia.
       eapply fresher_than_antimon; [|eassumption].
-      rewrite used_iso, isoABA, used_app.
-      change (exp_of_proto ?A) with ![A].
-      rewrite used_iso, isoABA, used_app.
-      unfold used; simpl; unbox_newtypes.
-      do 10 normalize_used_vars'; repeat normalize_sets.
-      rewrite !strip_vars_app; repeat normalize_sets.
+      subst fds'; unfold Rec.
+      rewrite used_vars_fundefs_app. (repeat normalize_used_vars).
+      rewrite used_vars_fundefs_app. (repeat normalize_used_vars).
+      repeat normalize_sets.
       intros arbitrary; rewrite !In_or_Iff_Union; clear; tauto.
   (* Obligation 2: uncurry_anf side conditions *)
   - intros; unfold delayD, Delayed_id_Delay in *.
     (* Check nonlinearities *)
-    destruct g as [g], g' as [g'].
     destruct (eq_var g g') eqn:Hgg'; [|cond_failure].
     rewrite Pos.eqb_eq in Hgg'.
     (* Unpack parameter and state *)
@@ -260,7 +251,7 @@ Proof.
     destruct (negb mr && negb (match M.get g lm with Some true => true | _ => false end))%bool
       as [|] eqn:Huncurried; [|cond_failure].
     (* Check that {g, k} ∩ vars(ge) = ∅ *)
-    destruct (occurs_in_exp g ![ge]) eqn:Hocc_g; [cond_failure|]. (* TODO: avoid the conversion *)
+    destruct (occurs_in_exp g ge) eqn:Hocc_g; [cond_failure|].
     apply bool_true_false in Hocc_g.
     rewrite occurs_in_exp_iff_used_vars in Hocc_g.
     (* Generate ft1 + new misc state ms *)
@@ -271,13 +262,13 @@ Proof.
     clearpose Hxgv1 xgv1 (gensyms next_x gv); destruct xgv1 as [next_x0 gv1].
     clearpose Hxfv1 xfv1 (gensyms next_x0 fv); destruct xfv1 as [next_x1 fv1].
     clearpose Hf1 f1 next_x1.
-    specialize success with (f1 := mk_var f1) (fv1 := fv1) (gv1 := gv1).
-    pose (fds' := Ffun (mk_var f1) ft1 (gv ++ fv) ge :: fds).
-    specialize (success fds' d f ft fv (mk_var g) gt gv ge (mk_var g') fds ft1).
-    pose (lhs := Ffun f ft fv (Efun [Ffun (mk_var g) gt gv ge] (Ehalt (mk_var g'))) :: fds).
-    pose (rhs := Ffun f ft fv1
-                   (Efun [Ffun (mk_var g) gt gv1 (Eapp (mk_var f1) ft1 (gv1 ++ fv1))] (Ehalt (mk_var g)))
-                 :: fds').
+    specialize success with (f1 := f1) (fv1 := fv1) (gv1 := gv1).
+    pose (fds' := Fcons f1 ft1 (gv ++ fv) ge fds).
+    specialize (success fds' d f ft fv g gt gv ge g' fds ft1).
+    pose (lhs := Fcons f ft fv (Efun (Fcons g gt gv ge Fnil) (Ehalt g')) fds).
+    pose (rhs := Fcons f ft fv1
+                   (Efun (Fcons g gt gv1 (Eapp f1 ft1 (gv1 ++ fv1)) Fnil) (Ehalt g))
+                 fds').
     specialize (success lhs fds' rhs ms').
     (* Prove that all the above code actually satisfies the side condition *)
     eapply success; [|reflexivity|reflexivity| |];
@@ -291,7 +282,7 @@ Proof.
     | |- Param _ _ => exists mr; unerase; exact I
     end.
     + apply fresher_than_not_In; subst f1; exact Hfresh_fv.
-    + exists (metadata_update f [g]! [f1]! fp_numargs fv gv fv1 gv1 ms', next_x1 + 1)%positive.
+    + exists (metadata_update f g f1 fp_numargs fv gv fv1 gv1 ms', next_x1 + 1)%positive.
       unerase; split; [exact I|].
       destruct Hnext_x as [? Hnext_x];
       edestruct (@gensyms_spec var) as [Hgv_copies [Hfresh_gv Hgv_len]]; try exact Hxgv1; [eassumption|].
@@ -303,18 +294,16 @@ Proof.
       apply fresher_than_Union; [|subst; simpl; intros y Hy; inversion Hy; lia].
       eapply fresher_than_monotonic; eauto; lia.
       eapply fresher_than_antimon; [|eassumption].
-      rewrite used_iso, isoABA, used_app.
-      change (exp_of_proto ?A) with ![A].
-      rewrite used_iso, isoABA, used_app.
-      unfold used; simpl; unbox_newtypes.
-      do 10 normalize_used_vars'; repeat normalize_sets.
-      rewrite !strip_vars_app; repeat normalize_sets.
+      subst fds'; unfold Rec.
+      rewrite used_vars_fundefs_app. (repeat normalize_used_vars).
+      rewrite used_vars_fundefs_app. (repeat normalize_used_vars).
+      repeat normalize_sets.
       intros arbitrary; rewrite !In_or_Iff_Union; clear; tauto.
   (* Obligations 3 and 4: must prove that recursive call made by ANF and CPS uncurry are on smaller terms *)
-  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn.
+  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn; intros _.
     assert (size (gv ++ fv) < size gv + size fv) by now apply size_app.
     lia.
-  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn.
+  - cbn in *; subst fds'0. decompose [and] H; subst fds'; cbn; intros _.
     assert (size (gv ++ fv) < size gv + size fv) by now apply size_app.
     lia.
 Defined.

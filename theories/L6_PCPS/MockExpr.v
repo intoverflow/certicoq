@@ -7,10 +7,10 @@ Import ListNotations.
 
 From MetaCoq Require Import Template.All.
 
-Unset Strict Unquote Universe Mode.
+(* Unset Strict Unquote Universe Mode. *)
 
-Inductive var := mk_var : nat -> var.
-Inductive constr := mk_constr : nat -> constr.
+Definition var := nat.
+Definition constr := nat.
 Inductive exp :=
 | eHalt (x : var)
 | eApp (f : var) (xs : list var)
@@ -20,7 +20,7 @@ Inductive exp :=
 | eFuns (fds : list fundef) (e : exp)
 with fundef := fFun (f : var) (xs : list var) (e : exp).
 
-Run TemplateProgram (mk_Frame_ops "exp" exp [var; constr; nat; list var]). (* Takes a while to save aux_data *)
+Run TemplateProgram (mk_Frame_ops "exp" exp [var; constr; nat; list var]).
 
 Print exp_univ.
 Print exp_univD.

@@ -22,7 +22,7 @@ Require Import Ltac2.Ltac2.
 Import Ltac2.Notations.
 Set Default Proof Mode "Ltac2".
 
-Set Universe Polymorphism.
+(* Set Universe Polymorphism. *)
 
 Require Export CertiCoq.L6.Frame.
 
@@ -403,6 +403,17 @@ Fixpoint qualifier (s : string) : string :=
     end
   in fst (go s).
 
+Fixpoint unqualified (s : string) : string :=
+  let fix go s :=
+    match s with
+    | "" => ("", false)
+    | String c s => 
+      let '(s, qualified) := go s in
+      let qualified := (qualified || is_sep c)%bool in
+      (if qualified then s else String c s, qualified)
+    end
+  in fst (go s).
+
 Definition inductives_of_env (decls : global_env) : ind_info :=
   fold_right
     (fun '(kername, decl) m =>
@@ -439,6 +450,7 @@ Fixpoint mangle (inds : ind_info) (e : term) : GM string :=
     let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
     let! '(c, _, _) := nthM_nat n body.(ind_ctors) in
     ret c
+  | tConst kername _ => ret (unqualified kername)
   | e => raise ("mangle: Unrecognized type: " +++ string_of_term e)
   end.
 
@@ -472,16 +484,32 @@ Definition constr_types (inds : ind_info) (ind : inductive) (pars : list term)
       ret ((c, (tys, rty)) :: cs))
     [] body.(ind_ctors).
 
-Definition decompose_ind (ty : term) : GM (inductive × list term) :=
-  match ty with
-  | tInd ind _ => ret (ind, [])
-  | tApp (tInd ind _) ts => ret (ind, ts)
-  | ty => raise "decompose_ind: Unrecognized type"
-  end.
+Definition decompose_ind (decls : global_env) (ty : term) : GM (inductive × list term) :=
+  let fix go n ty {struct n} :=
+    let find_const n c :=
+      let! decl := findM' c decls "decompose_ind tConst" in
+      match decl with
+      | ConstantDecl {| cst_body := Some body |} => go n body
+      | ConstantDecl {| cst_body := None |} =>
+        raise ("decompose_ind: empty ConstantDecl body: " +++ c)
+      | InductiveDecl _ => raise ("decompose_ind: got InductiveDecl: " +++ c)
+      end
+    in
+    match n with O => raise "decompose_ind: OOF" | S n =>
+      match ty with
+      | tInd ind _ => ret (ind, [])
+      | tApp (tInd ind _) ts => ret (ind, ts)
+      | tConst kername _ => find_const n kername
+      (* TODO: support "higher kinded type aliases"
+         At present, writing recursive functions in TemplateMonad is prohibitively slow,
+         but eventually this whole function should be replaced by a call to tmEval. *)
+      | ty => raise ("decompose_ind: Unrecognized type: " +++ string_of_term ty)
+      end
+    end
+  in go 100%nat ty.
 
 Definition build_graph (atoms : list term) (p : program) : GM (ind_info × mind_graph_t) :=
   let '(decls, ty) := p in
-  let! '(ind, pars) := decompose_ind ty in
   let inds := inductives_of_env decls in
   let! atoms :=
     fold_right
@@ -489,10 +517,9 @@ Definition build_graph (atoms : list term) (p : program) : GM (ind_info × mind_
       empty
       <$> (let! ids := mapM (mangle inds) atoms in ret (combine ids atoms))
   in
-  let fix go n (ind : inductive) (pars : list term) g
-      : GM mind_graph_t :=
+  let fix go n ty g : GM mind_graph_t :=
+    let! '(ind, pars) := decompose_ind decls ty in
     match n with O => ret g | S n =>
-      let ty := mkApps (tInd ind []) pars in
       let! s := mangle inds ty in
       if member s g.(mgTypes) then ret g else
       let mgTypes := insert s ty g.(mgTypes) in
@@ -509,17 +536,13 @@ Definition build_graph (atoms : list term) (p : program) : GM (ind_info × mind_
       let! g :=
         foldrM
           (fun '(c, (tys, _)) g =>
-            foldrM
-              (fun ty g =>
-                let! '(ind, pars) := decompose_ind ty in
-                go n ind pars g)
-              g tys)
+            foldrM (fun ty g => go n ty g) g tys)
           g ctys
       in
       ret g
     end
   in
-  let! g := go 100%nat ind pars (mk_mg atoms atoms empty empty) in
+  let! g := go 100%nat ty (mk_mg atoms atoms empty empty) in
   ret (inds, g).
 
 (* Generate a type of depth-1 frames + associated operations *)
@@ -576,13 +599,14 @@ Definition holes_of {A} (xs : list A) : list ((list A × A) × list A) :=
     end
   in go [] xs.
 
-Definition gen_frames (g : mind_graph_t) : GM (list frame × Map string (list frame)) :=
+Definition gen_frames (decls : global_env) (g : mind_graph_t)
+  : GM (list frame × Map string (list frame)) :=
   let! cfs :=
     foldrM
       (fun '(c, (n_constr, tys, rty)) hs =>
         let! tys := mapM (fun ty => findM ty g.(mgTypes)) tys in
         let! rty := findM rty g.(mgTypes) in
-        let! '(ind, pars) := decompose_ind rty in
+        let! '(ind, pars) := decompose_ind decls rty in
         foldriM
           (fun n_arg '(l, x, r) hs =>
             ret ((c, {|
@@ -675,12 +699,13 @@ Definition kername_of_const (s : string) : TemplateMonad string :=
 
 Definition gen_Frame_ops (typename : string) (T : program) (atoms : list term) : GM _ :=
   let! '(inds, g) := build_graph atoms T in
-  let! '(fs, cfs) := gen_frames g in
+  let! '(fs, cfs) := gen_frames (fst T) g in
   let '(univ, univ_of_tyname, univD, univD_body) := gen_univ_univD typename g in
   let! frame_t := gen_frame_t typename inds g fs in
   ret (inds, g, fs, cfs, univ, univ_of_tyname, univD, univD_body, frame_t).
 
 Record aux_data_t := mk_aux_data {
+  aEnv : global_env;
   aIndInfo : ind_info;
   aTypename : string;
   aGraph : mind_graph_t;
@@ -689,7 +714,7 @@ Record aux_data_t := mk_aux_data {
 
 Class AuxData (U : Set) := aux_data : aux_data_t.
 
-Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Type) : TemplateMonad unit :=
+Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Set) : TemplateMonad unit :=
   p <- tmQuoteRec T ;;
   atoms <- monad_map tmQuote atoms ;;
   mlet (inds, g, fs, cfs, univ, univ_of_tyname, univD, univD_body, frame_t) <-
@@ -706,10 +731,6 @@ Definition mk_Frame_ops (typename : string) (T : Type) (atoms : list Type) : Tem
       tConst (typename +++ "_univD") [];
       tInd (mkInd (typename +++ "_frame_t") 0) [];
          tConst (typename +++ "_frameD") []]) ;;
-  qinds <- tmQuote inds ;;
-  qg <- tmQuote g ;;
-  quniv_of_tyname <- tmQuote univ_of_tyname ;;
-  qtypename <- tmQuote typename ;;
-  qcfs <- tmQuote cfs ;;
-  tmMkDefinition (typename +++ "_aux_data")
-    (mkApps <%@mk_aux_data%> [qinds; qtypename; qg; quniv_of_tyname; qcfs]).
+  tmDefinition (typename +++ "_aux_data")
+               (mk_aux_data (fst p) inds typename g univ_of_tyname cfs) ;;
+  ret tt.

@@ -1928,7 +1928,7 @@ Proof.
            decompose [and] Huniq; clear Huniq; auto.
         -- (* Follows from UB(e') because rename_all' doesn't change bindings *)
            unfold Rec.
-           apply rename_all_uniq.
+           apply rename_all_uniq. (* TODO: use shrink_cps_correct.unique_bindings_rename_all_ns *)
            apply known_in_ctx in Hρ; destruct Hρ as [D HD].
            rewrite HD, app_exp_c_eq, isoBAB in Huniq.
            apply ub_app_ctx_f in Huniq; decompose [and] Huniq.
@@ -1936,7 +1936,7 @@ Proof.
         -- (* Follows from vars(C[e]) ∩ BV(e') = ∅.
                 BV(e'') = BV(e')
                 BV(C) ⊆ vars(C[e]) *)
-           unfold Rec; rewrite <- rename_all_bv.
+           unfold Rec; rewrite <- bound_var_rename_all_ns. (* TODO: import shrink_cps_correct for this *)
            assert (bound_var_ctx ![C] \subset used_vars ![C ⟦ Eapp f ft' ys ⟧]). {
              rewrite app_exp_c_eq, isoBAB; unfold used_vars.
              rewrite bound_var_app_ctx; eauto with Ensembles_DB. }

@@ -31,8 +31,8 @@ Unset Strict Unquote Universe Mode.
 Instance Frame_exp_inj : @Frame_inj exp_univ _.
 Proof. unfold Frame_inj; destruct f; simpl; ltac1:(congruence). Defined.
 
-Check frames_nil >:: cons_fundef0 [] >:: fFun2 (mk_var 0) [].
-Check fun e => <[ cons_fundef0 []; fFun2 (mk_var 0) [] ]> ⟦ e ⟧.
+Check frames_nil >:: cons_fundef0 [] >:: fFun2 0%nat [].
+Check fun e => <[ cons_fundef0 []; fFun2 0%nat [] ]> ⟦ e ⟧.
 
 Definition used_vars_var : var -> list var := fun x => [x].
 Definition used_vars_constr : constr -> list var := fun _ => [].
@@ -279,18 +279,18 @@ Definition test_case_tree (pat pat_ty ret_ty success failure : term) : TemplateM
 Compute runGM' 0 (gen_case_tree exp_aux_data.(aIndInfo)
   [(tVar "discr", mkApps <%S%> [mkApps <%S%> [mkApps <%S%> [tVar "n"]]])] <%nat%> <%true%> <%false%>).
 
-Compute <%(mk_constr 0, eApp (mk_var 0) [])%>.
+Compute <%(0, eApp 0 [])%>.
 Run TemplateProgram (test_case_tree <%3%nat%> <%nat%> <%bool%> <%true%> <%false%>).
 Run TemplateProgram (test_case_tree <%@nil nat%> <%list nat%> <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree <%eApp (mk_var 0) []%> <%exp%> <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree <%(mk_constr 0, eApp (mk_var 0) [])%> <%(constr * exp)%type%>
+Run TemplateProgram (test_case_tree <%eApp 0 []%> <%exp%> <%bool%> <%true%> <%false%>).
+Run TemplateProgram (test_case_tree <%(0, eApp 0 [])%> <%(constr * exp)%type%>
                                    <%bool%> <%true%> <%false%>).
-Run TemplateProgram (test_case_tree <%eCase (mk_var 1) [(mk_constr 0, eApp (mk_var 0) [])]%> <%exp%>
+Run TemplateProgram (test_case_tree <%eCase 1 [(0, eApp 0 [])]%> <%exp%>
                                    <%bool%> <%true%> <%false%>).
 Run TemplateProgram (test_case_tree
-  (mkApps <%eCase%> [mkApps <%mk_var%> [tVar "$n"]; mkApps <%@cons (constr * exp)%type%> [
-    mkApps <%@pair constr exp%> [mkApps <%mk_constr%> [tVar "$m"];
-    mkApps <%eApp%> [<%mk_var 0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]])
+  (mkApps <%eCase%> [tVar "$n"; mkApps <%@cons (constr * exp)%type%> [
+    mkApps <%@pair constr exp%> [tVar "$m";
+    mkApps <%eApp%> [<%0%>; <%@nil var%>]]; <%@nil (constr * exp)%type%>]])
   <%exp%> <%nat%> (mkApps <%plus%> [tVar "$n"; tVar "$m"]) <%O%>).
 *)
 
@@ -480,14 +480,14 @@ Recursive Extraction rw_R_m.
 
 (*
 Compute rw_R'' (xI xH) exp_univ_exp <[]>
-  (eCons (mk_var 0) (mk_constr 0) [] (eApp (mk_var 1) []))
+  (eCons 0 0 [] (eApp 1 []))
   tt
   {| envVal := 0; envPrf := eq_refl |}
   {| stVal := 0; stPrf := eq_refl |}. *)
 
 (* -------------------- Another example -------------------- *)
 
-Instance Eq_var : Eq var := {rel_dec := fun '(mk_var n) '(mk_var m) => n ==? m}.
+Instance Eq_var : Eq var := {rel_dec := fun n m => n ==? m}.
 
 Definition renaming := var -> var.
 
@@ -592,8 +592,7 @@ Definition I_cp_env {A} (C : frames_t A exp_univ_exp) (ρ : var -> option (const
 
 Lemma eq_var_spec (x y : var) : Bool.reflect (x = y) (x ==? y).
 Proof.
-  destruct x as [x], y as [y]; simpl.
-  destruct (PeanoNat.Nat.eqb_spec x y); constructor; ltac1:(congruence).
+  simpl. destruct (PeanoNat.Nat.eqb_spec x y); constructor; ltac1:(congruence).
 Defined.
 
 Instance Preserves_cp_env : Preserves_R (@I_cp_env).
@@ -627,10 +626,10 @@ Proof.
 Defined.
 Extraction Inline Preserves_cp_env.
 
-Instance Eq_constr : Eq constr := {rel_dec := fun '(mk_constr n) '(mk_constr m) => n ==? m}.
+Instance Eq_constr : Eq constr := {rel_dec := fun n m => n ==? m}.
 Lemma eq_constr_spec (x y : constr) : Bool.reflect (x = y) (x ==? y).
 Proof.
-  destruct x as [x], y as [y]; simpl.
+  simpl.
   destruct (PeanoNat.Nat.eqb_spec x y); constructor; ltac1:(congruence).
 Defined.
 
@@ -765,16 +764,16 @@ Defined.
 
 (*
 Compute (rw_cp_top (
-  let x0 := mk_var 0 in
-  let x1 := mk_var 1 in
-  let x2 := mk_var 2 in
-  let x3 := mk_var 3 in
-  let x4 := mk_var 4 in
-  let x5 := mk_var 5 in
-  let x6 := mk_var 6 in
-  let c1 := mk_constr 1 in
-  let c2 :=  mk_constr 2 in
-  let c3 := mk_constr 3 in
+  let x0 := 0 in
+  let x1 := 1 in
+  let x2 := 2 in
+  let x3 := 3 in
+  let x4 := 4 in
+  let x5 := 5 in
+  let x6 := 6 in
+  let c1 := 1 in
+  let c2 := 2 in
+  let c3 := 3 in
   eCons x0 c2 [x5; x5; x1; x5; x5]
   (eCons x2 c1 [x0; x3]
   (eCase x0 [
