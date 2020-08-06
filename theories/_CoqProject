@@ -131,7 +131,6 @@ L6_PCPS/cps.v
 L6_PCPS/ctx.v
 L6_PCPS/cps_util.v
 L6_PCPS/identifiers.v
-L6_PCPS/cps_proto_metacoq.v
 L6_PCPS/cps_proto.v
 L6_PCPS/proto_util.v
 L6_PCPS/size_cps.v

@@ -1,33 +1,34 @@
-(* Expressions and contexts isomorphic to those defined in cps.v and ctx.v.
-   We define a separate copy of these because:
-   - The MetaCoq in Prototype.v doesn't support treating AST types defined with type aliases
-     like [var] and [fun_tag] differently. This version of the AST defines them as singleton
-     inductives.
-   - Prototype.v additionally generates a type of one-hole contexts for [exp] trees and
-     we have to explain how this type relates to [exp_ctx] and [fundefs_ctx].
+(* The stack-of-frames one-hole contexts, with the right indices, are isomorphic to 
+   [cps.exp_ctx] and [cps.fundefs_ctx] *)
 
-   The actual definition of [exp] is in cps_proto_metacoq.v because the MetaCoq takes a
-   lot of time and space (~6 GB) to run (most of this is for quoting exp_aux_data). *)
-
-From Coq Require Import ZArith.ZArith Lists.List Sets.Ensembles.
+From Coq Require Import ZArith.ZArith Lists.List Sets.Ensembles Strings.String.
 Require Import Lia.
 Import ListNotations.
 
 From CertiCoq.L6 Require Import
      Prototype cps cps_util ctx
      identifiers Ensembles_util.
-Require Export CertiCoq.L6.cps_proto_metacoq.
 
+From MetaCoq Require Import Template.All.
+
+From CertiCoq.L6 Require Import PrototypeGenFrame cps.
+
+Run TemplateProgram (mk_Frame_ops
+  "exp" exp [var; fun_tag; ctor_tag; prim; N; list var]).
 Print exp_univ.
 Print exp_univD.
+
+Instance Frame_exp : Frame exp_univ := exp_Frame_ops.
+Instance AuxData_exp : AuxData exp_univ := exp_aux_data.
+
 Print exp_frame_t.
 Print exp_frameD.
 Print exp_Frame_ops.
 
+Open Scope list_scope.
+
 (* The type of one-hole contexts *)
 Definition exp_c : exp_univ -> exp_univ -> Set := frames_t.
-
-(* ---------- exp_c with the right indices is isomorphic to cps.exp_ctx and cps.fundefs_ctx ---------- *)
 
 (* cps.exp_ctx -> exp_c _ _ *)
 
@@ -554,39 +555,6 @@ Definition univ_inhabitant {A} : univD A :=
   | exp_univ_N => inhabitant
   | exp_univ_list_var => inhabitant
   end.
-
-(* Inhabited types, with assumption that inhabited <> inhabited' *)
-
-Class Inhabited' A := inhabitant' : A.
-
-Instance Inhabited'_pos : Inhabited' positive := xO xH.
-Instance Inhabited'_N : Inhabited' N := Npos inhabitant'.
-
-Instance Inhabited'_list A `{Inhabited' A} : Inhabited' (list A) := [inhabitant'].
-Instance Inhabited'_prod A B `{Inhabited' A} `{Inhabited' B} : Inhabited' (A * B) := (inhabitant', inhabitant').
-
-Instance Inhabited'_exp : Inhabited' exp := Ehalt inhabitant'.
-Instance Inhabited'_fundefs : Inhabited' fundefs := Fcons inhabitant' inhabitant' inhabitant' inhabitant' Fnil.
-
-Lemma frame_ext_eq' {A B A' B'} (f : exp_frame_t A B) (g : exp_frame_t A' B') :
-  A = A' -> B = B' ->
-  (forall x x', JMeq x x' -> JMeq (frameD f x) (frameD g x')) -> JMeq f g.
-Proof.
-  destruct f, g; try congruence; simpl; intros _ _ Hext;
-  pose (Hext1 := Hext inhabitant inhabitant JMeq_refl); clearbody Hext1;
-  pose (Hext2 := Hext inhabitant' inhabitant' JMeq_refl); clearbody Hext2;
-  inversion Hext1; inversion Hext2; inv_ex;
-  repeat match goal with H : _ = _ |- _ => inv H end; constructor.
-Qed.
-
-Corollary frame_ext_eq {A B} (f g : exp_frame_t A B) :
-  (forall x, frameD f x = frameD g x) -> f = g.
-Proof.
-  intros Hext; enough (JMeq f g) by now apply JMeq_eq.
-  apply frame_ext_eq'; auto; intros x x' Hxx'.
-  inversion Hxx'; inv_ex; subst x'.
-  specialize (Hext x); rewrite Hext; now constructor.
-Qed.
 
 Class Sized A := size : A -> nat.
 
