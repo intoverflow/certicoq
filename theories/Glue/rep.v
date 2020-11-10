@@ -134,33 +134,42 @@ Class Rep (A : Type) : Type :=
 
 (* Starting generation of [Rep] instances! *)
 
+Definition is_sort : Type := bool.
+
 Definition generate_instance_type
            (ind : inductive)
            (one : one_inductive_body)
+           (type_quantifier : ident -> named_term -> named_term)
            (replacer : named_term -> named_term) : TemplateMonad term :=
   (* Convert the type of the type to explicitly named representation *)
   ty <- DB.undeBruijn [] (ind_type one) ;;
+  let check_sort (t : any_term) : is_sort :=
+      match t with tSort _ => true | _ => false end in
   (* Goes over a nested π-type and collects binder names,
      makes up a name where there isn't one.
      It also builds a function to replace the part after the π-binders. *)
   let fix collect
           (t : named_term) (count : nat) (replacer : named_term -> named_term)
-          : list ident * (named_term -> named_term) :=
+          : list (ident * is_sort) * (named_term -> named_term) :=
     match t with
     | tProd nAnon ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
         let new_name := "$arg" ++ string_of_nat count in
-        (new_name :: idents, (fun t' => tProd (nNamed new_name) ty (f t')))
+        ((new_name, check_sort ty) :: idents, (fun t' => tProd (nNamed new_name) ty (f t')))
     | tProd (nNamed id) ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
-        (id :: idents, (fun t' => tProd (nNamed id) ty (f t')))
+        ((id, check_sort ty) :: idents, (fun t' => tProd (nNamed id) ty (f t')))
     | _ => (nil, replacer)
     end in
-  let (names, new) := collect ty 0 replacer in
+  let (quantified, new) := collect ty 0 replacer in
+  let names := map fst quantified in
   let vars := map tVar names in
+  let type_quantifiers := map fst (filter snd quantified) in
+  let base := tApp (tInd ind []) vars in
+
   (* Fully apply the quantified type constructor.
      If you had [list] initially, now you have [forall (A : Type), list A] *)
-  let result := new (tApp (tInd ind []) vars) in
+  let result := new (fold_right type_quantifier base type_quantifiers) in
   (* Convert back to de Bruijn notation and return. *)
   DB.deBruijn result.
 
@@ -171,12 +180,21 @@ Definition has_instance (A : Type) : TemplateMonad bool :=
   opt_ins <- tmInferInstance (Some all) A ;;
   ret (match opt_ins with | my_Some _ => true | my_None => false end).
 
+Definition generate_Rep_instance_type
+           (ind : inductive)
+           (one : one_inductive_body) : TemplateMonad named_term :=
+  generate_instance_type ind one
+    (fun ty_name t =>
+      let n := "Rep_" ++ ty_name in
+      tProd (nNamed n) (tApp <% Rep %> [tVar ty_name]) t)
+    (fun t => tApp <% Rep %> [t]).
+
 (* Constructs the instance type for the type at hand,
    checks if there's an instance for it. *)
 Definition find_missing_instance
            (ind : inductive)
            (one : one_inductive_body) : TemplateMonad bool :=
-  t <- generate_instance_type ind one (fun t => tApp <% Rep %> [t]) ;;
+  t <- generate_Rep_instance_type ind one ;;
   t' <- tmUnquoteTyped Type t ;;
   has_instance t'.
 
@@ -271,6 +289,9 @@ Fixpoint handle_dissected_args
             ; arg_type := spine
             ; arg_inductive := ind
             ; arg_one := one |} :: rest)
+    | cons (dParam p) args' =>
+      (* Parameters are not included when pattern matching on constructors *)
+      handle_dissected_args args' count
     | cons decl _ =>
       (* tmPrint decl ;; *)
       tmFail ("Dissected type is not a type" ++ string_of_nat count)
@@ -366,8 +387,7 @@ Fixpoint make_prop
       ret (tApp t_rep [ t_g ; t_arg; t_p ])
     else
       (* not a recursive call, find the right [Rep] instance *)
-      inst_ty <- generate_instance_type ind one
-                                        (fun t => tApp <% Rep %> [t]) ;;
+      inst_ty <- generate_Rep_instance_type ind one ;;
       (* TODO fix this for special [Rep] instances *)
       t_ins <- instance_term inst_ty ;;
       ret (tApp <% @rep %> [ make_tInd (arg_inductive arg)
@@ -479,7 +499,7 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
                (fun i one =>
                   (* FIXME get rid of repeated computation here *)
                   let ind := {| inductive_mind := kn ; inductive_ind := i |} in
-                  quantified <- generate_instance_type ind one id ;;
+                  quantified <- generate_instance_type ind one (fun _ => id) id ;;
                   quantified_named <- DB.undeBruijn [] quantified ;;
                   let tau := strip_quantifiers quantified_named in
                   make_fix_single tau {| inductive_mind := kn ; inductive_ind := i |} one)
@@ -491,7 +511,7 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
        let ind := {| inductive_mind := kn ; inductive_ind := i |} in
        (* This gives us something like
           [forall (A : Type) (n : nat), vec A n] *)
-       quantified <- generate_instance_type ind one id ;;
+       quantified <- generate_instance_type ind one (fun _ => id) id ;;
        (* Now what can we do with this?
           Let's start by going to its named representation. *)
        quantified_named <- DB.undeBruijn [] quantified ;;
@@ -517,10 +537,10 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
        prog <- DB.deBruijn prog_named ;;
 
        (* If need be, here's the reified type of our [Rep] instance: *)
-        instance_ty <-
-              tmUnquoteTyped Type
-                (build_quantifiers tProd quantifiers
-                                  (tApp <% Rep %> [quantified])) ;;
+       instance_ty <-
+            tmUnquoteTyped Type
+              (build_quantifiers tProd quantifiers
+                                (tApp <% Rep %> [quantified])) ;;
 
        instance <- tmUnquote prog ;;
        (* Remove [tmEval] when MetaCoq issue 455 is fixed: *)
