@@ -43,7 +43,7 @@
   * If a type is of sort [Prop], the representation of its values is
     the same as [unit] for all vallues.
   * Parameters are not included in the memory representation,
-    indices are.
+    indices are. But parameters should be quantified over in the [Rep] instance type.
 *)
 Require Import Coq.ZArith.ZArith
                Coq.Program.Basics
@@ -115,11 +115,55 @@ Module DB.
   *)
 End DB.
 
+
+Module Substitution.
+  (* Capturing substitution for named terms, only use for global terms. *)
+  Fixpoint named_subst (t : global_term) (x : ident) (u : named_term) {struct u} : named_term :=
+    match u with
+    | tVar id => if eq_string id x then t else u
+    | tEvar ev args => tEvar ev (map (named_subst t x) args)
+    | tCast c kind ty => tCast (named_subst t x c) kind (named_subst t x ty)
+    | tProd (nNamed id) A B =>
+      if eq_string x id
+      then tProd (nNamed id) (named_subst t x A) B
+      else tProd (nNamed id) (named_subst t x A) (named_subst t x B)
+    | tProd na A B => tProd na (named_subst t x A) (named_subst t x B)
+    | tLambda (nNamed id) T M =>
+      if eq_string x id
+      then tLambda (nNamed id) (named_subst t x T) M
+      else tLambda (nNamed id) (named_subst t x T) (named_subst t x M)
+    | tLambda na T M => tLambda na (named_subst t x T) (named_subst t x M)
+    | tLetIn (nNamed id) b ty b' =>
+      if eq_string x id
+      then tLetIn (nNamed id) (named_subst t x b) (named_subst t x ty) b'
+      else tLetIn (nNamed id) (named_subst t x b) (named_subst t x ty) (named_subst t x b')
+    | tLetIn na b ty b' => tLetIn na (named_subst t x b) (named_subst t x ty) (named_subst t x b')
+    | tApp u0 v => mkApps (named_subst t x u0) (map (named_subst t x) v)
+    | tCase ind p c brs =>
+        let brs' := map (on_snd (named_subst t x)) brs in
+        tCase ind (named_subst t x p) (named_subst t x c) brs'
+    | tProj p c => tProj p (named_subst t x c)
+    | tFix mfix idx => (* FIXME *)
+      let mfix' := map (map_def (named_subst t x) (named_subst t x)) mfix in
+      tFix mfix' idx
+    | tCoFix mfix idx =>
+      let mfix' := map (map_def (named_subst t x) (named_subst t x)) mfix in
+      tCoFix mfix' idx
+    | _ => u
+    end.
+
+  (* Substitute multiple [global_term]s into a [named_term]. *)
+  Fixpoint named_subst_all (l : list (ident * global_term)) (u : named_term) : named_term :=
+    match l with
+    | nil => u
+    | (id, t) :: l' => named_subst_all l' (named_subst t id u)
+    end.
+End Substitution.
+
 Notation "f >=> g" := (fun x => (f x) >>= g)
                       (at level 51, right associativity) : monad_scope.
 Notation "f <$> x" := (x' <- x%monad ;; ret (f x'))
                       (at level 52, right associativity) : monad_scope.
-
 
 Variables (graph : Type) (mtype : Type).
 
@@ -133,6 +177,85 @@ Class Rep (A : Type) : Type :=
   { rep : forall (g : graph) (x : A) (p : mtype), Prop }.
 
 (* Starting generation of [Rep] instances! *)
+
+Section Argumentation.
+
+  Record arg_info : Type :=
+    { arg_name : BasicAst.ident
+      (* the bound name used in the constructor, inside the pattern in the match *)
+    ; p_name : BasicAst.ident
+      (* the bound name used in the exists, for the [mtype] *)
+    ; arg_type : named_term
+      (* the fully applied type used as an argument *)
+    ; arg_inductive : inductive
+      (* the name of the type constructor used in the argument,
+        like [nat], [list], [option] *)
+    ; arg_one : one_inductive_body
+      (* the single definition of the type used in the argument *)
+    }.
+
+  Variant arg_variant : Type :=
+  | param_arg : forall (param_name : ident) (param_type : named_term), arg_variant
+  | value_arg : forall (arg_name exists_name : ident) (arg_type : named_term), arg_variant.
+
+  Definition argumentation
+             (ind : inductive)
+             (mut : mutual_inductive_body)
+             (ctor : ctor_info) : TemplateMonad (list arg_variant * named_term) :=
+    let number_of_params : nat := ind_npars mut in
+    (* The type names are referred with de Bruijn indices
+       so we must add them to the initial context. *)
+    let mp : modpath := fst (inductive_mind ind) in
+    let kn : kername := inductive_mind ind in
+    (* We need two passes here,
+       - one to replace the type references to globally unique [ident]s
+       - another to substitute those [ident]s into terms referring to those types. *)
+    let mut_names : list ident :=
+        map (fun one => "$$$" ++ string_of_kername (mp, ind_name one)) (ind_bodies mut) in
+    let mut_ind_terms : list (ident * global_term) :=
+        mapi (fun i one =>
+                let id := "$$$" ++ string_of_kername (mp, ind_name one) in
+                let ind := mkInd kn i in
+                (id, tInd ind nil))
+            (ind_bodies mut) in
+
+    let fix aux (params : nat)
+                (arg_count : nat)
+                (ctx : list ident)
+                (t : term) {struct t}
+                : TemplateMonad (list arg_variant * named_term) :=
+      match params, t with
+      (* Go through the params *)
+      | S params', tProd n t b =>
+        match n with
+        | nNamed id =>
+          let id := "$" ++ id in (* as our naming hack requires *)
+          '(args, rest) <- aux params' arg_count (id :: ctx) b ;;
+          t' <- DB.undeBruijn ctx t ;;
+          let t' := Substitution.named_subst_all mut_ind_terms t' in
+          ret (param_arg id t' :: args, rest)
+        | _ => tmFail "Impossible: unnamed param"
+        end
+      | S _ , _ => tmFail "Impossible: all constructors quantify over params"
+
+      (* Other arguments *)
+      | O , tProd n t b =>
+        let arg_name : ident := "$arg" ++ string_of_nat arg_count in
+        let exists_name : ident := "$p" ++ string_of_nat arg_count in
+        '(args, rest) <- aux O (S arg_count) (arg_name :: ctx) b ;;
+        t' <- DB.undeBruijn ctx t ;;
+        let t' := Substitution.named_subst_all mut_ind_terms t' in
+        ret (value_arg arg_name exists_name t' :: args, rest)
+      | O, t =>
+        (* rename variables in the root *)
+        t' <- DB.undeBruijn ctx t ;;
+        let t' := Substitution.named_subst_all mut_ind_terms t' in
+        ret (nil , t')
+      end in
+
+    aux number_of_params O mut_names (ctor_type ctor).
+
+End Argumentation.
 
 Definition is_sort : Type := bool.
 
@@ -216,22 +339,6 @@ Fixpoint find_missing_instances
     | _ :: env' => find_missing_instances env'
     | nil => ret nil
     end.
-
-Record arg_info : Type :=
-  { arg_name : BasicAst.ident
-    (* the bound name used in the constructor, inside the pattern in the match *)
-  ; p_name : BasicAst.ident
-    (* the bound name used in the exists, for the [mtype] *)
-  ; arg_type : dissected_type
-    (* the fully applied type used as an argument *)
-    (* TODO think about the fully applied type for polymorphic/dependent types *)
-  ; arg_inductive : inductive
-    (* the name of the type constructor used in the argument,
-       like [nat], [list], [option] *)
-  ; arg_one : one_inductive_body
-    (* the single definition of the type used in the argument *)
-  }.
-
 
 Definition get_ty_info_from_inductive
            (ind : inductive) : TemplateMonad ty_info :=
