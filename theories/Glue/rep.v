@@ -187,6 +187,10 @@ Section Argumentation.
   | param_arg : forall (param_name : ident) (param_type : named_term), arg_variant
   | value_arg : forall (arg_name exists_name : ident) (arg_type : named_term), arg_variant.
 
+  (* Takes the identifying information for a single inductive type
+     in a mutual block, a constructor for that type,
+     and generates the list of arguments and the [named_term]
+     that is possibly using those argument names. *)
   Definition argumentation
              (ind : inductive)
              (mut : mutual_inductive_body)
@@ -198,7 +202,9 @@ Section Argumentation.
     let kn : kername := inductive_mind ind in
     (* We need two passes here,
        - one to replace the type references to globally unique [ident]s
-       - another to substitute those [ident]s into terms referring to those types. *)
+       - another to substitute those [ident]s into terms referring to those types,
+         so that later when we encounter the [tInd] we know which [Rep] instance to call.
+     *)
     let mut_names : list ident :=
         map (fun one => "$$$" ++ string_of_kername (mp, ind_name one)) (ind_bodies mut) in
     let mut_ind_terms : list (ident * global_term) :=
@@ -208,10 +214,11 @@ Section Argumentation.
                 (id, tInd ind nil))
             (ind_bodies mut) in
 
-    let fix aux (params : nat)
-                (arg_count : nat)
-                (ctx : list ident)
-                (t : term) {struct t}
+    let fix aux (params : nat) (* number of parameters left *)
+                (arg_count : nat) (* number of args seen *)
+                (ctx : list ident) (* names of params and args to be used *)
+                (t : term) (* what is left from the constructor type *)
+                {struct t}
                 : TemplateMonad (list arg_variant * named_term) :=
       match params, t with
       (* Go through the params *)
@@ -248,6 +255,13 @@ End Argumentation.
 
 Definition is_sort : Type := bool.
 
+(* Takes the identifying information for a single inductive type
+   in a mutual block, and generates a type for the whole block.
+   This is a function that will be used to generate the type of the new [Rep] instance,
+   for which the [type_quantifier] adds a [Rep] instance argument.
+   This function can also be used to get a fully applied [named_term] and its quantifiers.
+   The quantifiers would go around the [rep] function and the [Rep] instance.
+*)
 Definition generate_instance_type
            (ind : inductive)
            (one : one_inductive_body)
@@ -266,7 +280,7 @@ Definition generate_instance_type
     match t with
     | tProd nAnon ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
-        let new_name := "$arg" ++ string_of_nat count in
+        let new_name := "$P" ++ string_of_nat count in
         ((new_name, check_sort ty) :: idents, (fun t' => tProd (nNamed new_name) ty (f t')))
     | tProd (nNamed id) ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
@@ -692,8 +706,8 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
        ret tt) (ind_bodies mut) ;;
   ret tt.
 
-(* Derives a [Rep] instance for the type constructor [Tau] *)
-(*    and the types its definition depends on. *)
+(* Derives a [Rep] instance for the type constructor [Tau],
+   and the types its definition depends on. *)
 Definition rep_gen {kind : Type} (Tau : kind) : TemplateMonad unit :=
   '(env, tau) <- tmQuoteRec Tau ;;
   missing <- find_missing_instances env ;;
