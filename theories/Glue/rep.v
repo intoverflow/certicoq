@@ -18,12 +18,13 @@
   Currently our generator works on:
   [x] simple types like [bool]
   [x] recursive types like [nat]
-  [ ] mutually recursive types like [even] and [odd]
-  [ ] polymorphic types like [option]
-  [ ] multi-polymorphic types like [pair]
-  [ ] recursive and polymorphic types like [list]
+  [x] polymorphic types like [option]
+  [x] multi-polymorphic types like [pair]
+  [x] recursive and polymorphic types like [list]
   [ ] recursive and dependent types like [fin]
   [ ] recursive, polymorphic and dependent types like [vector]
+  [ ] mutually recursive types like [tree] and [forest]
+  [ ] mutually recursive and dependent types like [even] and [odd]
   [ ] nested types
   [ ] types of sort Prop like [True], [and] or [le]
   [ ] types that use functions in its definition
@@ -82,40 +83,169 @@ Definition global_term : Type := term.
 Definition any_term : Type := term.
 
 Module DB.
-  (* Uses code written by John Li.
+  (* Inspired by code written by John Lim but changed slightly.
      We should eventually consider making a MetaCoq_utils module. *)
-  Import Prototype.
 
-  Definition runGM {A : Type} (m : GM A) : TemplateMonad A :=
-    match runStateT m 0%N with
-    | inl err => tmFail err
-    | inr (t', _) => ret t'
-    end.
-
-  (* Takes a named representation, which we hack by using names starting with $,
-     and converts it into the de Bruijn representation. *)
+  (* Takes a named representation and converts it into the de Bruijn representation. *)
   Definition deBruijn (t : named_term) : TemplateMonad term :=
-    runGM (indices_of [] t).
+    let fix find_in_ctx (count : nat) (id : ident) (ctx : list name) : option nat :=
+      match ctx with
+      | nil => None
+      | nAnon :: ns => find_in_ctx (S count) id ns
+      | (nNamed id') :: ns =>
+        if ident_eq id id' then Some count else find_in_ctx (S count) id ns
+      end in
+    let fix go (ctx : list name) (t : named_term) : TemplateMonad term :=
+        let go_mfix (mf : mfixpoint named_term) : TemplateMonad (mfixpoint term) :=
+          let ctx' := map (fun x => binder_name (dname x)) mf in
+          monad_map (fun def =>
+                       dtype' <- go ctx def.(dtype) ;;
+                       dbody' <- go (rev ctx' ++ ctx) def.(dbody) ;;
+                       ret (mkdef _ def.(dname) dtype' dbody' def.(rarg))) mf
+        in
+        match t with
+        | tRel n => ret t
+        | tVar id =>
+            match find_in_ctx O id ctx with
+            | Some i => ret (tRel i)
+            | None => ret t (* could be a free variable *)
+            end
+        | tEvar ev args =>
+            args' <- monad_map (go ctx) args ;;
+            ret (tEvar ev args')
+        | tSort s => ret t
+        | tCast t kind v =>
+            t' <- go ctx t ;;
+            v' <- go ctx v ;;
+            ret (tCast t' kind v')
+        | tProd na ty body =>
+            ty' <- go ctx ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tProd na ty' body')
+        | tLambda na ty body =>
+            ty' <- go ctx ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tLambda na ty' body')
+        | tLetIn na def def_ty body =>
+            def' <- go ctx def ;;
+            def_ty' <- go ctx def_ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tLetIn na def' def_ty' body')
+        | tApp f args =>
+            f' <- go ctx f ;;
+            args' <- monad_map (go ctx) args ;;
+            ret (tApp f' args')
+        | tConst c u => ret t
+        | tInd ind u => ret t
+        | tConstruct ind idx u => ret t
+        | tCase ind_nbparams_relevance type_info discr branches =>
+            type_info' <- go ctx type_info ;;
+            discr' <- go ctx discr ;;
+            branches' <- monad_map (fun '(n, t) => t' <- go ctx t ;; ret (n, t')) branches ;;
+            ret (tCase ind_nbparams_relevance type_info' discr' branches')
+        | tProj proj t =>
+            t' <- go ctx t ;;
+            ret (tProj proj t')
+        | tFix mfix idx =>
+            mfix' <- go_mfix mfix ;;
+            ret (tFix mfix' idx)
+        | tCoFix mfix idx =>
+            mfix' <- go_mfix mfix ;;
+            ret (tCoFix mfix' idx)
+        end
+    in go [] t.
+
+  (* Takes a de Bruijn representation and changes [tRel]s to [tVar]s. *)
+  Definition undeBruijn' (ctx : list name) (t : term) : TemplateMonad named_term :=
+    let fix go (ctx : list name) (t : term) : TemplateMonad named_term :=
+        let go_mfix (mf : mfixpoint term) : TemplateMonad (mfixpoint named_term) :=
+          let ctx' := map (fun x => binder_name (dname x)) mf in
+          monad_map (fun def =>
+                       dtype' <- go ctx def.(dtype) ;;
+                       dbody' <- go (rev ctx' ++ ctx) def.(dbody) ;;
+                       ret (mkdef _ def.(dname) dtype' dbody' def.(rarg))) mf
+        in
+        match t with
+        | tRel n =>
+            match nth_error ctx n with
+            | None => ret t
+            | Some nAnon => tmFail "Reference to anonymous binding"
+            | Some (nNamed id) => ret (tVar id)
+            end
+        | tVar id => ret t
+        | tEvar ev args =>
+            args' <- monad_map (go ctx) args ;;
+            ret (tEvar ev args')
+        | tSort s => ret t
+        | tCast t kind v =>
+            t' <- go ctx t ;;
+            v' <- go ctx v ;;
+            ret (tCast t' kind v')
+        | tProd na ty body =>
+            ty' <- go ctx ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tProd na ty' body')
+        | tLambda na ty body =>
+            ty' <- go ctx ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tLambda na ty' body')
+        | tLetIn na def def_ty body =>
+            def' <- go ctx def ;;
+            def_ty' <- go ctx def_ty ;;
+            body' <- go (binder_name na :: ctx) body ;;
+            ret (tLetIn na def' def_ty' body')
+        | tApp f args =>
+            f' <- go ctx f ;;
+            args' <- monad_map (go ctx) args ;;
+            ret (tApp f' args')
+        | tConst c u => ret t
+        | tInd ind u => ret t
+        | tConstruct ind idx u => ret t
+        | tCase ind_nbparams_relevance type_info discr branches =>
+            type_info' <- go ctx type_info ;;
+            discr' <- go ctx discr ;;
+            branches' <- monad_map (fun '(n, t) => t' <- go ctx t ;; ret (n, t')) branches ;;
+            ret (tCase ind_nbparams_relevance type_info' discr' branches')
+        | tProj proj t =>
+            t' <- go ctx t ;;
+            ret (tProj proj t')
+        | tFix mfix idx =>
+            mfix' <- go_mfix mfix ;;
+            ret (tFix mfix' idx)
+        | tCoFix mfix idx =>
+            mfix' <- go_mfix mfix ;;
+            ret (tCoFix mfix' idx)
+        end
+    in go ctx t.
+
+  Definition undeBruijn (t : term) : TemplateMonad named_term :=
+    undeBruijn' nil t.
 
   (* Example usage for deBruijn:
 
-     MetaCoq Run (t <- DB.deBruijn
-                          (tLambda (nNamed "$x") <% bool %> (tVar "$x")) ;;
-                  t' <- tmUnquoteTyped (bool -> bool) t ;;
-                  tmPrint t).
+   MetaCoq Run (t <- DB.deBruijn
+                      (tLambda (mkBindAnn (nNamed "x") Relevant)
+                                <% bool %> (tVar "x"))%string ;;
+                t' <- tmUnquoteTyped (bool -> bool) t ;;
+                tmPrint t).
   *)
-
-  (* Takes a de Bruijn representation and adds $ to local variables,
-     and changes [tRel]s to [tVar]s referring to those variabstarting with $. *)
-  Definition undeBruijn (initial : list ident)
-                        (t : term) : TemplateMonad named_term :=
-    runGM (named_of initial t).
 
   (* Example usage for undeBruijn:
 
+   MetaCoq Run (t <- DB.undeBruijn <% fun (x : bool) => x %> ;;
+                tmPrint t).
   *)
-     MetaCoq Run (t <- DB.undeBruijn nil <% fun (x : bool) => x %> ;;
-                  tmPrint t).
+
+  (* Round trip test:
+
+  MetaCoq Run (t <- DB.undeBruijn
+                      <% fix f (x y : nat) :=
+                           match x with S x' => f x' (S y) | O => y end %> ;;
+               t <- DB.deBruijn t ;;
+               t' <- tmUnquoteTyped (nat -> nat -> nat) t ;;
+               tmPrint t').
+  *)
+
 End DB.
 
 
@@ -226,9 +356,8 @@ Section Argumentation.
       | S params', tProd n t b =>
         match n with
         | mkBindAnn (nNamed id) _ =>
-          let id := "$" ++ id in (* as our naming hack requires *)
           '(args, rest) <- aux params' arg_count (id :: ctx) b ;;
-          t' <- DB.undeBruijn ctx t ;;
+          t' <- DB.undeBruijn' (map nNamed ctx) t ;;
           let t' := Substitution.named_subst_all mut_ind_terms t' in
           ret (param_arg id t' :: args, rest)
         | _ => tmFail "Impossible: unnamed param"
@@ -237,15 +366,15 @@ Section Argumentation.
 
       (* Other arguments *)
       | O , tProd n t b =>
-        let arg_name : ident := "$arg" ++ string_of_nat arg_count in
-        let exists_name : ident := "$p" ++ string_of_nat arg_count in
+        let arg_name : ident := "arg" ++ string_of_nat arg_count in
+        let exists_name : ident := "p" ++ string_of_nat arg_count in
         '(args, rest) <- aux O (S arg_count) (arg_name :: ctx) b ;;
-        t' <- DB.undeBruijn ctx t ;;
+        t' <- DB.undeBruijn' (map nNamed ctx) t ;;
         let t' := Substitution.named_subst_all mut_ind_terms t' in
         ret (value_arg arg_name exists_name t' :: args, rest)
       | O, t =>
         (* rename variables in the root *)
-        t' <- DB.undeBruijn ctx t ;;
+        t' <- DB.undeBruijn' (map nNamed ctx) t ;;
         let t' := Substitution.named_subst_all mut_ind_terms t' in
         ret (nil , t')
       end in
@@ -269,7 +398,7 @@ Definition generate_instance_type
            (type_quantifier : ident -> named_term -> named_term)
            (replacer : named_term -> named_term) : TemplateMonad named_term :=
   (* Convert the type of the type to explicitly named representation *)
-  ty <- DB.undeBruijn [] (ind_type one) ;;
+  ty <- DB.undeBruijn (ind_type one) ;;
   let check_sort (t : any_term) : is_sort :=
       match t with tSort _ => true | _ => false end in
   (* Goes over a nested π-type and collects binder names,
@@ -281,7 +410,7 @@ Definition generate_instance_type
     match t with
     | tProd (mkBindAnn nAnon rel) ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
-        let new_name := "$P" ++ string_of_nat count in
+        let new_name := "P" ++ string_of_nat count in
         ((new_name, check_sort ty) :: idents, (fun t' => tProd (mkBindAnn (nNamed new_name) rel) ty (f t')))
     | tProd (mkBindAnn (nNamed id) rel) ty rest =>
         let '(idents, f) := collect rest (S count) replacer in
@@ -298,10 +427,6 @@ Definition generate_instance_type
      If you had [list] initially, now you have [forall (A : Type), list A] *)
   let result := new (fold_right type_quantifier base type_quantifiers) in
   ret result.
-  (* Convert back to de Bruijn notation and return. *)
-  (* We should use [deBruijn] here because [undeBruijn]ing adds
-     a number and $ to every name, which is useless to us later. *)
-  (* DB.deBruijn result. *)
 
 (* Checks if the given type class instance type has an instance.
    This wrapper function makes type checking easier
@@ -315,7 +440,7 @@ Definition generate_Rep_instance_type
            (one : one_inductive_body) : TemplateMonad named_term :=
   generate_instance_type ind one
     (fun ty_name t =>
-      let n := "$Rep_" ++ Prototype.remove_sigils' ty_name in
+      let n := "Rep_" ++ ty_name in
       tProd (mkBindAnn (nNamed n) Relevant) (tApp <% Rep %> [tVar ty_name]) t)
     (fun t => tApp <% Rep %> [t]).
 
@@ -398,6 +523,7 @@ Fixpoint make_exists
                   ; tLambda (mkBindAnn (nNamed p_name) Relevant)
                             <% mtype %>
                             (make_exists args' x) ]
+  | _ :: args' => fun x => make_exists args' x
   | _ => fun x => x
   end.
 
@@ -431,8 +557,8 @@ Fixpoint make_prop
          (ctor : ctor_info)
          (args : list arg_variant)
          : TemplateMonad named_term :=
-  let t_g := tVar "$g" in
-  let t_p := tVar "$p" in
+  let t_g := tVar "g" in
+  let t_p := tVar "p" in
 
   let make_prop_base : TemplateMonad named_term :=
     (* Create the [cRep] for this constructor and evaluate *)
@@ -443,7 +569,7 @@ Fixpoint make_prop
                 end) ;;
     t_crep <- tmQuote crep ;;
     (* Create list of [[p0;p1;p2;...]] to pass to [fitting_index] *)
-    let l := t_conses (map (fun n => tVar ("$p" ++ string_of_nat n))
+    let l := t_conses (map (fun n => tVar ("p" ++ string_of_nat n))
                            (seq 0 (ctor_arity ctor))) in
     ret (tApp <% fitting_index %>
               [ t_g ; t_p ; t_crep ; l])
@@ -464,7 +590,7 @@ Fixpoint make_prop
       match nt with
       | tInd arg_inductive _ =>
         if eq_kername (inductive_mind ind) (inductive_mind arg_inductive)
-        then ret (tVar ("$rep" ++ string_of_nat (inductive_ind arg_inductive)))
+        then ret (tVar ("rep" ++ string_of_nat (inductive_ind arg_inductive)))
         else
           one <- get_one_from_inductive arg_inductive ;;
           (* not a recursive call, find the right [Rep] instance *)
@@ -477,7 +603,8 @@ Fixpoint make_prop
           ret (tApp <% @rep %> [ make_tInd arg_inductive ; t_ins ])
       | tApp root args => (* TODO fix args *)
           build_rep_call root
-      | tVar ty_name => ret (tVar ("$Rep_" ++ Prototype.remove_sigils' ty_name))
+      | tVar ty_name =>
+        ret (tApp <% @rep %> [tVar ty_name ; tVar ("Rep_" ++ ty_name)])
       | _ => tmFail ("Cannot find root of the argument term: " ++ string_of_term nt)
       end
   in
@@ -528,6 +655,8 @@ Definition ctor_to_branch
 
   prop <- make_prop ind one ctor args ;;
   let t := make_lambdas args (make_exists args prop) in
+  tmMsg "PROP:" ;;
+  tmEval all t >>= tmPrint ;;
   ret (ctor_arity ctor, t).
 
 (* Generates a reified match expression *)
@@ -543,8 +672,8 @@ Definition matchmaker
     : TemplateMonad named_term :=
   branches <- monad_map (ctor_to_branch ind one tau) ctors ;;
   ret (tCase (ind, 0, Relevant)
-             (tLambda (mkBindAnn (nNamed "$y") Relevant) tau <% Prop %>)
-             (tVar "$x")
+             (tLambda (mkBindAnn (nNamed "y") Relevant) tau <% Prop %>)
+             (tVar "x")
              branches).
 
 
@@ -555,18 +684,18 @@ Definition make_fix_single
            (tau : term) (* fully applied type constructor *)
            (ind : inductive)
            (one : one_inductive_body) : TemplateMonad (BasicAst.def named_term) :=
-  let this_name := nNamed ("$rep" ++ string_of_nat (inductive_ind ind)) in
+  let this_name := nNamed ("rep" ++ string_of_nat (inductive_ind ind)) in
   prop <- matchmaker ind one tau (process_ctors (ind_ctors one)) ;;
   let body :=
-      (tLambda (mkBindAnn (nNamed "$g") Relevant) <% graph %>
-        (tLambda (mkBindAnn (nNamed "$x") Relevant) tau
-          (tLambda (mkBindAnn (nNamed "$p") Relevant) <% mtype %> prop))) in
+      (tLambda (mkBindAnn (nNamed "g") Relevant) <% graph %>
+        (tLambda (mkBindAnn (nNamed "x") Relevant) tau
+          (tLambda (mkBindAnn (nNamed "p") Relevant) <% mtype %> prop))) in
   ret {| dname := mkBindAnn this_name Relevant
-       ; dtype := tProd (mkBindAnn (nNamed "$g") Relevant)
+       ; dtype := tProd (mkBindAnn (nNamed "g") Relevant)
                        <% graph %>
-                       (tProd (mkBindAnn (nNamed "$x") Relevant)
+                       (tProd (mkBindAnn (nNamed "x") Relevant)
                                tau
-                               (tProd (mkBindAnn (nNamed "$p") Relevant)
+                               (tProd (mkBindAnn (nNamed "p") Relevant)
                                      <% mtype %>
                                      <% Prop %>))
        ; dbody := body
@@ -613,7 +742,7 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
                   let ind := {| inductive_mind := kn ; inductive_ind := i |} in
                   quantified <- generate_instance_type ind one
                                   (fun ty_name t =>
-                                    let n := "$Rep_" ++ Prototype.remove_sigils' ty_name in
+                                    let n := "Rep_" ++ ty_name in
                                     tProd (mkBindAnn (nNamed n) Relevant) (tApp <% Rep %> [tVar ty_name]) t)
                                     id ;;
                   (* quantified_named <- DB.undeBruijn [] quantified ;; *)
@@ -629,7 +758,7 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
           [forall (A : Type) (n : nat), vec A n] *)
        quantified <- generate_instance_type ind one
                       (fun ty_name t =>
-                        let n := "$Rep_" ++ Prototype.remove_sigils' ty_name in
+                        let n := "Rep_" ++ ty_name in
                         tProd (mkBindAnn (nNamed n) Relevant) (tApp <% Rep %> [tVar ty_name]) t)
                       id ;;
        tmMsg "quantified:" ;;
@@ -643,16 +772,15 @@ Definition add_instances (kn : kername) : TemplateMonad unit :=
        (* The reified type of the fully applied type constructor,
           but with free variables! *)
        let tau := strip_quantifiers quantified in
-       let fn_ty := tProd (mkBindAnn (nNamed "$g") Relevant)
+       let fn_ty := tProd (mkBindAnn (nNamed "g") Relevant)
                           <% graph %>
-                          (tProd (mkBindAnn (nNamed "$x") Relevant)
+                          (tProd (mkBindAnn (nNamed "x") Relevant)
                                  tau
-                                 (tProd (mkBindAnn (nNamed "$p") Relevant)
+                                 (tProd (mkBindAnn (nNamed "p") Relevant)
                                         <% mtype %>
                                         <% Prop %>)) in
        let quantifiers : list (aname * any_term) :=
            get_quantifiers id quantified in
-           (* get_quantifiers (fun id => "$" ++ id) quantified_named in *)
        let prog_named : named_term :=
            build_quantifiers tLambda quantifiers
                              (tApp <% @Build_Rep %>
@@ -716,76 +844,59 @@ Definition rep_gen {kind : Type} (Tau : kind) : TemplateMonad unit :=
   monad_iter add_instances (rev missing).
 
 
-
 (* Playground: *)
-MetaCoq Run (rep_gen nat).
-Print Rep_nat.
 
-Inductive T (A : Type):=
-| C : A -> T A.
-MetaCoq Run (rep_gen T).
+MetaCoq Run (rep_gen unit).
+MetaCoq Run (rep_gen bool).
+MetaCoq Run (rep_gen nat).
+MetaCoq Run (rep_gen option).
+MetaCoq Run (rep_gen pair).
 MetaCoq Run (rep_gen list).
+
+(* Testing mutually recursive inductive types: *)
+Inductive R1 :=
+| r1 : R1
+with R2 :=
+| r2 : R2.
+MetaCoq Run (rep_gen R1).
+
+Inductive T1 :=
+| c1 : T2 -> T1
+with T2 :=
+| c2 : T1 -> T2.
+(* MetaCoq Run (rep_gen T1). *)
+
+Inductive tree (A : Type) : Type :=
+| tleaf : tree A
+| tnode : nat -> forest A -> tree A
+with forest (A : Type) : Type :=
+| fnil : forest A
+| fcons : tree A -> forest A -> forest A.
+(* MetaCoq Run (rep_gen tree). *)
+
+
+(* Testing dependent types: *)
+Inductive indexed : nat -> Type :=
+| bar : indexed O.
+(* MetaCoq Run (rep_gen indexed). *)
 
 Inductive fin : nat -> Set :=
 | F1 : forall {n}, fin (S n)
 | FS : forall {n}, fin n -> fin (S n).
-
 (* MetaCoq Run (rep_gen fin). *)
-
-
-(* Instance Rep_nat : Rep nat := *)
-(*   {| rep _ _ _ := False |}. *)
-(* Instance Rep_list {A} `{Rep A} : Rep (list A) := *)
-(*   {| rep _ _ _ := False |}. *)
-
-(* Check <% forall A `{Rep A}, Rep (list A)%>. *)
-(* Check <% forall A, Rep A -> Rep (list A)%>. *)
-(* MetaCoq Run (o <- tmInferInstance (Some all) (forall A, Rep A -> Rep (list A)) ;; *)
-(*              tmPrint o). *)
-
-
-
-
-Check <%% le %%>.
-(* Let's see it in action: *)
-MetaCoq Run (rep_gen unit).
-Print Rep_unit.
-(* fitting_index g p (enum 0) [] *)
-
-(* MetaCoq Run (rep_gen bool). *)
-(* Print Rep_bool. *)
-
-Print name.
-Check <%% list %%>.
-
-Inductive T (n : nat) (eq : n = 0) : nat -> Type :=
-| C : T n eq (n + n).
-
-Instance Rep_T n eq n' : Rep (T n eq n') :=
-  {| rep g x p :=
-       match x with
-       | C => False
-       end
-  |}.
-
-Check <%% T %%>.
-Check (fun (t : T 0 (eq_refl 0) 0) => match t with C => true end).
-
-Fixpoint rep0 (g : graph) (x : nat) (p : mtype) {struct x} : Prop :=
-  match x with
-  | 0 => fitting_index g p (enum 0) []
-  | S arg0 =>
-      exists p0 : mtype, rep0 g arg0 p0 /\ fitting_index g p (boxed 0 1) [p0]
-  end.
-Instance Rep_nat : Rep nat := @Build_Rep nat rep0.
-
-MetaCoq Run (rep_gen nat).
-Print Rep_nat.
 
 Inductive vec (A : Type) : nat -> Type :=
 | vnil : vec A O
 | vcons : forall n, A -> vec A n -> vec A (S n).
+(* MetaCoq Run (rep_gen vec). *)
 
+
+Inductive param_and_index (a b : nat) : a < b -> Type :=
+| foo : forall (pf : a < b), param_and_index a b pf.
+(* MetaCoq Run (rep_gen param_and_index). *)
+
+
+(*
 Instance Rep_vec (A : Type) (Rep_A : Rep A) (n : nat) : Rep (vec A n) :=
   let fix rep_vec (n : nat) (g : graph) (x : vec A n) (p : mtype) {struct x} : Prop :=
     match x with
@@ -799,18 +910,6 @@ Instance Rep_vec (A : Type) (Rep_A : Rep A) (n : nat) : Rep (vec A n) :=
     end
   in @Build_Rep (vec A n) (rep_vec n).
 
-Inductive fin : nat -> Set :=
-| F1 : forall {n}, fin (S n)
-| FS : forall {n}, fin n -> fin (S n).
-
-Check <%% fin %%>.
-
-(* Inductive T (x : unit) : Type := *)
-(* | C : T x. *)
-(* Check <%% T %%>. *)
-MetaCoq Run (rep_gen fin').
-(* Print Rep_fin'. *)
-
 Instance Rep_fin (n : nat) : Rep (fin n) :=
   let fix rep_fin (n : nat) (g : graph) (x : fin n) (p : mtype) {struct x} : Prop :=
     match x with
@@ -821,59 +920,14 @@ Instance Rep_fin (n : nat) : Rep (fin n) :=
           rep g arg0 p0 /\
           rep_fin arg0 g arg1 p1 /\ fitting_index g p (boxed 1 2) [p0; p1]
     end in @Build_Rep (fin n) (rep_fin n).
+*)
 
-MetaCoq Run (rep_gen fin).
-(* Print Rep_fin. *)
-
-MetaCoq Run (rep_gen list).
-(* Print Rep_list. *)
-
-Inductive rgx : Type :=
-| empty   : rgx
-| epsilon : rgx
-| literal : string -> rgx
-| or      : rgx -> rgx -> rgx
-| and     : rgx -> rgx -> rgx
-| star    : rgx -> rgx.
-
-(* MetaCoq Run (rep_gen rgx). *)
-(* Print Rep_rgx. *)
-
-Inductive R1 :=
-| r1 : R1
-with R2 :=
-| r2 : R2.
-
-(* MetaCoq Run (rep_gen R1). *)
-(* Print Rep_R1. *)
-
-Inductive T1 :=
-| c1 : T2 -> T1
-with T2 :=
-| c2 : T1 -> T2.
-
-MetaCoq Run (rep_gen T1).
-(* Print Rep_T1. *)
-
-Inductive param_and_index (a b : nat) : a < b -> Type :=
-| foo : forall (pf : a < b), param_and_index a b pf.
-
-(* MetaCoq Run (rep_gen param_and_index). *)
-(* Print Rep_param_and_index. *)
-
-Inductive indexed : nat -> Type :=
-| bar : indexed O.
-
-(* MetaCoq Run (rep_gen indexed). *)
-(* Print Rep_indexed. *)
-
-
+(* Testing nested types: *)
 (* "Haskell Programming with Nested Types: A Principled Approach", Johann and Ghani, 2009 *)
 Inductive lam (A : Type) : Type :=
 | variable : A -> lam A
 | app : lam A -> lam A -> lam A
 | abs : lam (option A) -> lam A.
-
 
 Inductive digit (A : Type) : Type :=
 | one : A -> digit A
