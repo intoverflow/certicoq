@@ -1055,10 +1055,10 @@ Section Post.
         + constructor.
         + repeat normalize_sets. intros Hc. inv Hc. inv H0.
           eapply Hnot in H1. destruct H1.
-          (* xs is subset of S1 and k1 is disjoint from S1 *)
-          admit.
-          (* ks is subset of S1 and k1 is disjoint from S1 *)
-          admit.
+          eapply H4 in H1. inv_setminus. inv Hdis1.
+          specialize H1 with (x := k1). eauto.
+          eapply H5 in H0. inv_setminus. inv Hdis1.
+          specialize H1 with (x := k1). eauto.
         + repeat normalize_sets.
           eapply Union_Disjoint_r.
           eapply Disjoint_Included_r. eassumption. now sets.
@@ -1069,9 +1069,21 @@ Section Post.
         + repeat normalize_sets.
           eapply Union_Disjoint_l. now xsets. now sets.
         + repeat normalize_sets. xsets.
-        + repeat normalize_sets. admit.
-        + admit.
-        + admit.
+        + repeat normalize_sets.
+          eapply Union_Disjoint_r; sets.
+          eapply Disjoint_Singleton_r. intros Hc. inv Hc; eauto.
+          eapply H11 in H0. inv_setminus. inv Hdis2.  
+          specialize H0 with (x := k2). eauto.
+          eapply H12 in H0. inv_setminus. inv Hdis2.
+          specialize H1 with (x := k2). eauto.
+          eapply Disjoint_Included_l with (s3 := S3).
+          eapply Union_Included. eapply Included_trans. sets. now sets.
+          eapply Included_trans. sets. now sets.
+          now sets. 
+        + repeat normalize_sets.
+          eapply Disjoint_Included_r. eassumption. xsets. 
+        + repeat normalize_sets.
+          eapply Disjoint_Included_r. eassumption. xsets.
         + intros rho3 rho4 m1 Henv2.
           { eapply preord_exp_constr_compat.
             - eapply Hprops.
@@ -1090,16 +1102,25 @@ Section Post.
               + assert (Heq: k2 = ((id {k1 ~> k2}) <{ xs ~> xs0 }>) k1).
                 { rewrite extend_lst_gso.
                   rewrite extend_gss. reflexivity.
-                  (* xs is subset of S1 and k1 is disjoint from S1 *)
-                  admit. }
+                  intros Hc. eapply H4 in Hc. inv_setminus.  
+                  inv Hdis1. specialize H2 with (x := k1). sets. }
                 rewrite Heq.
                 eapply preord_env_P_inj_set_not_In_P_l.
                 eapply preord_env_P_inj_set_not_In_P_r.
                 eapply preord_env_P_inj_monotonic.
                 assert (Hlt: (m2 <= m1)%nat). { lia. } eassumption.
                 eassumption.
-                admit.
-                admit. 
+                intros Hc. eapply image_extend_lst_Included in Hc.
+                inv Hc.
+                eapply image_extend_Included' in H0.
+                rewrite image_id in H0.
+                rewrite Setminus_Union_distr, Setminus_Same_set_Empty_set in H0.
+                repeat normalize_sets. inv H0. inv H1. inv H0. sets.
+                inv Hdis2. specialize H0 with (x := x0). sets. 
+                eapply H11 in H0. inv_setminus. sets.
+                erewrite !cps_cvt_rel_exps_len; eauto.
+                intros Hc. inv Hc. eapply Hdis1. sets.
+                eapply H4 in H0. inv_setminus. sets.
                 left. now sets. 
               + constructor. 2: { constructor. }
                 eapply preord_var_env_extend_eq.
