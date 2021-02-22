@@ -444,74 +444,78 @@ Section Corresp.
       eapply bind_triple.
       
       eapply frame_rule. eapply frame_rule. 
-      eapply get_named_spec.
-
-      intros k1 w1. simpl.
-      eapply pre_curry_l; intros Hinx.
-      eapply pre_curry_l; intros Hr.
-      eapply pre_curry_l; intros Hk.
-      
-      eapply bind_triple.
-      
-      eapply frame_rule. eapply frame_rule.
       eapply get_named_str_lst_spec.
 
-      intros xs w2. simpl.
-      eapply pre_curry_l; intros Hink.
-      eapply pre_curry_l; intros Hlt'.
-      eapply pre_curry_l; intros Hnd.
-      eapply pre_curry_l; intros Hlen.
-      eapply pre_curry_l; intros Hsub.
+      admit.
+      (* Commenting out *)
+      (* eapply get_named_str_fresh. *)
+      
+      (* intros k1 w1. simpl. *)
+      (* eapply pre_curry_l; intros Hinx. *)
+      (* eapply pre_curry_l; intros Hr. *)
+      (* eapply pre_curry_l; intros Hk. *)
+      
+      (* eapply bind_triple. *)
+      
+      (* eapply frame_rule. eapply frame_rule. *)
+      (* eapply get_named_str_lst_spec. *)
+
+      (* intros xs w2. simpl. *)
+      (* eapply pre_curry_l; intros Hink. *)
+      (* eapply pre_curry_l; intros Hlt'. *)
+      (* eapply pre_curry_l; intros Hnd. *)
+      (* eapply pre_curry_l; intros Hlen. *)
+      (* eapply pre_curry_l; intros Hsub. *)
       
 
-      eapply bind_triple.
-      eapply frame_rule. eapply frame_rule.
+      (* eapply bind_triple. *)
+      (* eapply frame_rule. eapply frame_rule. *)
 
-      eapply get_named_str_lst_spec.
+      (* eapply get_named_str_lst_spec. *)
 
-      intros xs' w3. simpl.
-      eapply pre_curry_l; intros Hsub'.
-      eapply pre_curry_l; intros Hlt''.
-      eapply pre_curry_l; intros Hnd'.
-      eapply pre_curry_l; intros Hlen'.
-      eapply pre_curry_l; intros Hsub''.
+      (* intros xs' w3. simpl. *)
+      (* eapply pre_curry_l; intros Hsub'. *)
+      (* eapply pre_curry_l; intros Hlt''. *)
+      (* eapply pre_curry_l; intros Hnd'. *)
+      (* eapply pre_curry_l; intros Hlen'. *)
+      (* eapply pre_curry_l; intros Hsub''. *)
 
-      eapply bind_triple.
-      eapply frame_rule. eapply frame_rule.
+      (* eapply bind_triple. *)
+      (* eapply frame_rule. eapply frame_rule. *)
 
-      eapply get_named_str_lst_spec.
+      (* eapply get_named_str_lst_spec. *)
       
-      intros ks' w4. simpl.
-      eapply pre_curry_l; intros Hsub1.
-      eapply pre_curry_l; intros Hlt1.
-      eapply pre_curry_l; intros Hnd1.
-      eapply pre_curry_l; intros Hlen1.
-      eapply pre_curry_l; intros Hsub2.
+      (* intros ks' w4. simpl. *)
+      (* eapply pre_curry_l; intros Hsub1. *)
+      (* eapply pre_curry_l; intros Hlt1. *)
+      (* eapply pre_curry_l; intros Hnd1. *)
+      (* eapply pre_curry_l; intros Hlen1. *)
+      (* eapply pre_curry_l; intros Hsub2. *)
       
-      eapply bind_triple.
-      eapply frame_rule. eapply frame_rule.
+      (* eapply bind_triple. *)
+      (* eapply frame_rule. eapply frame_rule. *)
 
-      assert (Hlenes : Datatypes.length (exps_as_list e) = N.to_nat (exps_length e)).
-      { clear. induction e; simpl. congruence.
-        rewrite IHe.  
-        destruct (exps_length e0). lia.
-        destruct p; lia. }
+      (* assert (Hlenes : Datatypes.length (exps_as_list e) = N.to_nat (exps_length e)). *)
+      (* { clear. induction e; simpl. congruence. *)
+      (*   rewrite IHe.   *)
+      (*   destruct (exps_length e0). lia. *)
+      (*   destruct p; lia. } *)
       
-      eapply H. eassumption.
+      (* eapply H. eassumption. *)
 
-      rewrite map_length in *. rewrite Hlen'. eassumption.
-      rewrite map_length in *. rewrite Hlen1. eassumption.
+      (* rewrite map_length in *. rewrite Hlen'. eassumption. *)
+      (* rewrite map_length in *. rewrite Hlen1. eassumption. *)
       
-      intros e' w6. simpl. 
+      (* intros e' w6. simpl.  *)
 
-      eapply return_triple. intros. destructAll.
+      (* eapply return_triple. intros. destructAll. *)
       
-      eexists. split; eauto. econstructor; eauto.
+      (* eexists. split; eauto. econstructor; eauto. *)
       
-      rewrite Hlen. rewrite map_length.
+      (* rewrite Hlen. rewrite map_length. *)
 
-      clear. induction e; eauto. simpl. destruct (exps_length e0); simpl; try lia. 
-      destruct p; lia.
+      (* clear. induction e; eauto. simpl. destruct (exps_length e0); simpl; try lia.  *)
+    (* destruct p; lia. *)
 
     - (* Match_e *)
       eapply bind_triple. eapply pre_post_copy. unfold cps_cvt; simpl.

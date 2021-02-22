@@ -1457,11 +1457,18 @@ Section Post.
         eapply f_eq_subdomain_extend_lst. eassumption.
         rewrite Setminus_Union_distr.
         rewrite Setminus_Same_set_Empty_set.
-        repeat normalize_sets. admit.
+        rewrite FromList_nil in Hdis at 1.  rewrite FromList_nil in Hdis at 1.
+        rewrite Setminus_Disjoint.
+        normalize_sets. 
+        admit.
+        eapply Union_Disjoint_l.
+        rewrite FromList_nil in Hnot at 1. rewrite FromList_nil in Hnot at 1.
+        repeat normalize_sets. sets.
+        repeat normalize_sets. sets. 
         now sets. 
           
       - (* econs *) 
-        intros e IHe es IHes e1 e2 m k1 k2 vars1 vars2 xs1 xs2 ys1 ys2 ks1 ks2
+        intros e IHe es IHes e1 e2 m k1 k2 vars1 vars2 xs1 xs2 ks1 ks2 ys1 ys2
                rho1 rho2 e_cont1 e_cont2 S1 S2 S3 S4
                Hm He1 He2 Hdup1 Hdup2 Hdup3 Hdup4 Hnd5  Hnot Hdis Hlen Hlen' Hlen''
                Hdis1 Hdis2 Hdis3 Hdis4 Hdis5 Hdis6 He_cont Henv.
@@ -1504,24 +1511,36 @@ Section Post.
                     edestruct (H j) as (_ & Hexps & _ & _ ). lia.
                     rewrite <- MCList.app_tip_assoc in He_cont.
                     inv Hdup2. inv Hdup3. inv Hnd5.
-                    repeat normalize_sets.
-                    eapply Hexps with (ys1 := ks1 ++ [x1]) (ys2 := ks2 ++ [x0]). 
+                    repeat normalize_sets. 
+                    eapply Hexps with (k1 := k1) (ys1 := ys1 ++ [x1])
+                                      (ys2 := ys2 ++ [x0]). 
                     - reflexivity.
                     - eassumption.
                     - eassumption.
                     - eassumption.
                     - eassumption.
                     - eassumption.
-                    - admit.
+                    - eapply NoDup_app. eassumption.
+                      econstructor. intros Hc. inv Hc. econstructor.
+                      rewrite FromList_singleton.
+                      eapply Disjoint_Singleton_r.
+                      intros Hc. inv Hdis3.
+                      specialize H1 with (x := x1).
+                      eapply H1. econstructor.
+                      left. left. econstructor.
+                      eassumption.
                     - eassumption.
 
                     - repeat normalize_sets. intros Hc; inv Hc; eauto.
                       eapply Hnot. inv H1; eauto. inv H2; eauto.
-                      admit.
+                      inv H2.
+                      + left. right. eassumption. 
+                      + inv H1. left. left. right. left. econstructor. 
                     - repeat normalize_sets. xsets.
                     - congruence.
                     - inv Hlen'. reflexivity.
-                    - admit.
+                    - rewrite !app_length. simpl. f_equal.
+                      eassumption. 
                     - repeat normalize_sets. eapply Disjoint_Included_r.
                       eapply cps_cvt_exp_subset. eassumption. repeat normalize_sets.
                       xsets.
@@ -1530,20 +1549,109 @@ Section Post.
                       xsets.
                     - repeat normalize_sets.
                       eapply Union_Disjoint_l; sets.
-                      admit. 
-                    - repeat normalize_sets. 
-                      admit.
+                      eapply Union_Disjoint_r; sets.
+                      eapply Disjoint_Singleton_r. intros Hc. inv Hdis5.
+                      specialize H1 with (x := x1). eapply H1.
+                      econstructor. left. econstructor.
+                      right. eassumption.
+                    - repeat normalize_sets.
+                      rewrite Union_assoc.
+                      eapply Union_Disjoint_r.
+                      eapply Disjoint_Included_l.
+                      2: { eapply Hdis4. } 
+                      sets.
+                      eapply Union_Disjoint_l.
+                      eapply Disjoint_Singleton_r. eassumption.
+                      eapply Disjoint_Singleton_r. intros Hc. inv Hdis6.
+                      specialize H1 with (x := x0). eapply H1.
+                      econstructor. left. econstructor.
+                      right. eassumption.
                     - repeat normalize_sets.
                       eapply Disjoint_Included; [ | | eapply Hdis5 ]; sets.
                     - repeat normalize_sets.
                       eapply Disjoint_Included; [ | | eapply Hdis6 ]; sets.
                     - intros rho3 rho4 m1 Henv2. 
                       eapply He_cont.
-                      (* need ks1 ++ [x1], and ks2 ++ [x0]? *)
-                      assert (Happ: ks2 ++ x0 :: xs0 = (ks2 ++ [x0]) ++ xs0).
+                      assert (Happ: ys2 ++ x0 :: xs0 = (ys2 ++ [x0]) ++ xs0).
                       {  rewrite app_cons. reflexivity. } 
                       rewrite Happ. eassumption.
-                    - admit.
+                    - repeat normalize_sets. rewrite Union_assoc.
+                      assert (Hfeq: (((id {k1 ~> k2}) <{ vars1 ~> vars2 }>)
+                                     <{ ys1 ++ [x1] ~> ys2 ++ [x0] }>) =
+                                    ((((id {k1 ~> k2}) <{ vars1 ~> vars2 }>)
+                                      <{ ys1 ~> ys2 }>) {x1 ~> x0})).
+                      { admit. }
+                      rewrite Hfeq. 
+                      eapply preord_env_P_inj_set_alt; eauto.
+                      + rewrite Setminus_Union_distr.
+                        rewrite Setminus_Same_set_Empty_set.
+                        repeat normalize_sets.
+                        eapply preord_env_P_inj_set_not_In_P_l.
+                        eapply preord_env_P_inj_set_not_In_P_r.
+                        rewrite <- Included_Setminus_Disjoint.
+                        eapply preord_env_P_inj_monotonic. 2: { eassumption. }
+                        lia.
+                        eapply Disjoint_Singleton_r. intros Hc. inv Hc. inv H1.
+                        eapply Hnot. inv H2. left. left. right. left. constructor.
+                        inv Hdis. specialize H1 with (x := x1). eapply H1.
+                        constructor. eassumption.
+                        left. left. left. constructor.
+                        inv Hdis3. specialize H2 with (x := x1).
+                        eapply H2. constructor.
+                        left. left. constructor.
+                        eassumption.
+                        intros Hc.
+                        rewrite <- Included_Setminus_Disjoint in Hc.
+                        eapply image_extend_lst_Included in Hc; eauto.
+                        rewrite Setminus_Union_distr in Hc.
+                        rewrite Setminus_Same_set_Empty_set in Hc.
+                        repeat normalize_sets.
+                        admit. 
+                        eapply Disjoint_Singleton_r. intros Hc'. inv Hc'. inv H1.
+                        eapply Hnot. inv H2. left. left. right. left. constructor.
+                        inv Hdis. specialize H1 with (x := x1). eapply H1.
+                        constructor. eassumption.
+                        left. left. left. constructor.
+                        inv Hdis3. specialize H2 with (x := x1).
+                        eapply H2. constructor.
+                        left. left. constructor.
+                        eassumption.
+                        rewrite <- Included_Setminus_Disjoint.
+                        intros Hc. inv Hc. inv H1.
+                        eapply Hnot. inv H2. right. left. constructor.
+                        inv Hdis. specialize H1 with (x := k0). sets. 
+                        inv Hdis3. specialize H2 with (x := k0). sets. 
+                        eapply Disjoint_Singleton_r. intros Hc'. inv Hc'. inv H1.
+                        eapply Hnot. inv H2. left. left. right. left. constructor.
+                        inv Hdis. specialize H1 with (x := x1). eapply H1.
+                        constructor. eassumption.
+                        left. left. left. constructor.
+                        inv Hdis3. specialize H2 with (x := x1).
+                        eapply H2. constructor.
+                        left. left. constructor.
+                        eassumption.
+                      + inv Hall. eassumption.
+                      + rewrite Setminus_Union_distr.
+                        rewrite Setminus_Same_set_Empty_set.
+                        repeat normalize_sets.
+                        rewrite <- Included_Setminus_Disjoint.
+                        intros Hc. eapply image_extend_lst_Included in Hc; eauto.
+                        rewrite Setminus_Union_distr in Hc.
+                        rewrite Setminus_Same_set_Empty_set in Hc.
+                        repeat normalize_sets.
+                        admit.
+                        constructor. intros x Hc. inv Hc.
+                        inv H2. inv H1. inv H2.
+                        eapply Hnot. inv H1.
+                        left. left. right. left. constructor.
+                        inv Hdis. specialize H2 with (x0 := x).
+                        eapply H2. constructor.
+                        eassumption.
+                        left. left. left. constructor.
+                        inv Hdis3. specialize H1 with (x0 := x).
+                        eapply H1. constructor.
+                        left. left. constructor.
+                        eassumption. 
                     - lia. }
                 * rewrite Setminus_Union_distr. rewrite Setminus_Same_set_Empty_set.
                   repeat normalize_sets.
