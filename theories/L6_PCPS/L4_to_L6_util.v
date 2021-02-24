@@ -1451,21 +1451,27 @@ Section Post.
                Hdis1 Hdis2 Hdis3 Hdis4 Hdis5 Hdis6 He_cont Henv.
         inv He1; inv He2.
         eapply He_cont. rewrite !app_nil_r.
-        eapply preord_env_P_inj_antimon.
         eapply preord_env_P_inj_f_eq_subdomain.
+        eapply preord_env_P_inj_antimon.
         eapply Henv.
+        now sets.
+        assert (Hfeq: (((id {k1 ~> k2}) <{ vars1 ~> vars2 }>) <{ ys1 ~> ys2 }>) =
+                      (((id {k1 ~> k2}) <{ ys1 ~> ys2 }>) <{ vars1 ~> vars2 }>)).
+        { admit. }
+        rewrite Hfeq.
+        rewrite f_eq_subdomain_extend_lst_Disjoint.
         eapply f_eq_subdomain_extend_lst. eassumption.
         rewrite Setminus_Union_distr.
-        rewrite Setminus_Same_set_Empty_set.
-        rewrite FromList_nil in Hdis at 1.  rewrite FromList_nil in Hdis at 1.
+        rewrite Setminus_Same_set_Empty_set. normalize_sets.
         rewrite Setminus_Disjoint.
-        normalize_sets. 
-        admit.
-        eapply Union_Disjoint_l.
-        rewrite FromList_nil in Hnot at 1. rewrite FromList_nil in Hnot at 1.
+        econstructor.
+        eapply Disjoint_Singleton_l.
+        rewrite FromList_nil in Hnot at 1. rewrite FromList_nil in Hnot at 1.  
         repeat normalize_sets. sets.
-        repeat normalize_sets. sets. 
-        now sets. 
+        eapply Union_Disjoint_r. 
+        rewrite FromList_nil in Hnot at 1. rewrite FromList_nil in Hnot at 1. 
+        repeat normalize_sets. sets.
+        sets. 
           
       - (* econs *) 
         intros e IHe es IHes e1 e2 m k1 k2 vars1 vars2 xs1 xs2 ks1 ks2 ys1 ys2
@@ -1580,7 +1586,10 @@ Section Post.
                                      <{ ys1 ++ [x1] ~> ys2 ++ [x0] }>) =
                                     ((((id {k1 ~> k2}) <{ vars1 ~> vars2 }>)
                                       <{ ys1 ~> ys2 }>) {x1 ~> x0})).
-                      { admit. }
+                      { (* rewrite extend_lst_app with *)
+                        (*     (f := ((id {k1 ~> k2}) <{ vars1 ~> vars2 }>)) *)
+                        (*     (xs1 := ys1) (xs' := [x1]). *)
+                        admit. }
                       rewrite Hfeq. 
                       eapply preord_env_P_inj_set_alt; eauto.
                       + rewrite Setminus_Union_distr.
