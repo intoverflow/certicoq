@@ -1,5 +1,5 @@
 From MetaCoq.Template Require Import Universes.
-From MetaCoq Require Export Template.BasicAst Template.Ast.
+From MetaCoq Require Import Template.BasicAst Template.Ast.
 From MetaCoq Require Export Erasure.EAst.
 Require Import Coq.Strings.String.
 Require Import Coq.Arith.Peano_dec.
@@ -13,6 +13,8 @@ Require Import Common.classes.
 
 Open Scope list_scope.
 Set Implicit Arguments.
+
+Ltac inv H := inversion H; subst; clear H.
 
 (** Fix arguments scope for [mkInd]. *)
 Arguments mkInd _%string _%nat.

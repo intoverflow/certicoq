@@ -16,11 +16,11 @@ Import MonadNotation.
 
 Definition prim_env := M.t (kername * string (* C definition *) * bool (* tinfo *) * nat (* arity *)). 
 
-Let L6env : Type := eval.prims * prim_env * ctor_env * ctor_tag * ind_tag * name_env * fun_env * eval.env.
+Definition L6env : Type := eval.prims * prim_env * ctor_env * ctor_tag * ind_tag * name_env * fun_env * eval.env.
 
-Let L6term : Type := cps.exp.
-Let L6val : Type := cps.val.
-Let L6_FullTerm : Type := L6env * L6term.
+Definition L6term : Type := cps.exp.
+Definition L6val : Type := cps.val.
+Definition L6_FullTerm : Type := L6env * L6term.
 
 Section IDENT.
   
@@ -197,7 +197,7 @@ Section IDENT.
       let c_data :=
           let next_var :=
               ((identifiers.max_var e0 1) + 1)%positive in
-          let next_fun_tag := M.fold (fun cm => fun ft => fun _ => Pos.max cm ft) fenv 1 + 1 in
+          let next_fun_tag := (M.fold (fun cm => fun ft => fun _ => Pos.max cm ft) fenv 1 + 1)%positive in
           pack_data next_var ctag itag next_fun_tag cenv fenv nenv (M.empty nat) nil
       in
       let (res, c_data') := anf_pipeline e0 c_data in
@@ -207,7 +207,7 @@ Section IDENT.
       | compM.Ret e =>
         let (_, ctag, itag, ftag, cenv, fenv, nenv, _, log) := c_data' in
         (Ret (prims, cenv, ctag, itag, nenv, fenv, M.empty _, e), log_to_string log)
-      end.
+      end%positive.
     
   End Pipeline.
 
