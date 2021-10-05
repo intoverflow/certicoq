@@ -40,7 +40,7 @@ Definition find_global_decl_arrity (gd : Ast.global_decl) : error nat :=
 
 Fixpoint find_prim_arrity (env : Ast.global_env) (pr : kername) : error nat :=
   match env with
-  | [] => Err ("Constant " ++ string_of_kername pr ++ " not found in environment")
+  | [] => Ret 0 (* Err ("Constant " ++ string_of_kername pr ++ " not found in environment") *)
   | (n, gd) :: env =>
     if eq_kername pr n then find_global_decl_arrity  gd
     else find_prim_arrity env pr
