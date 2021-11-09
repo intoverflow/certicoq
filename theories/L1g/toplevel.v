@@ -7,7 +7,7 @@ From ExtLib Require Import Monads.
 
 Import MonadNotation.
 
-Definition erase_PCUIC : CertiCoqTrans Ast.program (global_context * term) :=
+Definition erase_PCUIC : CertiCoqTrans MetaCoq.Template.Ast.Env.program (global_context * term) :=
   fun src =>
     debug_msg "Translating from Template to Lbox" ;;
     (LiftErrorCertiCoqTrans "Lbox" L1g.compile.erase src).
