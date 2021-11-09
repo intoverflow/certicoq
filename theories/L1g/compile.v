@@ -1,10 +1,10 @@
 From ExtLib Require Import Monads.
 Import MonadNotation.
 
-Require Import Coq.Lists.List.
-Require Import Coq.Strings.String.
-Require Import Coq.micromega.Lia.
-Require Import Coq.Bool.Bool.
+From Coq Require Import Lists.List.
+From Coq Require Import Strings.String.
+From Coq Require Import micromega.Lia.
+From Coq Require Import Bool.Bool.
 Require Import FunInd.
 Require Import Common.Common.
 
@@ -298,17 +298,19 @@ Fixpoint program_Pgm_aux (g:global_declarations) : environ Term :=
   | d :: g => cons (MCProd.on_snd (trans_global_decl g) d) (program_Pgm_aux g)
   end.
 
-From MetaCoq Require Import SafeChecker.SafeTemplateChecker MCProd.
+From MetaCoq Require Import MCProd.
+From MetaCoq.SafeChecker Require Import SafeTemplateChecker.
 From MetaCoq.SafeChecker Require Import PCUICSafeChecker.
 From MetaCoq.PCUIC Require Import TemplateToPCUIC.
-From MetaCoq.Erasure Require Import ErasureFunction Erasure.
+From MetaCoq.Erasure Require Import ErasureFunction.
+From MetaCoq.Erasure Require Import Erasure.
 Require Import Common.classes Common.Pipeline_utils Common.compM.
 
 Existing Instance PCUICErrors.envcheck_monad.
 
 Open Scope string_scope.
      
-Definition erase (p:Template.Ast.program) : error (global_context × term) :=
+Definition erase (p: MetaCoq.Template.Ast.Env.program) : error (global_context × term) :=
   let p := fix_program_universes p in
   match erase_template_program p (todo "wf_env") (todo "welltyped") with
     | (gc, t) => Ret (gc, t)
