@@ -320,7 +320,10 @@ Proof.
 Qed.
 
 Lemma trans_fixes_pres_dlength f : dlength (trans_fixes f) = dlength f.
-Proof. induction f; simpl; auto. Qed.
+Proof.
+  induction f as [ |n t x f IHf]; try reflexivity.
+  simpl. now rewrite IHf.
+Qed.
 
 Lemma instantiate_hom :
   (forall bod arg n, WFTrm (trans arg) 0 ->
