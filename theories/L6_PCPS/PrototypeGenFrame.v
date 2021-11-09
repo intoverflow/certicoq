@@ -446,22 +446,18 @@ Definition inductives_of_env (decls : global_env) : ind_info :=
 Fixpoint mangle (inds : ind_info) (e : term) : GM string :=
   match e with
   | tRel n => raise "mangle: relative binders not allowed"
-  | tApp tycon tys =>
-    let! tycon := mangle inds tycon in
-    foldlM
-      (fun tys ty =>
-        let! ty := mangle inds ty in
-        ret (tys +++ "_" +++ ty))
-      tycon tys
-  | tInd ind n =>
-    let! '(mbody, _, _) := findM ind.(inductive_mind) inds in
-    let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-    ret body.(ind_name)
-  | tConstruct ind n _ =>
-    let! '(mbody, _, _) := findM ind.(inductive_mind) inds in
-    let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-    let! '(c, _, _) := nthM_nat n body.(ind_ctors) in
-    ret c
+  | tApp tycon tys
+      => let! tycon := mangle inds tycon
+      in foldlM (fun tys ty => let! ty := mangle inds ty in ret (tys +++ "_" +++ ty)) tycon tys
+  | tInd ind _
+      => let! '(mbody, _, _) := findM ind.(inductive_mind) inds
+      in let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies)
+      in ret body.(ind_name)
+  | tConstruct ind n _
+      => let! '(mbody, _, _) := findM ind.(inductive_mind) inds
+      in let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies)
+      in let! c := nthM_nat n body.(ind_ctors)
+      in ret c.(cstr_name)
   | tConst (_, name) _ => ret name
   | e => raise ("mangle: Unrecognized type: " +++ string_of_term e)
   end.
@@ -477,8 +473,8 @@ Fixpoint decompose_sorts (ty : term) : list aname × term :=
 Definition tm_type_of (inds : ind_info) (ind : inductive) (n : nat) (pars : list term) : GM term :=
   let! '(mbody, inductives, _) := findM ind.(inductive_mind) inds in
   let! body := nthM_nat ind.(inductive_ind) mbody.(ind_bodies) in
-  let! '(c, cty, arity) := nthM_nat n body.(ind_ctors) in
-  let '(_, cty) := decompose_sorts cty in
+  let! c := nthM_nat n body.(ind_ctors) in
+  let '(_, cty) := decompose_sorts c.(cstr_type) in
   let ind_env := (rev pars ++ rev_map (fun ind => tInd ind []) inductives)%list in
   ret (subst0 ind_env cty).
 
@@ -576,7 +572,7 @@ Definition type0 := tSort Universe.type0.
 Definition func x t e := tLambda (nNamed x) t e.
 Definition lam t e := tLambda nAnon t e.
 
-Definition gen_univ_univD (qual : modpath) (typename : kername) (g : mind_graph_t)
+Program Definition gen_univ_univD (qual : modpath) (typename : kername) (g : mind_graph_t)
   : ((mutual_inductive_entry × Map string N) × kername) × term :=
   let ty_u := snd typename +++ "_univ" in
   let mgTypes := list_of_map g.(mgTypes) in
@@ -593,9 +589,11 @@ Definition gen_univ_univD (qual : modpath) (typename : kername) (g : mind_graph_
   let univ := tInd univ_ind [] in
   let body :=
     func "u" univ
-      (tCase ((univ_ind, O), Relevant)
-        (lam univ type0)
-        (tRel 0) (map (fun '(_, ty) => (O, ty)) mgTypes))
+      (tCase {| ci_ind := univ_ind ; ci_npar := O ; ci_relevance := Relevant |}
+        (* (lam univ type0) *)
+        _
+        (tRel 0)
+        (map (fun '(_, ty) => {| bcontext := [] ; bbody := ty |}) mgTypes))
   in ({|
     mind_entry_record := None;
     mind_entry_finite := Finite;
@@ -605,6 +603,9 @@ Definition gen_univ_univD (qual : modpath) (typename : kername) (g : mind_graph_
     mind_entry_template := false;
     mind_entry_variance := None;
     mind_entry_private := None |}, ty_ns, (qual, snd typename +++ "_univD"), body).
+Next Obligation.
+admit.
+Admitted.
 
 Definition holes_of {A} (xs : list A) : list ((list A × A) × list A) :=
   let fix go l xs :=
@@ -682,7 +683,7 @@ Definition gen_frame_t (qual : modpath) (typename : kername) (inds : ind_info) (
     mind_entry_variance := None;
     mind_entry_private := None |}.
 
-Definition gen_frameD (qual : modpath) (typename : kername) (univD_kername : kername) (fs : list frame)
+Program Definition gen_frameD (qual : modpath) (typename : kername) (univD_kername : kername) (fs : list frame)
   : kername × term :=
   let univ_ty := tInd (mkInd (qual, snd typename +++ "_univ") O) [] in
   let univD ty := mkApps (tConst univD_kername []) [ty] in
@@ -693,16 +694,23 @@ Definition gen_frameD (qual : modpath) (typename : kername) (univD_kername : ker
     let ctr_arity := #|lefts ++ rights| in
     let indices := rev (seq (1 + #|rights|) #|lefts|) ++ [O] ++ rev (seq 1 #|rights|) in
     let add_arg arg_ty body := lam arg_ty body in
-    (ctr_arity, fold_right lam (fold_right lam (lam frame (mkApps constr (map tRel indices))) rights) lefts)
+    {|
+      bcontext := [];
+      bbody := fold_right lam (fold_right lam (lam frame (mkApps constr (map tRel indices))) rights) lefts;
+    |}
   in
   let body :=
     func "A" univ_ty (func "B" univ_ty (func "h" frame_ty
-      (tCase ((frame_ind, O), Relevant)
-        (func "A" univ_ty (func "B" univ_ty (func "h" frame_ty
-          (fn (univD (tRel 2)) (univD (tRel 2))))))
-        (tRel O) (map mk_arm fs))))
+      (tCase {| ci_ind := frame_ind ; ci_npar := O ; ci_relevance := Relevant |}
+        (* (func "A" univ_ty (func "B" univ_ty (func "h" frame_ty (fn (univD (tRel 2)) (univD (tRel 2)))))) *)
+        _
+        (tRel O)
+        (map mk_arm fs))))
   in
   ((qual, snd typename +++ "_frameD"), body).
+Next Obligation.
+admit.
+Admitted.
 
 Definition kername_of_const (s : string) : TemplateMonad kername :=
   refs <- tmLocate s ;;
