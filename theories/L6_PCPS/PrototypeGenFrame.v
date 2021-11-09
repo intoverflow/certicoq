@@ -323,7 +323,10 @@ Compute (string_of_N 100).
 Compute (string_of_N 200).
 Compute (string_of_N 350).
 
-Notation "'GM'" := (stateT N (sum string)).
+Notation "'GM'" := (stateT N (Datatypes.sum string)).
+
+Existing Instance Monad_either.
+Existing Instance Monad_stateT.
 
 Definition fresh (prefix : string) : GM string :=
   let! n := get in
