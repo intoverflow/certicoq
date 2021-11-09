@@ -2206,16 +2206,20 @@ Lemma subst_env_aux_strip_lam e n k t :
   (snd (strip_lam n (subst_env_aux e k t))).
 Proof.
   revert n t; induction e; simpl; intros; trivial.
-  rewrite <- IHe. f_equal.
-  generalize (snd a). intros; clear IHe a.
-  revert k t e0 H; induction n; simpl; intros; trivial.
-  destruct t; simpl in H; try discriminate.
-  rewrite snd_strip_lam.
-  simpl. rewrite snd_strip_lam.
-  specialize (IHn (1 + k) _ e0 H).
-  rewrite <- IHn. equaln.
+  rewrite <- IHe.
+  {
+    f_equal.
+    generalize (snd a). intros; clear IHe a.
+    revert k t e0 H; induction n; simpl; intros; trivial.
+    destruct t; simpl in H; try discriminate.
+    rewrite snd_strip_lam.
+    simpl. rewrite snd_strip_lam.
+    specialize (IHn (1 + k) _ e0 H).
+    rewrite <- IHn. equaln.
+  }
   clear -H.
-  revert t k H; induction n; intros; destruct t; simpl in *; eauto.
+  revert t k H; induction n as [ |n IHn]; intros t k h ; try reflexivity.
+  destruct t ; now simpl in *.
 Qed.
 
 Lemma exps_length_trans f k a : exps_length (trans_args f k a) = N.of_nat (tlength a).
