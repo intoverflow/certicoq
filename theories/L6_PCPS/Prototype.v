@@ -76,11 +76,25 @@ Local Notation "e1 ;; e2" := (ExtLib.Structures.Monad.bind e1 (fun _ => e2)).
 Local Notation "x <- c1 ;; c2" := (ExtLib.Structures.Monad.bind c1 (fun x => c2)).
 Local Notation "e1 >>= e2" := (ExtLib.Structures.Monad.bind e1 e2).
 
-Program Definition named_of (Γ : list string) (tm : term) : GM term :=
+Definition named_of (Γ : list string) (tm : term) : GM term :=
   let fix go (n : nat) (Γ : list string) (tm : term) : GM term :=
     match n with O => raise "named_of: OOF" | S n =>
       let go := go n in
-      let go_mfix mfix : GM (mfixpoint term) :=
+      let go_predicate (p : predicate term) : GM (predicate term) :=
+          pp' <- mapM (go Γ) (pparams p) ;;
+          pr' <- go Γ (preturn p) ;;
+          ret {| puinst := puinst p
+              ; pparams := pp'
+              ; pcontext := pcontext p
+              ; preturn := pr'
+              |} in
+      let go_branch (p : branch term) : GM (branch term) :=
+          Γ' <- mapM add_sigils (rev (bcontext p)) ;;
+          bb' <- go (Γ' ++ Γ) (bbody p) ;;
+          ret {| bcontext := bcontext p
+              ; bbody := bb'
+              |} in
+    let go_mfix mfix : GM (mfixpoint term) :=
         let! names := mapM (fun d => add_sigils d.(dname)) mfix in
         let Γ' := rev names ++ Γ in
         mapM
@@ -110,18 +124,11 @@ Program Definition named_of (Γ : list string) (tm : term) : GM term :=
       | tConst c u => ret tm
       | tInd ind u => ret tm
       | tConstruct ind idx u => ret tm
-      | tCase ind_and_nbparams type_info discr branches (* TODO(tcarstens): check this *)
-          => go_pparams <- mapM (go Γ) (pparams type_info)
-          ;; go_preturn <- go Γ (preturn type_info)
-          ;; go_type_info <- ret {|
-              puinst := puinst type_info;
-              pparams := go_pparams;
-              pcontext := pcontext type_info;
-              preturn := go_preturn;
-            |}
-          ;; go_discr <- go Γ discr
-          ;; go_branches <- mapM (fun br => go Γ (bbody br) >>= fun t' => ret {| bcontext := (bcontext br) ; bbody := t' |}) branches
-          ;; ret (tCase ind_and_nbparams go_type_info go_discr go_branches)
+      | tCase ind_and_nbparams type_info discr branches
+        => type_info' <- go_predicate type_info
+        ;; discr' <- go Γ discr
+        ;; branches' <- mapM go_branch branches
+        ;; ret (tCase ind_and_nbparams type_info' discr' branches')
       | tProj proj t => tProj proj <$> go Γ t
       | tFix mfix idx => tFix <$> go_mfix mfix <*> ret idx
       | tCoFix mfix idx => tCoFix <$> go_mfix mfix <*> ret idx
@@ -162,6 +169,20 @@ Definition indices_of (Γ : list string) (t : term) : GM term :=
   let fix go (n : nat) (Γ : list string) (tm : term) : GM term :=
     match n with O => raise "named_of: OOF" | S n =>
       let go := go n in
+          let go_predicate (p : predicate term) : GM (predicate term) :=
+          pp' <- mapM (go Γ) (pparams p) ;;
+          pr' <- go Γ (preturn p) ;;
+          ret {| puinst := puinst p
+              ; pparams := pp'
+              ; pcontext := pcontext p
+              ; preturn := pr'
+              |} in
+      let go_branch (p : branch term) : GM (branch term) :=
+          Γ' <- mapM add_sigils (rev (bcontext p)) ;;
+          bb' <- go (Γ' ++ Γ) (bbody p) ;;
+          ret {| bcontext := bcontext p
+              ; bbody := bb'
+              |} in
       let go_mfix mfix : GM (mfixpoint term) :=
         let nass := map (fun d => go_name d.(dname)) mfix in
         let '(names, strings) := split nass in
@@ -190,18 +211,11 @@ Definition indices_of (Γ : list string) (t : term) : GM term :=
       | tConst c u => ret tm
       | tInd ind u => ret tm
       | tConstruct ind idx u => ret tm
-      | tCase ind_and_nbparams type_info discr branches (* TODO(tcarstens): check this *)
-          => go_pparams <- mapM (go Γ) (pparams type_info)
-          ;; go_preturn <- go Γ (preturn type_info)
-          ;; let go_type_info := {|
-              puinst := puinst type_info;
-              pparams := go_pparams;
-              pcontext := pcontext type_info;
-              preturn := go_preturn;
-            |}
-          in go_discr <- go Γ discr
-          ;; go_branches <- mapM (fun br => go Γ (bbody br) >>= fun t' => ret {| bcontext := (bcontext br) ; bbody := t' |}) branches
-          ;; ret (tCase ind_and_nbparams go_type_info go_discr go_branches)
+      | tCase ind_and_nbparams type_info discr branches
+          => type_info' <- go_predicate type_info
+          ;; discr' <- go Γ discr
+          ;; branches' <- mapM go_branch branches
+          ;; ret (tCase ind_and_nbparams type_info' discr' branches')
       | tProj proj t => tProj proj <$> go Γ t
       | tFix mfix idx => tFix <$> go_mfix mfix <*> ret idx
       | tCoFix mfix idx => tCoFix <$> go_mfix mfix <*> ret idx
@@ -247,6 +261,17 @@ Definition rename (σ : Map string string) : term -> term :=
     end
   in
   fix go (tm : term) : term :=
+    let go_predicate (p : predicate term) : predicate term :=
+      {| puinst := puinst p
+        ; pparams := map go (pparams p)
+        ; pcontext := map go_name (pcontext p)
+        ; preturn := go (preturn p)
+      |} in
+    let go_branch (p : branch term) : branch term :=
+      {|
+        bcontext := map go_name (bcontext p);
+        bbody := go (bbody p)
+      |} in
     let go_mfix (mfix : list (def term)) : list (def term) :=
       map (fun '(mkdef f ty body rarg) => mkdef _ (go_name f) (go ty) (go body) rarg) mfix
     in
@@ -264,16 +289,7 @@ Definition rename (σ : Map string string) : term -> term :=
     | tInd ind u => tm
     | tConstruct ind idx u => tm
     | tCase ind_and_nbparams type_info discr branches
-      => tCase (* TODO(tcarstens): check this *)
-          ind_and_nbparams
-          {|
-            puinst := puinst type_info;
-            pparams := map go (pparams type_info);
-            pcontext := pcontext type_info;
-            preturn := go (preturn type_info)
-          |}
-          (go discr)
-          (map (fun br => {| bcontext := (bcontext br) ; bbody := go (bbody br) |}) branches)
+      => tCase ind_and_nbparams (go_predicate type_info) (go discr) (map go_branch branches)
     | tProj proj t => tProj proj (go t)
     | tFix mfix idx => tFix (go_mfix mfix) idx
     | tCoFix mfix idx => tCoFix (go_mfix mfix) idx
@@ -517,7 +533,7 @@ Fixpoint has_var (x : BasicAst.ident) (e : term) {struct e} : bool :=
   | tInd ind u => false
   | tConstruct ind idx u => false
   | tCase ind_and_nbparams type_info discr branches
-      => anyb (has_var x) (pparams type_info) (* TODO(tcarstens): check this *)
+      => anyb (has_var x) (pparams type_info)
       || has_var x (preturn type_info)
       || has_var x discr
       || anyb (fun br => has_var x (bbody br)) branches
@@ -585,7 +601,7 @@ Definition parse_rel_pure (ind : inductive) (mbody : mutual_inductive_body)
            (body : one_inductive_body) : GM rules_t. ltac1:(refine(
   let! rules :=
     mapiM
-      (fun i ctor => rule_of_ind_ctor (cstr_name ctor, cstr_type ctor, cstr_arity ctor)) (* TODO(tcarstens): check this *)
+      (fun i ctor => rule_of_ind_ctor (cstr_name ctor, cstr_type ctor, cstr_arity ctor))
       body.(ind_ctors)
   in
   match rules with
@@ -1100,6 +1116,13 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
         let nparams := mbody.(ind_npars) in
         let pars := firstn nparams args in
         let args := skipn nparams args in
+        let! type_info :=
+          ret {|
+            puinst := _;    (* Instance.t *)
+            pparams := _;   (* list term *)
+            pcontext := _;  (* list aname *)
+            preturn := (tLambda nAnon (mkApps (tInd ind []) pars) ret_ty);
+          |} in
         let! constrs :=
           mapM
             (fun ctor =>
@@ -1112,9 +1135,7 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
               ret (cstr_name ctor, constr_ty, cstr_arity ctor))
             body.(ind_ctors)
         in
-        tCase
-          {| ci_ind := ind ; ci_npar := nparams ; ci_relevance := Relevant |}
-          (tLambda nAnon (mkApps (tInd ind []) pars) ret_ty) e <$>
+        tCase {| ci_ind := ind ; ci_npar := nparams ; ci_relevance := Relevant |} type_info e <$>
           mapiM_nat
             (fun i '(_, constr_ty, arity) =>
               let '(xs, ts, rty) := decompose_prod constr_ty in
@@ -1147,7 +1168,10 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
                   (fun '(x, t) arm => tLambda (nNamed x) t arm)
                   arm (combine xs ts)
               in
-              ret (arity, arm))
+              ret {|
+                bcontext := _; (* list aname *)
+                bbody := arm
+              |})
             constrs
       in
       match epats with
@@ -1160,7 +1184,11 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
     end
   in go 100%nat epats
 )).
-Defined.
+admit.
+admit.
+admit.
+admit.
+Admitted.
 
 Section GoalGeneration.
 
