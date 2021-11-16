@@ -590,8 +590,12 @@ Program Definition gen_univ_univD (qual : modpath) (typename : kername) (g : min
   let body :=
     func "u" univ
       (tCase {| ci_ind := univ_ind ; ci_npar := O ; ci_relevance := Relevant |}
-        (* (lam univ type0) *)
-        _
+        {|
+          puinst := _;    (* TODO(tcarstens) *)
+          pparams := _;   (* TODO(tcarstens) *)
+          pcontext := _;  (* TODO(tcarstens) *)
+          preturn := lam univ type0;
+        |}
         (tRel 0)
         (map (fun '(_, ty) => {| bcontext := [] ; bbody := ty |}) mgTypes))
   in ({|
@@ -603,9 +607,9 @@ Program Definition gen_univ_univD (qual : modpath) (typename : kername) (g : min
     mind_entry_template := false;
     mind_entry_variance := None;
     mind_entry_private := None |}, ty_ns, (qual, snd typename +++ "_univD"), body).
-Next Obligation.
-admit.
-Admitted.
+Next Obligation. admit. Admitted.
+Next Obligation. admit. Admitted.
+Next Obligation. admit. Admitted.
 
 Definition holes_of {A} (xs : list A) : list ((list A × A) × list A) :=
   let fix go l xs :=

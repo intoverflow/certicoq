@@ -20,6 +20,8 @@ Inductive exp :=
 | eFuns (fds : list fundef) (e : exp)
 with fundef := fFun (f : var) (xs : list var) (e : exp).
 
+(* Check <% fun (A : Type) (x : list A) => match x with nil => 0 | cons y ys => 1 end %>. *)
+
 MetaCoq Run (mk_Frame_ops (MPfile ["MockExpr"; "L6"; "CertiCoq"])
                           (MPfile ["MockExpr"; "L6"; "CertiCoq"], "exp") exp
                           [var; constr; nat; list var]).

@@ -1118,9 +1118,9 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
         let args := skipn nparams args in
         let! type_info :=
           ret {|
-            puinst := _;    (* Instance.t *)
-            pparams := _;   (* list term *)
-            pcontext := _;  (* list aname *)
+            puinst := _;    (* TODO(tcarstens) *)
+            pparams := _;   (* TODO(tcarstens) *)
+            pcontext := _;  (* TODO(tcarstens) *)
             preturn := (tLambda nAnon (mkApps (tInd ind []) pars) ret_ty);
           |} in
         let! constrs :=
@@ -1169,7 +1169,7 @@ Definition gen_case_tree (ind_info : ind_info) (epats : list (term × term))
                   arm (combine xs ts)
               in
               ret {|
-                bcontext := _; (* list aname *)
+                bcontext := _;  (* TODO(tcarstens) *)
                 bbody := arm
               |})
             constrs
